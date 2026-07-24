@@ -520,7 +520,7 @@ function AppInner() {
     <PrivacyModeContext.Provider value={{ privacyMode, setPrivacyMode }}>
     <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden">
       {/* Sidebar */}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ inbox: taskUnread, tasks: taskUnread }} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ tasks: taskUnread }} />
 
       {/* Main Content */}
       <main className={`flex-1 overflow-y-auto dk-page ${activeTab === 'dashboard' ? 'pb-16 sm:pb-0' : 'p-4 sm:p-10 pb-20 sm:pb-10'}`}>
