@@ -353,21 +353,16 @@ func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom
 		svc.segmenter.LoadDict()
 	}
 
-	// 如果配置了自动初始化时间范围，启动后立即开始索引
-	if defaultInitFrom != 0 || defaultInitTo != 0 {
-		if alreadyInitialized {
-			// 上次已完成分析：标记已完成，后台静默重建缓存，前端不卡在 InitializingScreen
-			log.Printf("[CONFIG] Auto-init with from=%d to=%d (already initialized, background rebuild)", defaultInitFrom, defaultInitTo)
-			svc.cacheMu.Lock()
-			svc.isInitialized = true
-			svc.filterFrom = defaultInitFrom
-			svc.filterTo = defaultInitTo
-			svc.cacheMu.Unlock()
-			go svc.silentRebuildCache(defaultInitFrom, defaultInitTo)
-		} else {
-			log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
-			svc.Reinitialize(defaultInitFrom, defaultInitTo)
-		}
+	// 已完成分析：标记已完成，前端直接进入主界面，不重新索引
+	if alreadyInitialized {
+		log.Printf("[CONFIG] Analysis already completed, skipping re-index")
+		svc.cacheMu.Lock()
+		svc.isInitialized = true
+		svc.cacheMu.Unlock()
+	} else if defaultInitFrom != 0 || defaultInitTo != 0 {
+		// 配置了自动初始化时间范围且尚未完成：启动后立即开始索引
+		log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
+		svc.Reinitialize(defaultInitFrom, defaultInitTo)
 	}
 	return svc
 }
