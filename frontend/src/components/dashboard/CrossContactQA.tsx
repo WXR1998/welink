@@ -479,10 +479,16 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       setShotLoadingIdx(i);
                       try {
                         const userMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
+                        const curProfile = profiles.find(p => p.id === profileId);
                         const result = await generateAIScreenshot({
                           question: userMsg?.content ?? '跨联系人问答',
                           answer: msg.content,
                           isCrossContact: true,
+                          stats: {
+                            provider: curProfile?.provider,
+                            model: curProfile?.model,
+                            timestamp: Date.now(),
+                          },
                         });
                         if (result.ok) {
                           setShotDoneIdx(i);
