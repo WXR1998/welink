@@ -16,8 +16,6 @@ export const MemorySection: React.FC = () => {
   const [clearing, setClearing] = useState<'facts' | 'embeddings' | null>(null);
 
   useEffect(() => {
-    let active = true;
-  useEffect(() => {
     axios.get<Record<string, unknown>>('/api/preferences').then(r => {
       setBaseURL((r.data.mem_llm_base_url as string) ?? '');
       setModel((r.data.mem_llm_model as string) ?? '');
@@ -215,8 +213,6 @@ export const MemorySection: React.FC = () => {
           )}
         </div>
             </div>
-          </div>
-        )}
         <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">数据管理</p>
           <div className="flex flex-wrap gap-2">
@@ -243,6 +239,5 @@ export const MemorySection: React.FC = () => {
           </p>
         </div>
       </div>
-    </div>
   );
 };
