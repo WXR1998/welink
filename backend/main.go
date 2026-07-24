@@ -1439,12 +1439,44 @@ func serverMain() {
 		for _, p := range pinnedFacts {
 			seen[p.Fact] = true
 		}
-		var dedupSearched []string
+		var dedupSearched []MemFact
 		for _, f := range searchedFacts {
-			if !seen[f] {
+			if !seen[f.Fact] {
 				dedupSearched = append(dedupSearched, f)
-				seen[f] = true
+				seen[f.Fact] = true
 			}
+		}
+
+		// contactKey → 可读来源名称
+		resolveSource := func(ck string) string {
+			svc := getSvc()
+			if svc == nil {
+				return ck
+			}
+			if strings.HasPrefix(ck, "group:") {
+				uname := strings.TrimPrefix(ck, "group:")
+				for _, g := range svc.GetGroups() {
+					if g.Username == uname {
+						return "群聊「" + g.Name + "」"
+					}
+				}
+				return "群聊「" + uname + "」"
+			}
+			if strings.HasPrefix(ck, "contact:") {
+				uname := strings.TrimPrefix(ck, "contact:")
+				for _, s := range svc.GetCachedStats() {
+					if s.Username == uname {
+						if s.Remark != "" {
+							return "与「" + s.Remark + "」的私聊"
+						}
+						if s.Nickname != "" {
+							return "与「" + s.Nickname + "」的私聊"
+						}
+					}
+				}
+				return "与「" + uname + "」的私聊"
+			}
+			return ck
 		}
 
 		// 分两块构建 prompt 片段，让下游模型区分信息来源
@@ -1453,14 +1485,16 @@ func serverMain() {
 			memSection += "\n\n【手工置顶的背景知识】\n"
 			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
 			for _, p := range pinnedFacts {
-				memSection += "- " + p.Fact + "\n"
+				src := resolveSource(p.ContactKey)
+				memSection += "- （来源：" + src + "）" + p.Fact + "\n"
 			}
 		}
 		if len(dedupSearched) > 0 {
 			memSection += "\n\n【从聊天记录中提炼的事实】\n"
 			memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
 			for _, f := range dedupSearched {
-				memSection += "- " + f + "\n"
+				src := resolveSource(f.ContactKey)
+				memSection += "- （来源：" + src + "）" + f.Fact + "\n"
 			}
 		}
 
@@ -2853,19 +2887,66 @@ func serverMain() {
 		// 从记忆事实库检索相关事实（有则补充，无则跳过）
 		memFacts, _ := SearchMemFacts(body.Key, searchQ, 10, prefs)
 		// 置顶事实：无论相似度如何都塞进 context（用户主动标记的始终重要）
-		if pinned, _ := GetPinnedMemFacts(body.Key); len(pinned) > 0 {
-			seen := make(map[string]bool, len(memFacts))
-			for _, f := range memFacts {
-				seen[f] = true
+		pinnedFacts, _ := GetPinnedMemFacts(body.Key)
+		// 去重
+		seen := make(map[string]bool, len(pinnedFacts)+len(memFacts))
+		for _, p := range pinnedFacts {
+			seen[p.Fact] = true
+		}
+		var dedupSearched []MemFact
+		for _, f := range memFacts {
+			if !seen[f.Fact] {
+				dedupSearched = append(dedupSearched, f)
+				seen[f.Fact] = true
 			}
-			var merged []string
-			for _, p := range pinned {
-				if !seen[p.Fact] {
-					merged = append(merged, "[📌 置顶] "+p.Fact)
-					seen[p.Fact] = true
+		}
+		// contactKey → 可读来源名称
+		resolveSource := func(ck string) string {
+			svc := getSvc()
+			if svc == nil {
+				return ck
+			}
+			if strings.HasPrefix(ck, "group:") {
+				uname := strings.TrimPrefix(ck, "group:")
+				for _, g := range svc.GetGroups() {
+					if g.Username == uname {
+						return "群聊「" + g.Name + "」"
+					}
 				}
+				return "群聊「" + uname + "」"
 			}
-			memFacts = append(merged, memFacts...)
+			if strings.HasPrefix(ck, "contact:") {
+				uname := strings.TrimPrefix(ck, "contact:")
+				for _, s := range svc.GetCachedStats() {
+					if s.Username == uname {
+						if s.Remark != "" {
+							return "与「" + s.Remark + "」的私聊"
+						}
+						if s.Nickname != "" {
+							return "与「" + s.Nickname + "」的私聊"
+						}
+					}
+				}
+				return "与「" + uname + "」的私聊"
+			}
+			return ck
+		}
+		var memSection string
+		if len(pinnedFacts) > 0 {
+			memSection += "\n\n【手工置顶的背景知识】\n"
+			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
+			for _, p := range pinnedFacts {
+				src := resolveSource(p.ContactKey)
+				memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+			}
+		}
+		if len(dedupSearched) > 0 {
+			memSection += "\n\n【从聊天记录中提炼的事实】\n"
+			memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
+			for _, f := range dedupSearched {
+				src := resolveSource(f.ContactKey)
+				memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+			}
 		}
 
 		flusher, ok := c.Writer.(http.Flusher)

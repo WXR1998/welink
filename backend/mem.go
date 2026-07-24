@@ -333,8 +333,8 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 
 // ─── 检索 ─────────────────────────────────────────────────────────────────────
 
-// SearchMemFacts 对 mem_facts 执行语义检索，返回 top-K 最相关事实。
-func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]string, error) {
+// SearchMemFacts 对 mem_facts 执行语义检索，返回 top-K 最相关事实（带 ContactKey）。
+func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, error) {
 	aiDBMu.Lock()
 	db := aiDB
 	aiDBMu.Unlock()
@@ -352,9 +352,9 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]string, e
 	var rows *sql.Rows
 	if key == "" {
 		// key 为空时搜索所有联系人的记忆（如 AI 首页跨联系人问答）
-		rows, err = db.Query(`SELECT fact, embedding FROM mem_facts`)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding FROM mem_facts`)
 	} else {
-		rows, err = db.Query(`SELECT fact, embedding FROM mem_facts WHERE contact_key = ?`, key)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding FROM mem_facts WHERE contact_key = ?`, key)
 	}
 	if err != nil {
 		return nil, err
@@ -362,19 +362,21 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]string, e
 	defer rows.Close()
 
 	type scored struct {
-		fact string
-		sim  float32
+		fact       string
+		contactKey string
+		sim        float32
 	}
 	var candidates []scored
 	for rows.Next() {
+		var contactKey string
 		var fact string
 		var blob []byte
-		rows.Scan(&fact, &blob)
+		rows.Scan(&contactKey, &fact, &blob)
 		vec := decodeVec(blob)
 		if len(vec) != len(queryVec) {
 			continue
 		}
-		candidates = append(candidates, scored{fact, cosineSimilarity(queryVec, vec)})
+		candidates = append(candidates, scored{fact, contactKey, cosineSimilarity(queryVec, vec)})
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -384,9 +386,12 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]string, e
 		candidates = candidates[:topK]
 	}
 
-	out := make([]string, len(candidates))
-	for i, c := range candidates {
-		out[i] = c.fact
+	out := make([]MemFact, len(candidates))
+	for i, s := range candidates {
+		out[i] = MemFact{
+			Fact:       s.fact,
+			ContactKey: s.contactKey,
+		}
 	}
 	return out, nil
 }
