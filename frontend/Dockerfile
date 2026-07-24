@@ -18,6 +18,7 @@ RUN npm run build
 # Final stage
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
+RUN chmod -R a+rX /usr/share/nginx/html
 # 用变量引用 upstream，配合 resolver 让 Nginx 在请求时才解析 backend hostname，
 # 避免 backend 未就绪时 Nginx 启动失败
 RUN printf 'server {\n\

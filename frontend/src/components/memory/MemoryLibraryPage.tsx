@@ -148,16 +148,29 @@ async function renderChatToBlob(
   const contentFont = `13px ${font}`;
   const tsFont = `11px ${font}`;
 
-  // ── 1. Pre-calc title height (wrap if needed) ──────────────────────────
+  // ── 1. Pre-calc title height ───────────────────────────────────────────
+  // Title format: first line = time range, second line+ = fact content
+  // All lines are centered (left-right)
   const tmpCanvas = document.createElement('canvas');
   const tmpCtx = tmpCanvas.getContext('2d')!;
   tmpCtx.font = titleFont;
   const maxTitleW = canvasW - padX * 2;
-  const titleLines = wrapText(tmpCtx, title, maxTitleW);
+
+  // Split title into time range (first line) and content (rest)
+  let titleFirstLine = title;
+  let titleRestLines: string[] = [];
+  const bracketEnd = title.indexOf('] ');
+  if (bracketEnd > 0) {
+    titleFirstLine = title.substring(0, bracketEnd + 1); // include ']'
+    const rest = title.substring(bracketEnd + 2).trim();
+    if (rest) titleRestLines = wrapText(tmpCtx, rest, maxTitleW);
+  }
+
+  const allTitleLines = [titleFirstLine, ...titleRestLines];
   const titleLineH = 20;
   const titlePadTop = 12;
   const titlePadBot = 12;
-  const titleH = titlePadTop + titleLines.length * titleLineH + titlePadBot;
+  const titleH = titlePadTop + allTitleLines.length * titleLineH + titlePadBot;
 
   // ── 2. Pre-calc message layouts ────────────────────────────────────────
   tmpCtx.font = contentFont;
@@ -205,16 +218,16 @@ async function renderChatToBlob(
   ctx.fillStyle = '#ededed';
   ctx.fillRect(0, 0, canvasW, totalH);
 
-  // ── 4. Draw title (multi-line, no truncation) ──────────────────────────
+  // ── 4. Draw title (centered, multi-line) ───────────────────────────────
   ctx.fillStyle = '#f7f7f7';
   ctx.fillRect(0, 0, canvasW, titleH);
   ctx.fillStyle = '#1a1a1a';
   ctx.font = titleFont;
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   let titleY = titlePadTop;
-  for (const line of titleLines) {
-    ctx.fillText(line, padX, titleY);
+  for (const line of allTitleLines) {
+    ctx.fillText(line, canvasW / 2, titleY);
     titleY += titleLineH;
   }
 
@@ -296,7 +309,7 @@ async function renderChatToBlob(
       ctx.fillStyle = '#1a1a1a';
       ctx.font = contentFont;
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2;
+      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2 + 1;
       for (const line of layout.wrappedLines) {
         ctx.fillText(line, bubbleX + bubblePadH, textY);
         textY += lineH;
@@ -312,7 +325,7 @@ async function renderChatToBlob(
       ctx.fillStyle = '#1a1a1a';
       ctx.font = contentFont;
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2;
+      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2 + 1;
       for (const line of layout.wrappedLines) {
         ctx.fillText(line, bubbleX + bubblePadH, textY);
         textY += lineH;
