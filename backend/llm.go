@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // maxStreamParseFails 单次流式响应允许的 chunk 解析失败次数上限。
@@ -410,6 +411,7 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 		}
 		send(chunk)
 	}
+	llmStart := time.Now()
 	t := startTimer("llm_stream")
 	var err error
 	switch cfg.provider {
@@ -431,7 +433,7 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	)
 	// Token 统计：记录输出 token
 	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
-	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
 	return err
 }
 
@@ -738,6 +740,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		return "", err
 	}
 	promptTokens := estimateMsgTokens(msgs)
+	llmStart := time.Now()
 	t := startTimer("llm_complete")
 	var (
 		out string
@@ -761,7 +764,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		"resp_chars", len(out),
 	)
 	outputTokens := estimateTokens(out)
-	recordTokenUsage(cfg.model, "summary", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "summary", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
 	return out, err
 }
 

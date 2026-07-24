@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"time"
 )
 
 // ─── 配置 ─────────────────────────────────────────────────────────────────────
@@ -82,9 +83,8 @@ const (
 // Ollama 使用 /api/embed（支持批量），其他 provider 使用 OpenAI 兼容的 /embeddings。
 // 大批次会被自动分片，避免单次请求体过大导致超时或被拒绝。
 func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error) {
-	// Token 统计：记录 embedding 输入 token
 	embTokens := estimateEmbeddingTokens(texts)
-	recordTokenUsage(cfg.Model, "embedding", embTokens, 0)
+	start := time.Now()
 	// Demo 模式：用确定性 mock 向量（和 demo_seed 存的一致，保证相似度能算）
 	if DemoMockActive() {
 		out := make([][]float32, len(texts))
@@ -130,6 +130,8 @@ func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error
 			}
 		}
 	}
+	dur := time.Since(start).Milliseconds()
+	recordTokenUsage(cfg.Model, "embedding", embTokens, 0, dur)
 	return out, nil
 }
 
