@@ -125,6 +125,7 @@ func GetMemFacts(key string) ([]MemFact, error) {
 // ─── LLM 提炼 ─────────────────────────────────────────────────────────────────
 
 const memExtractChunkSize = 80 // 每批送给 LLM 的消息条数
+const memExtractStride = 64   // 步进（重叠 16 条，衔接上下文）
 
 // extractAndStoreFacts 将消息分批送给 LLM 提炼事实，再对事实做 embedding 存库。
 //
@@ -144,7 +145,11 @@ func extractAndStoreFacts(
 	onChunkDone func(chunkIdx int),
 	abortCh <-chan struct{},
 ) (int, error) {
-	totalChunks := (len(msgs) + memExtractChunkSize - 1) / memExtractChunkSize
+	// 使用 stride 步进：每批 80 条，步进 64 条，重叠 16 条
+	totalChunks := 1
+	if len(msgs) > memExtractChunkSize {
+		totalChunks = (len(msgs)-memExtractChunkSize+memExtractStride) / memExtractStride + 1
+	}
 	total := 0
 	var lastErr error
 
@@ -160,6 +165,11 @@ func extractAndStoreFacts(
 		backgroundCtx = bg.String()
 	}
 
+	// 跨 batch 去重：重叠窗口会在相邻 batch 产生近似重复的事实
+	// 维护本轮已存储事实的 embedding 列表，每条新事实都与之比对
+	const dedupThreshold = 0.88
+	var storedEmbs [][]float32
+
 	for chunkIdx := startChunk; chunkIdx < totalChunks; chunkIdx++ {
 		// 检查是否被暂停
 		if abortCh != nil {
@@ -169,7 +179,7 @@ func extractAndStoreFacts(
 			default:
 			}
 		}
-		i := chunkIdx * memExtractChunkSize
+		i := chunkIdx * memExtractStride
 		end := i + memExtractChunkSize
 		if end > len(msgs) {
 			end = len(msgs)
@@ -188,26 +198,45 @@ func extractAndStoreFacts(
 			if err != nil {
 				lastErr = err
 			} else {
-				tx, err := db.Begin()
-				if err == nil {
-					stmt, err := tx.Prepare(
-						"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?)")
-					if err != nil {
-						tx.Rollback()
-					} else {
-						now := time.Now().Unix()
-						for j, emb := range embeddings {
-							if emb == nil || j >= len(facts) {
-								continue
-							}
-							// 存入的 fact = 时间前缀 + 纯事实文本
-							factWithMeta := timeRange + facts[j]
-							if _, err := stmt.Exec(key, factWithMeta, i, end-1, encodeVec(emb), now, now); err == nil {
-								total++
-							}
+				// 跨 batch 去重：和本轮已存的事实比对，sim > 0.88 视为重复
+				var dedupFacts []string
+				var dedupEmbs [][]float32
+				for j, emb := range embeddings {
+					if emb == nil || j >= len(facts) {
+						continue
+					}
+					dup := false
+					for _, prev := range storedEmbs {
+						if cosineSimilarity(emb, prev) > dedupThreshold {
+							dup = true
+							break
 						}
-						stmt.Close()
-						tx.Commit()
+					}
+					if !dup {
+						dedupFacts = append(dedupFacts, facts[j])
+						dedupEmbs = append(dedupEmbs, emb)
+					}
+				}
+				// 把本轮保留的事实 embedding 加入全局列表
+				storedEmbs = append(storedEmbs, dedupEmbs...)
+				if len(dedupFacts) > 0 {
+					tx, err := db.Begin()
+					if err == nil {
+						stmt, err := tx.Prepare(
+							"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?)")
+						if err != nil {
+							tx.Rollback()
+						} else {
+							now := time.Now().Unix()
+							for j, emb := range dedupEmbs {
+								factWithMeta := timeRange + dedupFacts[j]
+								if _, err := stmt.Exec(key, factWithMeta, i, end-1, encodeVec(emb), now, now); err == nil {
+									total++
+								}
+							}
+							stmt.Close()
+							tx.Commit()
+						}
 					}
 				}
 			}
@@ -284,8 +313,9 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"4. 用消息中出现的发言者名字来描述事实\n" +
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n" +
 			"6. 同一主题的零散信息合并成一条完整陈述\n" +
-			"7. 只输出JSON数组，不加任何解释，例如：[\"蒋钰瑶喜欢户外运动，经常周末和朋友去爬香山\", \"钟视航在北京做程序员，主要写后端\"]\n" +
-			"8. 如果没有有价值的事实，输出：[]\n" +
+			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n" +
+			"8. 只输出JSON数组，不加任何解释，例如：[\"蒋钰瑶喜欢户外运动，经常周末和朋友去爬香山\", \"钟视航在北京做程序员，主要写后端\"]\n" +
+			"9. 如果没有有价值的事实，输出：[]\n" +
 			bgSection +
 			"\n聊天记录：\n" + sb.String() + "\n输出："
 	} else {
@@ -297,8 +327,9 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"4. 用【%s】指代聊天对象\n"+
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n"+
 			"6. 同一主题的零散信息合并成一条完整陈述\n"+
-			"7. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
-			"8. 如果没有有价值的事实，输出：[]\n"+
+			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n"+
+			"8. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
+			"9. 如果没有有价值的事实，输出：[]\n"+
 			"%s"+
 			"\n聊天记录：\n%s\n输出：",
 			displayName, displayName, displayName, bgSection, sb.String())
