@@ -255,7 +255,8 @@ const MessageBubble: React.FC<{
   llmProvider?: string;
   llmModel?: string;
   onOpenSettings?: () => void;
-}> = ({ msg, contactName, avatarUrl, prevQuestion, llmProvider, llmModel, onOpenSettings }) => {
+  subjects?: { name: string; avatarUrl?: string }[];
+}> = ({ msg, contactName, avatarUrl, prevQuestion, llmProvider, llmModel, onOpenSettings, subjects }) => {
   const [copied, setCopied] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [shotLoading, setShotLoading] = useState(false);
@@ -334,7 +335,7 @@ const MessageBubble: React.FC<{
       const result = await generateAIScreenshot({
         question: prevQuestion,
         answer: msg.content,
-        contactName,
+        subjects,
         stats: msg.stats ? {
           provider: msg.stats.provider,
           model: msg.stats.model,
@@ -905,6 +906,10 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
       ).join('、')
     : undefined;
   const shareAvatarUrl = selectedItems.length === 1 ? itemAvatar(selectedItems[0]) : undefined;
+  const shareSubjects = selectedItems.map(item => ({
+    name: item.kind === 'group' ? `${itemName(item)}群` : itemName(item),
+    avatarUrl: itemAvatar(item),
+  }));
 
   // ── 输入卡片（复用于两种布局）─────────────────────────────────────────────
 
@@ -1120,6 +1125,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
                       msg={msg}
                       contactName={shareContactName}
                       avatarUrl={shareAvatarUrl}
+                      subjects={shareSubjects}
                       llmProvider={llmProvider}
                       llmModel={llmModel}
                       onOpenSettings={onOpenSettings}

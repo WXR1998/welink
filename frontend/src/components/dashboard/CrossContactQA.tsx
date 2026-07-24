@@ -8,8 +8,7 @@ import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2,
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { searchApi, calendarApi } from '../../services/api';
-import { generateShareImage } from '../../utils/shareImage';
-import { screenshotElement } from '../../utils/screenshot';
+import { generateShareImage, generateAIScreenshot } from '../../utils/shareImage';
 import type { ChatMessage } from '../../types';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
@@ -479,15 +478,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       if (shotLoadingIdx >= 0) return;
                       setShotLoadingIdx(i);
                       try {
-                        const msgEl = document.querySelector(`[data-msg-idx="${i}"]`) as HTMLElement;
-                        const pairEl = msgEl?.closest('[data-qa-pair]') as HTMLElement | null;
-                        const el = pairEl || msgEl;
-                        if (el) {
-                          const result = await screenshotElement(el);
-                          if (result.ok) {
-                            setShotDoneIdx(i);
-                            setTimeout(() => setShotDoneIdx(-1), 2000);
-                          }
+                        const userMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
+                        const result = await generateAIScreenshot({
+                          question: userMsg?.content ?? '跨联系人问答',
+                          answer: msg.content,
+                          isCrossContact: true,
+                        });
+                        if (result.ok) {
+                          setShotDoneIdx(i);
+                          setTimeout(() => setShotDoneIdx(-1), 2000);
                         }
                       } catch (e) { console.error(e); }
                       finally { setShotLoadingIdx(-1); }
