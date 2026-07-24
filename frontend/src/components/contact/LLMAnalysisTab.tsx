@@ -228,7 +228,7 @@ const AssistantMessage: React.FC<{
       const result = await generateAIScreenshot({
         question: prevQuestion,
         answer: msg.content,
-        subjects: [{ name: displayName, avatarUrl }],
+        subjects: [{ name: displayName ?? "AI 对话", avatarUrl }],
         stats: msg.elapsedSecs !== undefined ? {
           provider: msg.provider,
           model: msg.model,
