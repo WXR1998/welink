@@ -19,7 +19,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { calendarApi } from '../../services/api';
 import type { CalendarDayEntry, ChatMessage, GroupChatMessage } from '../../types';
-import { generateShareImage } from '../../utils/shareImage';
+import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { isAIConfigError } from '../../utils/aiError';
 import { AIConfigNotice } from '../common/AIConfigNotice';
@@ -77,10 +77,10 @@ const DayAssistantBubble: React.FC<{
     setSharing(true);
     setShareMsg(null);
     try {
-      const savedPath = await generateShareImage({
+      const result = await generateAIScreenshot({
         question: prevQuestion,
         answer: msg.content,
-        contactName: `${date} 时光机`,
+        subjects: [{ name: `${date} 时光机` }],
         stats: msg.stats ? {
           provider: msg.stats.provider,
           model: msg.stats.model,
@@ -89,8 +89,11 @@ const DayAssistantBubble: React.FC<{
           charCount: msg.stats.chars,
         } : undefined,
       });
-      const isAppMode = savedPath.startsWith('/') || /^[A-Z]:\\/i.test(savedPath);
-      setShareMsg({ ok: true, text: isAppMode ? `已保存至 ${savedPath}` : '图片已下载', path: isAppMode ? savedPath : undefined });
+      setShareMsg({
+        ok: result.ok,
+        text: result.method === 'clipboard' ? '已复制到剪贴板' : result.path ? `已保存至 ${result.path}` : '图片已下载',
+        path: result.path,
+      });
     } catch (err) {
       setShareMsg({ ok: false, text: `生成失败：${(err as Error).message}` });
     } finally {

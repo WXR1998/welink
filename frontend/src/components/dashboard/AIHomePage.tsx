@@ -3,13 +3,12 @@
  */
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Bot, Send, X, Search, RotateCcw, Loader2, Copy, Check, Square, ArrowLeft, Share2, Users, Plus, ChevronDown, ChevronRight, BrainCircuit, Globe, Sparkles, Camera } from 'lucide-react';
+import { Bot, Send, X, Search, RotateCcw, Loader2, Copy, Check, Square, ArrowLeft, Users, Plus, ChevronDown, ChevronRight, BrainCircuit, Globe, Sparkles, Camera } from 'lucide-react';
 import { CrossContactQA } from './CrossContactQA';
 import { ConversationHistory } from './ConversationHistory';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
-import { RevealLink } from '../common/RevealLink';
 import { avatarSrc } from '../../utils/avatar';
 import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage } from '../../types';
 import { contactsApi, groupsApi } from '../../services/api';
@@ -258,7 +257,7 @@ const MessageBubble: React.FC<{
   subjects?: { name: string; avatarUrl?: string }[];
 }> = ({ msg, contactName, avatarUrl, prevQuestion, llmProvider, llmModel, onOpenSettings, subjects }) => {
   const [copied, setCopied] = useState(false);
-  const [sharing, setSharing] = useState(false);
+
   const [shotLoading, setShotLoading] = useState(false);
   const [shotDone, setShotDone] = useState(false);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -291,39 +290,6 @@ const MessageBubble: React.FC<{
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {});
-  };
-
-  const [shareMsg, setShareMsg] = useState<{ ok: boolean; text: string; path?: string } | null>(null);
-
-  const handleShare = async () => {
-    if (!msg.content || sharing) return;
-    setSharing(true);
-    setShareMsg(null);
-    try {
-      const result = await generateAIScreenshot({
-        question: prevQuestion,
-        answer: msg.content,
-        subjects,
-        stats: msg.stats ? {
-          provider: msg.stats.provider,
-          model: msg.stats.model,
-          elapsedSecs: msg.stats.elapsed,
-          tokensPerSec: msg.stats.tokensPerSec,
-          charCount: msg.stats.chars,
-          timestamp: msg.stats.timestamp,
-        } : undefined,
-      });
-      setShareMsg({
-        ok: result.ok,
-        text: result.method === 'clipboard' ? '已复制到剪贴板' : result.path ? `已保存至 ${result.path}` : '图片已下载',
-        path: result.path,
-      });
-    } catch (err) {
-      setShareMsg({ ok: false, text: `生成失败：${(err as Error).message}` });
-    } finally {
-      setSharing(false);
-      setTimeout(() => setShareMsg(null), 4000);
-    }
   };
 
   const handleScreenshot = async () => {
@@ -448,25 +414,10 @@ const MessageBubble: React.FC<{
                 {shotLoading ? <Loader2 size={11} className="animate-spin" /> : shotDone ? <Check size={11} className="text-[#07c160]" /> : <Camera size={11} />}
                 {shotLoading ? '截图中…' : shotDone ? '已复制' : '截图'}
               </button>
-              <button
-                onClick={handleShare}
-                disabled={sharing}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-gray-400 hover:text-[#576b95] hover:bg-[#f0f4ff] dark:hover:bg-[#576b95]/15 transition-colors disabled:opacity-50"
-                title="保存为图片分享"
-              >
-                {sharing ? <Loader2 size={11} className="animate-spin" /> : <Share2 size={11} />}
-                {sharing ? '生成中…' : '分享'}
-              </button>
             </div>
           )}
         </div>
       </div>
-      {shareMsg && (
-        <p className={`text-[10px] font-medium ml-9 break-all leading-relaxed ${shareMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>
-          {shareMsg.text}
-          {shareMsg.path && <RevealLink path={shareMsg.path} className="ml-2" />}
-        </p>
-      )}
     </div>
   );
 };

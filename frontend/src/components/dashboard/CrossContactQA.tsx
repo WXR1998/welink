@@ -4,13 +4,12 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2, Check, Copy, Camera, X } from 'lucide-react';
+import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Check, Copy, Camera, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { searchApi, calendarApi } from '../../services/api';
 import { generateAIScreenshot } from '../../utils/shareImage';
 import type { ChatMessage } from '../../types';
-import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { ConversationHistory } from './ConversationHistory';
@@ -53,12 +52,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [loading, setLoading] = useState(false);
   const [profileId, setProfileId] = useState('');
   const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
-  const [sharingIdx, setSharingIdx] = useState(-1);
+
   const [sharedIdx, setSharedIdx] = useState(-1);
   const [shotLoadingIdx, setShotLoadingIdx] = useState(-1);
   const [shotDoneIdx, setShotDoneIdx] = useState(-1);
   const [popupHit, setPopupHit] = useState<SearchHit | null>(null);
-  const [savedPath, setSavedPath] = useState<string | null>(null);
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -503,38 +501,6 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     {shotLoadingIdx === i ? <Loader2 size={12} className="animate-spin" /> : shotDoneIdx === i ? <Check size={12} className="text-[#07c160]" /> : <Camera size={12} />}
                     {shotLoadingIdx === i ? '截图中…' : shotDoneIdx === i ? '已复制' : '截图'}
                   </button>
-                  <button
-                    onClick={async () => {
-                      if (sharingIdx >= 0) return;
-                      setSharingIdx(i);
-                      try {
-                        const userMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
-                        const curProfile = profiles.find(p => p.id === profileId);
-                        const result = await generateAIScreenshot({
-                          question: userMsg?.content ?? '跨联系人问答',
-                          answer: msg.content,
-                          isCrossContact: true,
-                          stats: {
-                            provider: curProfile?.provider,
-                            model: curProfile?.model,
-                            timestamp: Date.now(),
-                          },
-                        });
-                        if (result.path) setSavedPath(result.path);
-                        setSharedIdx(i);
-                        setTimeout(() => { setSharedIdx(-1); setSavedPath(null); }, 6000);
-                      } catch (e) { console.error(e); }
-                      finally { setSharingIdx(-1); }
-                    }}
-                    disabled={sharingIdx >= 0}
-                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
-                  >
-                    {sharingIdx === i ? <Loader2 size={12} className="animate-spin" /> : sharedIdx === i ? <Check size={12} className="text-[#07c160]" /> : <Share2 size={12} />}
-                    {sharedIdx === i ? '已保存' : '分享'}
-                  </button>
-                  {sharedIdx === i && savedPath && (
-                    <RevealLink path={savedPath} className="text-xs text-gray-400 hover:text-[#07c160]" />
-                  )}
                 </div>
               )}
               {/* 搜索结果完整列表 */}
