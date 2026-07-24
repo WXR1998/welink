@@ -4,12 +4,13 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2, Check, Copy, Camera } from 'lucide-react';
+import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2, Check, Copy, Camera, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { searchApi, calendarApi } from '../../services/api';
 import { generateShareImage } from '../../utils/shareImage';
 import { screenshotElement } from '../../utils/screenshot';
+import type { ChatMessage } from '../../types';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
@@ -26,6 +27,7 @@ interface SearchHit {
   username: string;
   is_group: boolean;
   count: number;
+  messages?: ChatMessage[];
 }
 
 interface Message {
@@ -56,6 +58,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [sharedIdx, setSharedIdx] = useState(-1);
   const [shotLoadingIdx, setShotLoadingIdx] = useState(-1);
   const [shotDoneIdx, setShotDoneIdx] = useState(-1);
+  const [popupHit, setPopupHit] = useState<SearchHit | null>(null);
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
@@ -150,7 +153,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
               // 收集完整搜索结果用于前端展示
               for (const r of results) {
                 if (!allHits.find(h => h.username === r.username)) {
-                  allHits.push({ display_name: r.display_name, username: r.username, is_group: r.is_group, count: r.messages.length });
+                  allHits.push({ display_name: r.display_name, username: r.username, is_group: r.is_group, count: r.messages.length, messages: r.messages });
                 }
               }
               dataContext += `\n【搜索「${kw}」结果：${results.length} 个联系人/群聊匹配】\n`;
@@ -535,7 +538,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       .map(hit => (
                         <button
                           key={hit.username}
-                          onClick={() => hit.is_group ? onGroupClick?.(hit.username) : onContactClick?.(hit.username)}
+                          onClick={() => setPopupHit(hit)}
                           className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg hover:bg-[#e7f8f0] dark:hover:bg-[#07c160]/10 w-full text-left transition-colors cursor-pointer"
                         >
                           <span className={`font-medium text-[#1d1d1f] dk-text hover:text-[#07c160] ${privacyMode ? 'privacy-blur' : ''}`}>
@@ -580,6 +583,40 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         <p className="text-[10px] text-gray-400 mt-2">
           需要先在 <button onClick={onOpenSettings} className="text-[#07c160] underline">设置</button> 中配置 AI 接口
         </p>
+      )}
+
+      {/* 匹配结果弹窗：展示聊天记录原文 */}
+      {popupHit && (
+        <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/40" onClick={() => setPopupHit(null)}>
+          <div className="w-[500px] max-h-[70vh] bg-white dark:bg-[#1d1d1f] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/10">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`font-semibold text-sm truncate ${privacyMode ? 'privacy-blur' : ''}`}>
+                  {popupHit.is_group ? '🏠 ' : ''}{popupHit.display_name}
+                </span>
+                <span className="text-xs text-gray-400 flex-shrink-0">{popupHit.count} 条匹配</span>
+              </div>
+              <button onClick={() => setPopupHit(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0">
+                <X size={16} />
+              </button>
+            </div>
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {popupHit.messages?.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.is_mine ? 'flex-row-reverse' : 'flex-row'} gap-2`}>
+                  <div className={`max-w-[75%] px-3 py-2 rounded-2xl text-sm ${msg.is_mine ? 'bg-[#07c160] text-white rounded-br-sm' : 'bg-[#f0f0f0] dark:bg-white/10 rounded-bl-sm'}`}>
+                    <div className="text-[10px] text-gray-400 mb-0.5">{msg.date} {msg.time}</div>
+                    <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                  </div>
+                </div>
+              ))}
+              {(!popupHit.messages || popupHit.messages.length === 0) && (
+                <p className="text-center text-sm text-gray-400 py-8">无匹配消息</p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
