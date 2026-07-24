@@ -261,8 +261,46 @@ async function renderChatToBlob(
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
       else reject(new Error('canvas.toBlob returned null'));
-    }, 'image/jpeg', 0.92);
+    }, 'image/png');
   });
+}
+
+/**
+ * Legacy fallback: copy image via contenteditable + execCommand('copy').
+ * Works in non-secure contexts (HTTP non-localhost) where navigator.clipboard is undefined.
+ */
+async function copyImageViaExecCommand(blob: Blob): Promise<boolean> {
+  const url = URL.createObjectURL(blob);
+  const img = document.createElement('img');
+  img.src = url;
+  img.style.position = 'fixed';
+  img.style.left = '-9999px';
+  img.style.top = '0';
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('img load fail'));
+  });
+
+  document.body.appendChild(img);
+
+  const range = document.createRange();
+  range.selectNode(img);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+
+  sel?.removeAllRanges();
+  document.body.removeChild(img);
+  URL.revokeObjectURL(url);
+  return ok;
 }
 
 export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
@@ -409,18 +447,31 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     setHoverShotLoading(true);
     try {
       const blob = await renderChatToBlob(hoverMsgs, (sender) => senderAvatarMap.get(sender));
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/jpeg': blob })]);
+
+      let copied = false;
+
+      // 方案 1: navigator.clipboard.write (需要安全上下文 HTTPS/localhost)
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          copied = true;
+        } catch {
+          // PNG 不被支持或权限被拒，继续尝试 legacy 方案
+        }
+      }
+
+      // 方案 2: legacy execCommand('copy') (非安全上下文的回退)
+      if (!copied) {
+        copied = await copyImageViaExecCommand(blob);
+      }
+
+      if (copied) {
         setHoverCopied(true);
         setTimeout(() => setHoverCopied(false), 2000);
-      } catch {
-        // 浏览器不支持 clipboard.write 图片，回退为下载
+      } else {
+        // 最终回退：在新标签页打开图片，用户可右键复制
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `chat-${Date.now()}.jpg`;
-        a.click();
-        URL.revokeObjectURL(url);
+        window.open(url, '_blank');
       }
     } catch (e) {
       console.error('Screenshot failed', e);
