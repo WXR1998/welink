@@ -141,6 +141,7 @@ type Preferences struct {
 	LateNightTopN        int    `json:"late_night_top_n,omitempty"`        // 默认 20
 	DefaultInitFrom      int64  `json:"default_init_from,omitempty"`
 	DefaultInitTo        int64  `json:"default_init_to,omitempty"`
+	AnalysisCompleted    bool   `json:"analysis_completed,omitempty"`
 
 	// 日志配置（支持热加载）
 	LogLevel string `json:"log_level,omitempty"` // debug / info / warn / error，默认 info

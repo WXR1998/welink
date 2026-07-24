@@ -328,7 +328,11 @@ var STOP_WORDS = map[string]bool{
 	"…": true, "～": true, "/": true, "、": true,
 }
 
-func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom, defaultInitTo int64) *ContactService {
+// onAnalysisComplete is called when analysis completes successfully.
+// Set by main.go to persist the "analysis completed" flag to preferences.
+var OnAnalysisComplete func()
+
+func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom, defaultInitTo int64, alreadyInitialized bool) *ContactService {
 	loc, err := time.LoadLocation(params.Timezone)
 	if err != nil {
 		log.Printf("[CONFIG] Unknown timezone %q, falling back to Asia/Shanghai: %v", params.Timezone, err)
@@ -351,10 +355,69 @@ func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom
 
 	// 如果配置了自动初始化时间范围，启动后立即开始索引
 	if defaultInitFrom != 0 || defaultInitTo != 0 {
-		log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
-		svc.Reinitialize(defaultInitFrom, defaultInitTo)
+		if alreadyInitialized {
+			// 上次已完成分析：标记已完成，后台静默重建缓存，前端不卡在 InitializingScreen
+			log.Printf("[CONFIG] Auto-init with from=%d to=%d (already initialized, background rebuild)", defaultInitFrom, defaultInitTo)
+			svc.cacheMu.Lock()
+			svc.isInitialized = true
+			svc.filterFrom = defaultInitFrom
+			svc.filterTo = defaultInitTo
+			svc.cacheMu.Unlock()
+			go svc.silentRebuildCache(defaultInitFrom, defaultInitTo)
+		} else {
+			log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
+			svc.Reinitialize(defaultInitFrom, defaultInitTo)
+		}
 	}
 	return svc
+}
+
+// silentRebuildCache 在后台静默重建分析缓存，不阻塞前端。
+// 与 Reinitialize 的区别：不设 isInitialized=false / isIndexing=true，
+// 前端直接进入主界面，数据在后台逐步就绪。
+func (s *ContactService) silentRebuildCache(from, to int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[INIT] silentRebuildCache panic: %v\n%s", r, debug.Stack())
+			s.cacheMu.Lock()
+			s.isIndexing = false
+			s.isInitialized = true
+			s.lastInitErr = fmt.Sprintf("panic: %v", r)
+			s.cancelFn = nil
+			s.cacheMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cacheMu.Lock()
+	s.cancelFn = cancel
+	s.isIndexing = true
+	s.progressTotal = 0
+	s.progressDone = 0
+	s.progressCurrent = ""
+	s.progressStart = time.Now()
+	s.lastInitErr = ""
+	s.filterFrom = from
+	s.filterTo = to
+	s.cacheMu.Unlock()
+
+	log.Printf("[INIT] Reinitializing with from=%d to=%d", from, to)
+	s.performAnalysisCtx(ctx)
+	s.cacheMu.Lock()
+	s.isIndexing = false
+	if ctx.Err() != nil {
+		s.isInitialized = false
+		s.lastInitErr = "indexing cancelled"
+		log.Println("[INIT] Reinitialization cancelled by user.")
+	} else {
+		s.isInitialized = true
+		s.lastInitErr = ""
+		log.Println("[INIT] Reinitialization complete.")
+		if OnAnalysisComplete != nil {
+			OnAnalysisComplete()
+		}
+	}
+	s.cancelFn = nil
+	s.cacheMu.Unlock()
 }
 
 // UpdateParams 热加载分析参数。
@@ -447,6 +510,9 @@ func (s *ContactService) Reinitialize(from, to int64) {
 			s.isInitialized = true
 			s.lastInitErr = ""
 			log.Println("[INIT] Reinitialization complete.")
+			if OnAnalysisComplete != nil {
+				OnAnalysisComplete()
+			}
 		}
 		s.cancelFn = nil
 		s.cacheMu.Unlock()

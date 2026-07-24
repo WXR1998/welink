@@ -132,7 +132,7 @@ func serverMain() {
 	)
 
 	// reinitSvc 用新数据目录替换数据库连接和服务层（线程安全）。
-	reinitSvc := func(dataDir string, params service.AnalysisParams, initFrom, initTo int64) error {
+	reinitSvc := func(dataDir string, params service.AnalysisParams, initFrom, initTo int64, alreadyInitialized bool) error {
 		newMgr, err := db.NewDBManager(dataDir)
 		if err != nil {
 			svcMu.Lock()
@@ -140,7 +140,7 @@ func serverMain() {
 			svcMu.Unlock()
 			return err
 		}
-		newSvc := service.NewContactService(newMgr, params, initFrom, initTo)
+		newSvc := service.NewContactService(newMgr, params, initFrom, initTo, alreadyInitialized)
 		svcMu.Lock()
 		if dbMgr != nil {
 			dbMgr.Close()
@@ -150,6 +150,17 @@ func serverMain() {
 		lastInitErr = ""
 		svcMu.Unlock()
 		return nil
+	}
+
+	// 分析完成后落盘 AnalysisCompleted=true，下次重启直接进入主界面，不再重新跑分析
+	service.OnAnalysisComplete = func() {
+		existing := loadPreferences()
+		if !existing.AnalysisCompleted {
+			existing.AnalysisCompleted = true
+			if err := savePreferences(existing); err != nil {
+				log.Printf("[INIT] persist analysis_completed failed: %v", err)
+			}
+		}
 	}
 
 	// probeDataDirs 列出启动时检查过的候选数据目录（用于 /api/app/info 前端提示）。
@@ -238,7 +249,7 @@ func serverMain() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	if err := reinitSvc(prefs.DataDir, analysisParamsFromPrefs(prefs), prefs.DefaultInitFrom, prefs.DefaultInitTo); err != nil {
+	if err := reinitSvc(prefs.DataDir, analysisParamsFromPrefs(prefs), prefs.DefaultInitFrom, prefs.DefaultInitTo, prefs.AnalysisCompleted); err != nil {
 		// 服务层保持 nil —— 前端通过 /api/app/info 识别并引导用户
 		candidates := probeDataDirs(prefs.DataDir)
 		log.Printf("────────────────────────────────────────────────────────────────")
@@ -719,7 +730,7 @@ func serverMain() {
 			os.Unsetenv("DEMO_MODE")
 		}
 		merged := effectiveConfig(body)
-		if err := reinitSvc(merged.DataDir, analysisParamsFromPrefs(merged), merged.DefaultInitFrom, merged.DefaultInitTo); err != nil {
+		if err := reinitSvc(merged.DataDir, analysisParamsFromPrefs(merged), merged.DefaultInitFrom, merged.DefaultInitTo, merged.AnalysisCompleted); err != nil {
 			return fmt.Errorf("无效的数据库目录：%w", err)
 		}
 		if err := saveAppConfig(&body); err != nil {
@@ -4107,7 +4118,7 @@ func serverMain() {
 		merged := effectiveConfig(existing)
 		merged.DataDir = picked.Path
 		os.Unsetenv("DEMO_MODE")
-		if err := reinitSvc(merged.DataDir, analysisParamsFromPrefs(merged), 0, 0); err != nil {
+		if err := reinitSvc(merged.DataDir, analysisParamsFromPrefs(merged), 0, 0, false); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "切换失败：" + err.Error()})
 			return
 		}
