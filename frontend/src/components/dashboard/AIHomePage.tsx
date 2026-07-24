@@ -8,7 +8,7 @@ import { CrossContactQA } from './CrossContactQA';
 import { ConversationHistory } from './ConversationHistory';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { generateShareImage, generateAIScreenshot } from '../../utils/shareImage';
+import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { avatarSrc } from '../../utils/avatar';
 import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage } from '../../types';
@@ -300,11 +300,10 @@ const MessageBubble: React.FC<{
     setSharing(true);
     setShareMsg(null);
     try {
-      const savedPath = await generateShareImage({
+      const result = await generateAIScreenshot({
         question: prevQuestion,
         answer: msg.content,
-        contactName,
-        avatarUrl,
+        subjects,
         stats: msg.stats ? {
           provider: msg.stats.provider,
           model: msg.stats.model,
@@ -314,11 +313,10 @@ const MessageBubble: React.FC<{
           timestamp: msg.stats.timestamp,
         } : undefined,
       });
-      const isAppMode = savedPath.startsWith('/') || /^[A-Z]:\\/i.test(savedPath);
       setShareMsg({
-        ok: true,
-        text: isAppMode ? `已保存至 ${savedPath}` : '图片已下载',
-        path: isAppMode ? savedPath : undefined,
+        ok: result.ok,
+        text: result.method === 'clipboard' ? '已复制到剪贴板' : result.path ? `已保存至 ${result.path}` : '图片已下载',
+        path: result.path,
       });
     } catch (err) {
       setShareMsg({ ok: false, text: `生成失败：${(err as Error).message}` });
@@ -1100,7 +1098,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
         </div>
 
         {/* 消息区 */}
-        <div className="flex-1 px-4 sm:px-6 py-6 space-y-5 max-w-3xl w-full mx-auto">
+        <div className="flex-1 px-4 sm:px-6 py-6 space-y-2 max-w-3xl w-full mx-auto">
           {(() => {
             // Group messages into Q&A pairs (user question + following messages until next user msg)
             const groups: { msgs: ChatMsg[]; indices: number[] }[] = [];
@@ -1116,7 +1114,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
             });
             if (cur) groups.push(cur);
             return groups.map((group, gi) => (
-              <div key={gi} data-qa-pair={gi}>
+              <div key={gi} data-qa-pair={gi} className="space-y-3">
                 {group.msgs.map((msg, mi) => {
                   const i = group.indices[mi];
                   return (

@@ -8,7 +8,7 @@ import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2,
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { searchApi, calendarApi } from '../../services/api';
-import { generateShareImage, generateAIScreenshot } from '../../utils/shareImage';
+import { generateAIScreenshot } from '../../utils/shareImage';
 import type { ChatMessage } from '../../types';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
@@ -509,12 +509,18 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       setSharingIdx(i);
                       try {
                         const userMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
-                        const p = await generateShareImage({
+                        const curProfile = profiles.find(p => p.id === profileId);
+                        const result = await generateAIScreenshot({
                           question: userMsg?.content ?? '跨联系人问答',
                           answer: msg.content,
-                          contactName: '跨联系人问答',
+                          isCrossContact: true,
+                          stats: {
+                            provider: curProfile?.provider,
+                            model: curProfile?.model,
+                            timestamp: Date.now(),
+                          },
                         });
-                        setSavedPath(p);
+                        if (result.path) setSavedPath(result.path);
                         setSharedIdx(i);
                         setTimeout(() => { setSharedIdx(-1); setSavedPath(null); }, 6000);
                       } catch (e) { console.error(e); }
