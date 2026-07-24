@@ -111,6 +111,17 @@ else
   echo "没有旧镜像需要清理"
 fi
 
+# ── 清理悬空镜像 (headless / dangling) ───────────────────────────────────────
+echo ""
+echo "🧹 清理悬空镜像 (dangling/headless)..."
+DANGLING_COUNT=$(docker images -f "dangling=true" -q | wc -l)
+if [ "$DANGLING_COUNT" -gt 0 ]; then
+  echo "删除 $DANGLING_COUNT 个悬空镜像..."
+  docker image prune -f
+else
+  echo "没有悬空镜像需要清理"
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ 全部完成!"
