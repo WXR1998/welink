@@ -32,7 +32,7 @@ export const TokenStatsWidget: React.FC = () => {
   const fetchStats = async () => {
     try {
       const r = await api.get<{ usage: TokenUsage[] }>('/token-stats');
-      setUsage(r.data.usage || []);
+      setUsage(r.usage || []);
     } catch {
       /* ignore */
     }
@@ -54,7 +54,6 @@ export const TokenStatsWidget: React.FC = () => {
 
   const totalAll = usage.reduce((s, u) => s + u.total_tokens, 0);
 
-  if (totalAll === 0 && !expanded) return null;
 
   return (
     <div

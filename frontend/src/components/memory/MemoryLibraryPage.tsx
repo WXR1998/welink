@@ -103,12 +103,33 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
  * - Content: white rounded bubble
  * - Timestamps: only shown when gap > 5 min from previous message
  */
+// 全局字体加载状态
+let _fontLoaded = false;
+let _fontLoadPromise: Promise<void> | null = null;
+
+async function ensureFontLoaded(): Promise<void> {
+  if (_fontLoaded) return;
+  if (_fontLoadPromise) return _fontLoadPromise;
+  _fontLoadPromise = (async () => {
+    try {
+      const font = new FontFace('PingFang', 'url(/PingFang.woff2)');
+      await font.load();
+      document.fonts.add(font);
+    } catch {
+      // fallback: use system font
+    }
+    _fontLoaded = true;
+  })();
+  return _fontLoadPromise;
+}
+
 async function renderChatToBlob(
   msgs: { datetime: string; sender: string; content: string }[],
   avatarLookup: (sender: string) => string | undefined,
   title: string,
 ): Promise<Blob> {
-  const fontStack = '"PingFang SC", "Maple Mono NF CN", "Microsoft YaHei", -apple-system, sans-serif';
+  await ensureFontLoaded();
+  const font = '"PingFang", "PingFang SC", "Microsoft YaHei", sans-serif';
   const canvasW = 500;
   const padX = 16;
   const avatarSize = 32;
@@ -116,15 +137,30 @@ async function renderChatToBlob(
   const contentX = padX + avatarSize + avatarGap;
   const maxBubbleW = canvasW - contentX - padX - 40;
   const bubblePadH = 10;
-  const bubblePadV = 7;
-  const lineH = 19;
+  const bubblePadV = 8;
+  const lineH = 20;
   const nameH = 15;
   const msgGap = 6;
-  const sameSenderGap = 2;
+  const sameSenderGap = 3;
   const tsGap = 14;
   const timeGapThreshold = 5 * 60 * 1000;
-  const titleH = 48;
+  const titleFont = `bold 14px ${font}`;
+  const contentFont = `13px ${font}`;
+  const tsFont = `11px ${font}`;
 
+  // ── 1. Pre-calc title height (wrap if needed) ──────────────────────────
+  const tmpCanvas = document.createElement('canvas');
+  const tmpCtx = tmpCanvas.getContext('2d')!;
+  tmpCtx.font = titleFont;
+  const maxTitleW = canvasW - padX * 2;
+  const titleLines = wrapText(tmpCtx, title, maxTitleW);
+  const titleLineH = 20;
+  const titlePadTop = 12;
+  const titlePadBot = 12;
+  const titleH = titlePadTop + titleLines.length * titleLineH + titlePadBot;
+
+  // ── 2. Pre-calc message layouts ────────────────────────────────────────
+  tmpCtx.font = contentFont;
   type LayoutMsg = {
     showTs: boolean;
     showAvatar: boolean;
@@ -133,11 +169,6 @@ async function renderChatToBlob(
     bubbleH: number;
     msgH: number;
   };
-
-  const tmpCanvas = document.createElement('canvas');
-  const tmpCtx = tmpCanvas.getContext('2d')!;
-  tmpCtx.font = `13px ${fontStack}`;
-
   const layouts: LayoutMsg[] = [];
   let totalH = padX + titleH;
 
@@ -146,22 +177,21 @@ async function renderChatToBlob(
     const prev = i > 0 ? msgs[i - 1] : null;
     const showTs = !prev || (parseDateTime(m.datetime) - parseDateTime(prev.datetime) > timeGapThreshold);
     const showAvatar = !prev || prev.sender !== m.sender || showTs;
-
     if (showTs && i > 0) totalH += tsGap;
     if (showTs) totalH += 22;
-
+    tmpCtx.font = contentFont;
     const lines = wrapText(tmpCtx, m.content, maxBubbleW - bubblePadH * 2);
     const textW = Math.max(...lines.map(l => tmpCtx.measureText(l).width));
     const bubbleW = Math.min(maxBubbleW, textW + bubblePadH * 2);
     const bubbleH = lines.length * lineH + bubblePadV * 2;
     const msgH = showAvatar ? Math.max(avatarSize, nameH + bubbleH) : bubbleH;
     layouts.push({ showTs, showAvatar, wrappedLines: lines, bubbleW, bubbleH, msgH });
-
     if (showAvatar) totalH += msgH + msgGap;
     else totalH += msgH + sameSenderGap;
   }
   totalH += padX;
 
+  // ── 3. Create canvas ───────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvasW * dpr;
@@ -171,34 +201,32 @@ async function renderChatToBlob(
   const ctx = canvas.getContext('2d')!;
   ctx.scale(dpr, dpr);
 
+  // Background
   ctx.fillStyle = '#ededed';
   ctx.fillRect(0, 0, canvasW, totalH);
 
-  // Title bar
+  // ── 4. Draw title (multi-line, no truncation) ──────────────────────────
   ctx.fillStyle = '#f7f7f7';
-  ctx.fillRect(0, 0, canvasW, titleH + padX);
+  ctx.fillRect(0, 0, canvasW, titleH);
   ctx.fillStyle = '#1a1a1a';
-  ctx.font = `bold 14px ${fontStack}`;
+  ctx.font = titleFont;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  const maxTitleW = canvasW - padX * 2;
-  let titleText = title;
-  if (tmpCtx.measureText(title).width > maxTitleW) {
-    while (tmpCtx.measureText(titleText + '\u2026').width > maxTitleW && titleText.length > 0) {
-      titleText = titleText.slice(0, -1);
-    }
-    titleText += '\u2026';
+  let titleY = titlePadTop;
+  for (const line of titleLines) {
+    ctx.fillText(line, padX, titleY);
+    titleY += titleLineH;
   }
-  ctx.fillText(titleText, padX, padX + 8);
 
+  // Separator line under title
   ctx.strokeStyle = '#dcdcdc';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, titleH + padX);
-  ctx.lineTo(canvasW, titleH + padX);
+  ctx.moveTo(0, titleH);
+  ctx.lineTo(canvasW, titleH);
   ctx.stroke();
 
-  // Pre-load avatars
+  // ── 5. Pre-load avatars ────────────────────────────────────────────────
   const senderAvatars = new Map<string, HTMLImageElement | null>();
   const uniqueSenders = [...new Set(msgs.map(m => m.sender))];
   for (const sender of uniqueSenders) {
@@ -211,18 +239,19 @@ async function renderChatToBlob(
     }
   }
 
-  // Draw messages
-  let y = padX + titleH + padX;
+  // ── 6. Draw messages ───────────────────────────────────────────────────
+  let y = padX + titleH;
   ctx.textBaseline = 'top';
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     const layout = layouts[i];
 
+    // Timestamp separator
     if (layout.showTs) {
       if (i > 0) y += tsGap;
       ctx.fillStyle = '#b2b2b2';
-      ctx.font = `11px ${fontStack}`;
+      ctx.font = tsFont;
       ctx.textAlign = 'center';
       ctx.fillText(formatTimestamp(m.datetime), canvasW / 2, y);
       y += 22;
@@ -232,6 +261,7 @@ async function renderChatToBlob(
     const avatarY = y;
 
     if (layout.showAvatar) {
+      // Draw avatar
       const senderColor = colorForName(m.sender);
       const avatarImg = senderAvatars.get(m.sender);
       ctx.save();
@@ -242,39 +272,48 @@ async function renderChatToBlob(
       else {
         ctx.fillStyle = senderColor; ctx.fill();
         ctx.fillStyle = '#fff';
-        ctx.font = `bold 14px ${fontStack}`;
+        ctx.font = `bold 14px ${font}`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(m.sender.charAt(0), avatarX + avatarSize / 2, avatarY + avatarSize / 2);
       }
       ctx.restore();
 
+      // Sender name
       ctx.fillStyle = '#888';
-      ctx.font = `11px ${fontStack}`;
+      ctx.font = `11px ${font}`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       ctx.fillText(m.sender, contentX, y + 1);
 
+      // Content bubble — vertically centered text
       const bubbleX = contentX;
       const bubbleY = y + nameH;
       ctx.fillStyle = '#fff';
       roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
       ctx.fill();
       ctx.fillStyle = '#1a1a1a';
-      ctx.font = `13px ${fontStack}`;
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      let textY = bubbleY + bubblePadV;
-      for (const line of layout.wrappedLines) { ctx.fillText(line, bubbleX + bubblePadH, textY); textY += lineH; }
+      ctx.font = contentFont;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2;
+      for (const line of layout.wrappedLines) {
+        ctx.fillText(line, bubbleX + bubblePadH, textY);
+        textY += lineH;
+      }
       y += layout.msgH + msgGap;
     } else {
+      // Same sender, no avatar/name — just bubble with vertically centered text
       const bubbleX = contentX;
       const bubbleY = y;
       ctx.fillStyle = '#fff';
       roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
       ctx.fill();
       ctx.fillStyle = '#1a1a1a';
-      ctx.font = `13px ${fontStack}`;
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      let textY = bubbleY + bubblePadV;
-      for (const line of layout.wrappedLines) { ctx.fillText(line, bubbleX + bubblePadH, textY); textY += lineH; }
+      ctx.font = contentFont;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let textY = bubbleY + layout.bubbleH / 2 - (layout.wrappedLines.length - 1) * lineH / 2;
+      for (const line of layout.wrappedLines) {
+        ctx.fillText(line, bubbleX + bubblePadH, textY);
+        textY += lineH;
+      }
       y += layout.msgH + sameSenderGap;
     }
   }
