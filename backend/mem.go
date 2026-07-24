@@ -155,14 +155,34 @@ func extractAndStoreFacts(
 
 	// 获取所有置顶记忆作为背景上下文，帮助 LLM 理解聊天中的人物关系
 	var backgroundCtx string
-	if pinned, _ := GetPinnedMemFacts(""); len(pinned) > 0 {
+	pinnedFacts, _ := GetPinnedMemFacts("")
+	if len(pinnedFacts) > 0 {
 		var bg strings.Builder
-		for _, f := range pinned {
+		for _, f := range pinnedFacts {
 			bg.WriteString("- ")
 			bg.WriteString(f.Fact)
 			bg.WriteString("\n")
 		}
 		backgroundCtx = bg.String()
+	}
+
+	// 预计算置顶记忆的 embedding，用于过滤与置顶记忆高度相似的新事实
+	const pinnedDedupThreshold = 0.85
+	var pinnedEmbs [][]float32
+	if len(pinnedFacts) > 0 {
+		pinnedTexts := make([]string, len(pinnedFacts))
+		for i, f := range pinnedFacts {
+			pinnedTexts[i] = f.Fact
+		}
+		pinnedVecs, err := GetEmbeddingsBatch(pinnedTexts, embCfg)
+		if err == nil {
+			pinnedEmbs = make([][]float32, 0, len(pinnedVecs))
+			for _, v := range pinnedVecs {
+				if v != nil {
+					pinnedEmbs = append(pinnedEmbs, v)
+				}
+			}
+		}
 	}
 
 	// 跨 batch 去重：重叠窗口会在相邻 batch 产生近似重复的事实
@@ -206,10 +226,20 @@ func extractAndStoreFacts(
 						continue
 					}
 					dup := false
+					// 和本轮已存事实比对
 					for _, prev := range storedEmbs {
 						if cosineSimilarity(emb, prev) > dedupThreshold {
 							dup = true
 							break
+						}
+					}
+					// 和置顶记忆比对：高度相似说明是已有背景知识，不需重复提取
+					if !dup {
+						for _, pEmb := range pinnedEmbs {
+							if cosineSimilarity(emb, pEmb) > pinnedDedupThreshold {
+								dup = true
+								break
+							}
 						}
 					}
 					if !dup {
@@ -314,8 +344,9 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n" +
 			"6. 同一主题的零散信息合并成一条完整陈述\n" +
 			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n" +
-			"8. 只输出JSON数组，不加任何解释，例如：[\"蒋钰瑶喜欢户外运动，经常周末和朋友去爬香山\", \"钟视航在北京做程序员，主要写后端\"]\n" +
-			"9. 如果没有有价值的事实，输出：[]\n" +
+			"8. 不要重复提取已知背景信息中已经存在的事实\n" +
+			"9. 只输出JSON数组，不加任何解释，例如：[\"蒋钰瑶喜欢户外运动，经常周末和朋友去爬香山\", \"钟视航在北京做程序员，主要写后端\"]\n" +
+			"10. 如果没有有价值的事实，输出：[]\n" +
 			bgSection +
 			"\n聊天记录：\n" + sb.String() + "\n输出："
 	} else {
@@ -328,8 +359,9 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n"+
 			"6. 同一主题的零散信息合并成一条完整陈述\n"+
 			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n"+
-			"8. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
-			"9. 如果没有有价值的事实，输出：[]\n"+
+			"8. 不要重复提取已知背景信息中已经存在的事实\n"+
+			"9. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
+			"10. 如果没有有价值的事实，输出：[]\n"+
 			"%s"+
 			"\n聊天记录：\n%s\n输出：",
 			displayName, displayName, displayName, bgSection, sb.String())
