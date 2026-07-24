@@ -6,6 +6,7 @@ import { PROVIDERS } from './types';
 export const MemorySection: React.FC = () => {
   const [baseURL, setBaseURL] = useState('');
   const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [mainProvider, setMainProvider] = useState('deepseek');
   const [mainModel, setMainModel] = useState('');
   const [saving, setSaving] = useState(false);
@@ -17,6 +18,7 @@ export const MemorySection: React.FC = () => {
     axios.get<Record<string, unknown>>('/api/preferences').then(r => {
       setBaseURL((r.data.mem_llm_base_url as string) ?? '');
       setModel((r.data.mem_llm_model as string) ?? '');
+      setApiKey((r.data.mem_llm_api_key as string) ?? '');
       setMainProvider((r.data.llm_provider as string) ?? 'deepseek');
       setMainModel((r.data.llm_model as string) ?? '');
     }).catch(() => {}).finally(() => setLoaded(true));
@@ -33,6 +35,7 @@ export const MemorySection: React.FC = () => {
       ...fresh,
       mem_llm_base_url: baseURL,
       mem_llm_model: model,
+      mem_llm_api_key: apiKey,
     };
   };
 
@@ -41,6 +44,9 @@ export const MemorySection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
+      // 重新加载，确保 __HAS_KEY__ 标记正确
+      const r = await axios.get<Record<string, unknown>>('/api/preferences');
+      setApiKey((r.data.mem_llm_api_key as string) ?? '');
       setSaveMsg({ ok: true, text: '已保存' });
     } catch {
       setSaveMsg({ ok: false, text: '保存失败' });
@@ -70,12 +76,25 @@ export const MemorySection: React.FC = () => {
 
   const isUsingMain = baseURL === '' && model === '';
   const mainProvInfo = PROVIDERS.find(p => p.value === mainProvider);
-  const effectiveProviderLabel = isUsingMain
-    ? (mainProvInfo?.label ?? mainProvider)
-    : 'Ollama（本地）';
-  const effectiveModelName = isUsingMain
-    ? (mainModel || mainProvInfo?.defaultModel || '未知')
-    : (model || 'qwen2.5:7b');
+  const hasAPIKey = apiKey !== '' && apiKey !== '__HAS_KEY__';
+  const keyIsSaved = apiKey === '__HAS_KEY__';
+  let effectiveProviderLabel: string;
+  let effectiveModelName: string;
+  if (isUsingMain) {
+    effectiveProviderLabel = mainProvInfo?.label ?? mainProvider;
+    effectiveModelName = mainModel || mainProvInfo?.defaultModel || '未知';
+  } else if (hasAPIKey || keyIsSaved) {
+    effectiveProviderLabel = mainProvInfo?.label ?? mainProvider;
+    effectiveModelName = model || '未设置';
+  } else {
+    effectiveProviderLabel = 'Ollama（本地）';
+    effectiveModelName = model || 'qwen2.5:7b';
+  }
+
+  const apiKeyDisplay = keyIsSaved ? '' : apiKey;
+  const apiKeyPlaceholder = keyIsSaved
+    ? '●●●●●●●● 已保存（留空保留，输入则覆盖）'
+    : '留空则使用本地 Ollama（无需 Key）';
 
   return (
     <div>
@@ -129,6 +148,17 @@ export const MemorySection: React.FC = () => {
             placeholder="留空则使用主 AI 配置"
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#07c160]/20 focus:border-[#07c160] transition-all dk-input"
           />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">API Key</label>
+          <input
+            type="password"
+            value={apiKeyDisplay}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder={apiKeyPlaceholder}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#07c160]/20 focus:border-[#07c160] transition-all dk-input"
+          />
+          <p className="mt-1 text-xs text-gray-400">填写 API Key 后可使用云端模型（如 OpenRouter / DeepSeek）；留空则走本地 Ollama。</p>
         </div>
         <div className="flex items-center gap-3 pt-1">
           <button
