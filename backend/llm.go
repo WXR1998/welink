@@ -400,17 +400,27 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	if err := guardOutboundURL(cfg.baseURL); err != nil {
 		return err
 	}
+	// Token 统计：记录输入 token
+	promptTokens := estimateMsgTokens(msgs)
+	// 用 wrapper 追踪输出 token
+	outputChars := 0
+	wrappedSend := func(chunk StreamChunk) {
+		if chunk.Delta != "" {
+			outputChars += len(chunk.Delta)
+		}
+		send(chunk)
+	}
 	t := startTimer("llm_stream")
 	var err error
 	switch cfg.provider {
 	case "claude":
-		err = streamClaude(send, msgs, cfg)
+		err = streamClaude(wrappedSend, msgs, cfg)
 	case "bedrock":
-		err = streamBedrock(send, msgs, cfg)
+		err = streamBedrock(wrappedSend, msgs, cfg)
 	case "vertex":
-		err = streamVertex(send, msgs, cfg)
+		err = streamVertex(wrappedSend, msgs, cfg)
 	default:
-		err = streamOpenAICompat(send, msgs, cfg)
+		err = streamOpenAICompat(wrappedSend, msgs, cfg)
 	}
 	t.Done(err,
 		"provider", cfg.provider,
@@ -419,6 +429,9 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 		"prompt_chars", llmPromptChars(msgs),
 		"reasoning", cfg.reasoningEffort,
 	)
+	// Token 统计：记录输出 token
+	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
+	recordTokenUsage(cfg.model, "llm", promptTokens, outputTokens)
 	return err
 }
 
@@ -724,6 +737,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 	if err := guardOutboundURL(cfg.baseURL); err != nil {
 		return "", err
 	}
+	promptTokens := estimateMsgTokens(msgs)
 	t := startTimer("llm_complete")
 	var (
 		out string
@@ -746,6 +760,8 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		"prompt_chars", llmPromptChars(msgs),
 		"resp_chars", len(out),
 	)
+	outputTokens := estimateTokens(out)
+	recordTokenUsage(cfg.model, "llm", promptTokens, outputTokens)
 	return out, err
 }
 

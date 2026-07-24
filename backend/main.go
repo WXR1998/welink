@@ -4387,6 +4387,9 @@ func serverMain() {
 	// 记忆库相关端点（/api/memory/*）
 	registerMemoryRoutes(api)
 
+	// Token 使用统计端点
+	registerTokenStatsRoutes(api)
+
 	// 播客相关端点（/api/podcast/*）
 	registerPodcastRoutes(api, getSvc)
 
