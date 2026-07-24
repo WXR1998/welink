@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy } from 'lucide-react';
+import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -30,6 +30,241 @@ interface Props {
 
 // Memory 库主页 — 浏览 / 搜索 / 编辑 / 置顶 / 删除 LLM 提炼的记忆事实。
 // 置顶事实会在 AI 对话时自动塞进 context（由后端 BuildPinnedMemoryBlock 处理）。
+// ── 截图渲染辅助函数 ──────────────────────────────────────────────────────────
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('img load fail'));
+    img.src = src;
+  });
+}
+
+function colorForName(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return `hsl(${Math.abs(hash) % 360}, 60%, 55%)`;
+}
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  let current = '';
+  for (const ch of text) {
+    if (ch === '\n') {
+      lines.push(current);
+      current = '';
+      continue;
+    }
+    const test = current + ch;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = ch;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function parseDateTime(dt: string): number {
+  // datetime format: "2021-03-08 23:12:05"
+  const d = new Date(dt.replace(/-/g, '/'));
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function formatTimestamp(dt: string): string {
+  // "2021-03-08 23:12:05" → "2021-03-08 23:12"
+  return dt.length >= 16 ? dt.slice(0, 16) : dt;
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/**
+ * Render an array of chat messages to a JPG blob.
+ * - Avatars: circular, left side
+ * - Sender names: small gray text above bubble
+ * - Content: white rounded bubble
+ * - Timestamps: only shown when gap > 5 min from previous message
+ */
+async function renderChatToBlob(
+  msgs: { datetime: string; sender: string; content: string }[],
+  avatarLookup: (sender: string) => string | undefined,
+): Promise<Blob> {
+  const canvasW = 500;
+  const padX = 16;
+  const avatarSize = 36;
+  const avatarGap = 8;
+  const contentX = padX + avatarSize + avatarGap; // 60
+  const maxBubbleW = canvasW - contentX - padX - 40; // leave room
+  const bubblePadH = 10;
+  const bubblePadV = 8;
+  const lineH = 20;
+  const nameH = 16;
+  const msgGap = 10;
+  const tsGap = 18;
+  const timeGapThreshold = 5 * 60 * 1000; // 5 min
+
+  // Pre-calc layout
+  type LayoutMsg = {
+    showTs: boolean;
+    wrappedLines: string[];
+    bubbleW: number;
+    bubbleH: number;
+    msgH: number;
+  };
+
+  // Use a temp canvas for text measurement
+  const tmpCanvas = document.createElement('canvas');
+  const tmpCtx = tmpCanvas.getContext('2d')!;
+  tmpCtx.font = '13px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+
+  const layouts: LayoutMsg[] = [];
+  let totalH = padX; // top padding
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const showTs = i === 0 || (parseDateTime(m.datetime) - parseDateTime(msgs[i - 1].datetime) > timeGapThreshold);
+    if (showTs && i > 0) totalH += tsGap;
+    if (showTs) totalH += 22; // timestamp height
+
+    const lines = wrapText(tmpCtx, m.content, maxBubbleW - bubblePadH * 2);
+    const textW = Math.max(...lines.map(l => tmpCtx.measureText(l).width));
+    const bubbleW = Math.min(maxBubbleW, textW + bubblePadH * 2);
+    const bubbleH = lines.length * lineH + bubblePadV * 2;
+    const msgH = Math.max(avatarSize, nameH + bubbleH);
+    layouts.push({ showTs, wrappedLines: lines, bubbleW, bubbleH, msgH });
+    totalH += msgH + msgGap;
+  }
+  totalH += padX; // bottom padding
+
+  // Create real canvas
+  const canvas = document.createElement('canvas');
+  // Scale for retina
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvasW * dpr;
+  canvas.height = totalH * dpr;
+  canvas.style.width = canvasW + 'px';
+  canvas.style.height = totalH + 'px';
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(dpr, dpr);
+
+  // Background
+  ctx.fillStyle = '#ededed';
+  ctx.fillRect(0, 0, canvasW, totalH);
+
+  // Pre-load all unique sender avatars
+  const senderAvatars = new Map<string, HTMLImageElement | null>();
+  const uniqueSenders = [...new Set(msgs.map(m => m.sender))];
+  for (const sender of uniqueSenders) {
+    const avatarUrl = avatarLookup(sender);
+    if (avatarUrl) {
+      try {
+        senderAvatars.set(sender, await loadImage(avatarUrl));
+      } catch {
+        senderAvatars.set(sender, null);
+      }
+    } else {
+      senderAvatars.set(sender, null);
+    }
+  }
+
+  // Draw messages
+  let y = padX;
+  ctx.textBaseline = 'top';
+
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const layout = layouts[i];
+
+    // Timestamp separator
+    if (layout.showTs) {
+      if (i > 0) y += tsGap;
+      ctx.fillStyle = '#b2b2b2';
+      ctx.font = '11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(formatTimestamp(m.datetime), canvasW / 2, y);
+      y += 22;
+    }
+
+    // Avatar
+    const avatarX = padX;
+    const avatarY = y;
+    const senderColor = colorForName(m.sender);
+    const avatarImg = senderAvatars.get(m.sender);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    if (avatarImg) {
+      ctx.clip();
+      ctx.drawImage(avatarImg, avatarX, avatarY, avatarSize, avatarSize);
+    } else {
+      ctx.fillStyle = senderColor;
+      ctx.fill();
+      // Draw first character
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(m.sender.charAt(0), avatarX + avatarSize / 2, avatarY + avatarSize / 2);
+    }
+    ctx.restore();
+
+    // Sender name
+    ctx.fillStyle = '#888';
+    ctx.font = '11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(m.sender, contentX, y + 1);
+
+    // Content bubble
+    const bubbleX = contentX;
+    const bubbleY = y + nameH;
+    ctx.fillStyle = '#fff';
+    roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
+    ctx.fill();
+
+    // Content text
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = '13px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let textY = bubbleY + bubblePadV;
+    for (const line of layout.wrappedLines) {
+      ctx.fillText(line, bubbleX + bubblePadH, textY);
+      textY += lineH;
+    }
+
+    y += layout.msgH + msgGap;
+  }
+
+  // Convert to blob
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('canvas.toBlob returned null'));
+    }, 'image/jpeg', 0.92);
+  });
+}
+
 export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [facts, setFacts] = useState<MemFact[]>([]);
   const [contactStats, setContactStats] = useState<ContactStat[]>([]);
@@ -55,6 +290,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverLoading, setHoverLoading] = useState(false);
   const [hoverPos, setHoverPos] = useState<{ top: number; left: number } | null>(null);
   const [hoverCopied, setHoverCopied] = useState(false);
+  const [hoverShotLoading, setHoverShotLoading] = useState(false);
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,6 +316,18 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     return m;
   }, [contacts, groups]);
   const lookup = (key: string) => contactMap.get(stripKey(key));
+
+  // sender name → avatar URL 映射（群聊里 sender 是显示名）
+  const senderAvatarMap = useMemo(() => {
+    const m = new Map<string, string | undefined>();
+    for (const c of contacts) {
+      const av = avatarSrc(c.small_head_url);
+      if (c.remark) m.set(c.remark, av);
+      if (c.nickname) m.set(c.nickname, av);
+      m.set(c.username, av);
+    }
+    return m;
+  }, [contacts]);
 
   const fetchFacts = useCallback(async () => {
     setLoading(true);
@@ -146,7 +394,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       setHoverFactId(null);
       setHoverPos(null);
       setHoverMsgs([]);
-    }, 500);
+    }, 100);
   };
 
   const handleCopyAll = () => {
@@ -154,6 +402,31 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     navigator.clipboard.writeText(text);
     setHoverCopied(true);
     setTimeout(() => setHoverCopied(false), 2000);
+  };
+
+  const handleScreenshot = async () => {
+    if (hoverMsgs.length === 0) return;
+    setHoverShotLoading(true);
+    try {
+      const blob = await renderChatToBlob(hoverMsgs, (sender) => senderAvatarMap.get(sender));
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/jpeg': blob })]);
+        setHoverCopied(true);
+        setTimeout(() => setHoverCopied(false), 2000);
+      } catch {
+        // 浏览器不支持 clipboard.write 图片，回退为下载
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat-${Date.now()}.jpg`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Screenshot failed', e);
+    } finally {
+      setHoverShotLoading(false);
+    }
   };
 
   // 清理定时器
@@ -548,13 +821,23 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 shrink-0">
             <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">来源聊天记录</span>
-            <button
-              onClick={handleCopyAll}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
-            >
-              {hoverCopied ? <Check size={12} /> : <Copy size={12} />}
-              {hoverCopied ? '已复制' : '复制全部'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleScreenshot}
+                disabled={hoverShotLoading || hoverMsgs.length === 0}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors disabled:opacity-50"
+              >
+                {hoverShotLoading ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+                截图
+              </button>
+              <button
+                onClick={handleCopyAll}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
+              >
+                {hoverCopied ? <Check size={12} /> : <Copy size={12} />}
+                {hoverCopied ? '已复制' : '复制全部'}
+              </button>
+            </div>
           </div>
           <div className="overflow-y-auto p-2 space-y-1 flex-1">
             {hoverLoading ? (
