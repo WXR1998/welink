@@ -1410,10 +1410,10 @@ func serverMain() {
 
 		// ── 注入记忆库事实 ──
 		// 构造 contact_key（与 RAG 端点保持一致）
-		// username 为空时（如 AI 首页跨联系人问答），contactKey 留空，
-		// GetPinnedMemFacts("") 会返回所有联系人的置顶记忆
+		// username 为空或为 __cross_contact__ 时（如 AI 首页跨联系人问答），
+		// contactKey 留空，GetPinnedMemFacts("") 会返回所有联系人的置顶记忆
 		var contactKey string
-		if body.Username != "" {
+		if body.Username != "" && body.Username != "__cross_contact__" {
 			if body.IsGroup {
 				contactKey = "group:" + body.Username
 			} else {
