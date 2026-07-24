@@ -1039,6 +1039,8 @@ ${effectiveCtx}
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          username,
+          is_group: isGroup,
           messages: llmMessages,
           profile_id: selectedProfileId !== '__default__' ? selectedProfileId : '',
         }),

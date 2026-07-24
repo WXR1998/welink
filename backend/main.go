@@ -1403,6 +1403,60 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 API Key 或完成 Google 授权"})
 			return
 		}
+
+		// ── 注入记忆库事实 ──
+		// 构造 contact_key（与 RAG 端点保持一致）
+		// username 为空时（如 AI 首页跨联系人问答），contactKey 留空，
+		// GetPinnedMemFacts("") 会返回所有联系人的置顶记忆
+		var contactKey string
+		if body.Username != "" {
+			if body.IsGroup {
+				contactKey = "group:" + body.Username
+			} else {
+				contactKey = "contact:" + body.Username
+			}
+		}
+
+		// 提取用户最后一条问题作为语义检索词
+		var searchQ string
+		for i := len(body.Messages) - 1; i >= 0; i-- {
+			if body.Messages[i].Role == "user" {
+				searchQ = body.Messages[i].Content
+				break
+			}
+		}
+
+		// 加载记忆事实：置顶事实（始终注入）+ 语义检索 top-10
+		memFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
+		if pinned, _ := GetPinnedMemFacts(contactKey); len(pinned) > 0 {
+			seen := make(map[string]bool, len(memFacts))
+			for _, f := range memFacts {
+				seen[f] = true
+			}
+			var merged []string
+			for _, p := range pinned {
+				if !seen[p.Fact] {
+					merged = append(merged, "[📌 置顶] "+p.Fact)
+					seen[p.Fact] = true
+				}
+			}
+			memFacts = append(merged, memFacts...)
+		}
+
+		// 如果有记忆事实，注入到第一条 system 消息末尾
+		if len(memFacts) > 0 {
+			memSection := "\n\n【关于对方的已知事实（由 AI 从历史聊天中提炼）】\n"
+			for _, f := range memFacts {
+				memSection += "- " + f + "\n"
+			}
+			for i := range body.Messages {
+				if body.Messages[i].Role == "system" {
+					body.Messages[i].Content += memSection
+					break
+				}
+			}
+		}
+
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式响应"})
