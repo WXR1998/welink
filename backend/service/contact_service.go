@@ -355,10 +355,13 @@ func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom
 
 	// 已完成分析：标记已完成，前端直接进入主界面，不重新索引
 	if alreadyInitialized {
-		log.Printf("[CONFIG] Analysis already completed, skipping re-index")
+		log.Printf("[CONFIG] Analysis already completed, rebuilding cache in background")
 		svc.cacheMu.Lock()
 		svc.isInitialized = true
 		svc.cacheMu.Unlock()
+		// 缓存是内存态，重启后丢失；在后台静默重建，前端立即可用
+		// defaultInitFrom/To 为 0 表示不限时间（全量），同样需要重建
+		go svc.silentRebuildCache(defaultInitFrom, defaultInitTo)
 	} else if defaultInitFrom != 0 || defaultInitTo != 0 {
 		// 配置了自动初始化时间范围且尚未完成：启动后立即开始索引
 		log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
