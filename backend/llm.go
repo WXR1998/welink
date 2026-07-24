@@ -65,6 +65,7 @@ type llmConfig struct {
 	model           string
 	noThink         bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
 	reasoningEffort string // off / low / medium / high；空字符串 = off
+	contextWindow   int    // 上下文窗口 token 数，0 = 默认 128000
 }
 
 // reasoningBudgetTokens 把档位映射到 Claude thinking.budget_tokens
@@ -293,7 +294,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	if profileID != "" {
 		for _, p := range prefs.LLMProfiles {
 			if p.ID == profileID {
-				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort}
+				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow}
 				goto applyGemini
 			}
 		}
@@ -395,12 +396,130 @@ func testLLMConnProfile(profileID string, prefs Preferences) (string, error) {
 	return testLLMConn(tmp)
 }
 
+const defaultContextWindow = 128000
+
+// compressContextIfNeeded 当对话历史过长时，自动压缩旧消息：
+// 1. 保留第一条 system 消息（含聊天记录上下文）
+// 2. 将中间的旧消息用 LLM 总结成一条 system 消息
+// 3. 保留最近若干轮对话
+// 整个过程是同步阻塞的，但只在超过阈值时才触发。
+func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamChunk)) []LLMMessage {
+	maxTokens := cfg.contextWindow
+	if maxTokens <= 0 {
+		maxTokens = defaultContextWindow
+	}
+	// 留 4K 给输出
+	compressThreshold := maxTokens - 4000
+	if compressThreshold < 1000 {
+		compressThreshold = 1000
+	}
+
+	totalTokens := estimateMsgTokens(msgs)
+	if totalTokens <= compressThreshold {
+		return msgs
+	}
+
+	log.Printf("[llm] 上下文压缩触发：%d tokens（阈值 %d）", totalTokens, compressThreshold)
+	if send != nil {
+		send(StreamChunk{Delta: "⏳ 对话历史较长，正在自动压缩旧消息…\n\n"})
+	}
+
+	// 分离 system 消息和对话消息
+	var systemMsgs []LLMMessage
+	var convMsgs []LLMMessage
+	for _, m := range msgs {
+		if m.Role == "system" {
+			systemMsgs = append(systemMsgs, m)
+		} else {
+			convMsgs = append(convMsgs, m)
+		}
+	}
+
+	// 计算需要保留的最近消息数量（从后往前，直到总 token 数低于阈值的一半）
+	keepCount := 0
+	keepTokens := 0
+	halfThreshold := compressThreshold / 2
+	for i := len(convMsgs) - 1; i >= 0; i-- {
+		msgTokens := estimateMsgTokens([]LLMMessage{convMsgs[i]})
+		if keepTokens+msgTokens > halfThreshold {
+			break
+		}
+		keepTokens += msgTokens
+		keepCount++
+	}
+
+	// 需要压缩的旧消息
+	toCompress := convMsgs[:len(convMsgs)-keepCount]
+	if len(toCompress) == 0 {
+		return msgs
+	}
+
+	// 用 LLM 总结旧对话
+	var convText strings.Builder
+	for _, m := range toCompress {
+		convText.WriteString(m.Role)
+		convText.WriteString(": ")
+		convText.WriteString(m.Content)
+		convText.WriteString("\n\n")
+	}
+
+	summarizeMsgs := []LLMMessage{
+		{Role: "system", Content: "你是一个对话总结助手。请将以下对话历史压缩成一段简洁的摘要，保留关键信息、结论和用户意图。用中文回答。"},
+		{Role: "user", Content: convText.String()},
+	}
+
+	// 复用已有的 provider 路由逻辑完成同步摘要
+	var summary string
+	var err error
+	switch cfg.provider {
+	case "claude":
+		summary, err = completeClaudeSync(summarizeMsgs, cfg)
+	case "bedrock":
+		summary, err = completBedrockSync(summarizeMsgs, cfg)
+	case "vertex":
+		summary, err = completVertexSync(summarizeMsgs, cfg)
+	default:
+		summary, err = completeOpenAICompatSync(summarizeMsgs, cfg)
+	}
+	if err != nil || summary == "" {
+		// 压缩失败，退回到截断策略
+		log.Printf("[llm] 上下文压缩失败（%v），退回截断", err)
+		result := make([]LLMMessage, 0, len(systemMsgs)+keepCount+1)
+		result = append(result, systemMsgs...)
+		result = append(result, LLMMessage{
+			Role:    "system",
+			Content: "（注：部分早期对话内容因上下文长度限制已被省略）",
+		})
+		result = append(result, convMsgs[len(convMsgs)-keepCount:]...)
+		return result
+	}
+
+	// 组装压缩后的消息
+	result := make([]LLMMessage, 0, len(systemMsgs)+1+keepCount)
+	result = append(result, systemMsgs...)
+	result = append(result, LLMMessage{
+		Role:    "system",
+		Content: "以下是之前对话的摘要：\n\n" + summary,
+	})
+	result = append(result, convMsgs[len(convMsgs)-keepCount:]...)
+
+	log.Printf("[llm] 上下文压缩完成：%d tokens → %d tokens",
+		totalTokens, estimateMsgTokens(result))
+	if send != nil {
+		send(StreamChunk{Delta: "✅ 上下文已压缩，继续回答。\n\n"})
+	}
+
+	return result
+}
+
 // dispatchLLMStream 统一流式分发
 func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) error {
 	// Demo 模式下拒绝指向内网的 baseURL，防 SSRF（M2/L4）；本地部署不限制（Ollama 等走 localhost）
 	if err := guardOutboundURL(cfg.baseURL); err != nil {
 		return err
 	}
+	// 上下文窗口管理：对话过长时自动压缩旧消息
+	msgs = compressContextIfNeeded(msgs, cfg, send)
 	// Token 统计：记录输入 token
 	promptTokens := estimateMsgTokens(msgs)
 	// 用 wrapper 追踪输出 token

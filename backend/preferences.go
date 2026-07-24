@@ -103,6 +103,8 @@ type LLMProfile struct {
 	//   - OpenAI o-series / gpt-5-reasoning → reasoning_effort 字段
 	//   - DeepSeek R1 / Ollama qwen3 等     → 模型自带 <think>，本字段不影响
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// 上下文窗口大小（token 数），用于自动压缩对话历史。0 = 使用默认值 128000。
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 // Preferences 是唯一的持久化结构体，合并了用户偏好和 App 配置。
