@@ -2544,6 +2544,35 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"started": true})
 	})
 
+	// GET /api/ai/vec/all-jobs — 列出所有构建/提炼任务及其进度
+	api.GET("/ai/vec/all-jobs", func(c *gin.Context) {
+		vecJobsMu.Lock()
+		keys := make([]string, 0, len(vecJobs))
+		for k := range vecJobs {
+			keys = append(keys, k)
+		}
+		vecJobsMu.Unlock()
+
+		jobs := make([]gin.H, 0, len(keys))
+		for _, k := range keys {
+			p := GetVecBuildProgress(k)
+			if p == nil {
+				continue
+			}
+			jobs = append(jobs, gin.H{
+				"key":        k,
+				"step":       p.Step,
+				"current":    p.Current,
+				"total":      p.Total,
+				"done":       p.Done,
+				"paused":     p.Paused,
+				"error":      p.Error,
+				"fact_count": p.FactCount,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+	})
+
 	// GET /api/ai/vec/build-progress?key=... — 轮询后台构建进度
 	api.GET("/ai/vec/build-progress", func(c *gin.Context) {
 		key := c.Query("key")

@@ -14,6 +14,26 @@ export const MemorySection: React.FC = () => {
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [clearing, setClearing] = useState<'facts' | 'embeddings' | null>(null);
+  const [jobs, setJobs] = useState<Array<{
+    key: string; step: string; current: number; total: number;
+    done: boolean; paused: boolean; error: string; fact_count: number;
+  }>>([]);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const r = await axios.get<{ jobs: Array<{
+          key: string; step: string; current: number; total: number;
+          done: boolean; paused: boolean; error: string; fact_count: number;
+        }> }>('/api/ai/vec/all-jobs');
+        if (active) setJobs(r.data.jobs || []);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     axios.get<Record<string, unknown>>('/api/preferences').then(r => {
@@ -212,6 +232,44 @@ export const MemorySection: React.FC = () => {
             </span>
           )}
         </div>
+        {jobs.length > 0 && (
+          <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-2">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">运行中的任务</p>
+            <div className="space-y-2">
+              {jobs.map(job => {
+                const pct = job.total > 0 ? Math.round((job.current / job.total) * 100) : 0;
+                const stepLabel: Record<string, string> = {
+                  'embedding': '向量编码',
+                  'extracting': '记忆提炼',
+                  'done': '完成',
+                  'error': '错误',
+                  'paused': '已暂停',
+                };
+                const label = stepLabel[job.step] || job.step || '未知';
+                const isActive = !job.done && !job.paused && !job.error;
+                return (
+                  <div key={job.key} className="px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-300 truncate flex-1 mr-2">{job.key}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isActive ? 'bg-[#07c160]/10 text-[#07c160]' : job.done ? 'bg-blue-100 text-blue-600' : job.paused ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'}`}>
+                        {label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${isActive ? 'bg-[#07c160]' : job.done ? 'bg-blue-500' : job.paused ? 'bg-yellow-400' : 'bg-red-400'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-400 whitespace-nowrap">{job.current}/{job.total}{job.fact_count > 0 ? ` · ${job.fact_count}条` : ''}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-2">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">数据管理</p>
           <div className="flex flex-wrap gap-2">
