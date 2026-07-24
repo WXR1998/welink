@@ -8,8 +8,7 @@ import { CrossContactQA } from './CrossContactQA';
 import { ConversationHistory } from './ConversationHistory';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { generateShareImage } from '../../utils/shareImage';
-import { screenshotElement } from '../../utils/screenshot';
+import { generateShareImage, generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { avatarSrc } from '../../utils/avatar';
 import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage } from '../../types';
@@ -330,13 +329,21 @@ const MessageBubble: React.FC<{
 
   const handleScreenshot = async () => {
     if (shotLoading) return;
-    // Capture the full Q&A pair (question + answer) if available
-    const pairContainer = bubbleRef.current?.closest('[data-qa-pair]') as HTMLElement | null;
-    const target = pairContainer || bubbleRef.current;
-    if (!target) return;
     setShotLoading(true);
     try {
-      const result = await screenshotElement(target);
+      const result = await generateAIScreenshot({
+        question: prevQuestion,
+        answer: msg.content,
+        contactName,
+        stats: msg.stats ? {
+          provider: msg.stats.provider,
+          model: msg.stats.model,
+          elapsedSecs: msg.stats.elapsed,
+          tokensPerSec: msg.stats.tokensPerSec,
+          charCount: msg.stats.chars,
+          timestamp: msg.stats.timestamp,
+        } : undefined,
+      });
       if (result.ok) {
         setShotDone(true);
         setTimeout(() => setShotDone(false), 2000);
