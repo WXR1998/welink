@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, AlertCircle, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Check, Trash2 } from 'lucide-react';
 import axios from 'axios';
 import { PROVIDERS } from './types';
 
@@ -13,6 +13,7 @@ export const MemorySection: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [clearing, setClearing] = useState<'facts' | 'embeddings' | null>(null);
 
   useEffect(() => {
     axios.get<Record<string, unknown>>('/api/preferences').then(r => {
@@ -52,6 +53,34 @@ export const MemorySection: React.FC = () => {
       setSaveMsg({ ok: false, text: '保存失败' });
     } finally {
       setSaving(false);
+      setTimeout(() => setSaveMsg(null), 3000);
+    }
+  };
+
+  const handleClearNonPinned = async () => {
+    if (!confirm('确定清除所有非置顶的记忆事实？\n\n此操作会：\n1. 删除所有未置顶的记忆事实\n2. 重置所有群/联系人的记忆提取游标\n\n置顶的记忆会保留。')) return;
+    setClearing('facts');
+    try {
+      await axios.delete('/api/memory/non-pinned');
+      setSaveMsg({ ok: true, text: '已清除非置顶记忆' });
+    } catch {
+      setSaveMsg({ ok: false, text: '清除失败' });
+    } finally {
+      setClearing(null);
+      setTimeout(() => setSaveMsg(null), 3000);
+    }
+  };
+
+  const handleClearEmbeddings = async () => {
+    if (!confirm('确定清除所有 embedding 和向量索引？\n\n此操作会：\n1. 删除所有向量消息（vec_messages）\n2. 删除所有向量索引状态（vec_index_status）\n3. 重置记忆提取游标\n\n需要重新构建向量索引后才能重新提取记忆。')) return;
+    setClearing('embeddings');
+    try {
+      await axios.delete('/api/memory/embeddings');
+      setSaveMsg({ ok: true, text: '已清除所有 embedding' });
+    } catch {
+      setSaveMsg({ ok: false, text: '清除失败' });
+    } finally {
+      setClearing(null);
       setTimeout(() => setSaveMsg(null), 3000);
     }
   };
@@ -182,6 +211,31 @@ export const MemorySection: React.FC = () => {
               {saveMsg.ok ? '✓ ' : '✕ '}{saveMsg.text}
             </span>
           )}
+        </div>
+        <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-2">
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">数据管理</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleClearNonPinned}
+              disabled={clearing !== null}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+            >
+              {clearing === 'facts' ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              清除非置顶记忆
+            </button>
+            <button
+              onClick={handleClearEmbeddings}
+              disabled={clearing !== null}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+            >
+              {clearing === 'embeddings' ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              清除所有 Embedding
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-gray-400 leading-relaxed">
+            <strong>清除非置顶记忆</strong>：删除所有未置顶的记忆事实，并重置记忆提取游标（需重新提炼）。<br/>
+            <strong>清除所有 Embedding</strong>：删除所有向量消息和向量索引状态（需重新构建向量索引）。
+          </p>
         </div>
       </div>
     </div>

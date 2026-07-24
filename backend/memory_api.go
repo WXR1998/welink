@@ -220,6 +220,60 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// 清除所有非置顶记忆事实 + 重置记忆提取游标
+	api.DELETE("/memory/non-pinned", func(c *gin.Context) {
+		db := getAIDB()
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
+			return
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 删除所有未置顶的事实
+		res, err := tx.Exec("DELETE FROM mem_facts WHERE pinned = 0")
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		deleted, _ := res.RowsAffected()
+		// 重置记忆提取游标（extract_offset = -1）
+		tx.Exec("UPDATE vec_index_status SET extract_offset = -1")
+		if err := tx.Commit(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": deleted})
+	})
+
+	// 清除所有 embedding + 向量索引游标
+	api.DELETE("/memory/embeddings", func(c *gin.Context) {
+		db := getAIDB()
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
+			return
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// 清空向量消息表
+		tx.Exec("DELETE FROM vec_messages")
+		// 清空向量索引状态表
+		tx.Exec("DELETE FROM vec_index_status")
+		// 重置记忆提取游标
+		tx.Exec("UPDATE vec_index_status SET extract_offset = -1")
+		if err := tx.Commit(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	// 置顶 / 取消置顶
 	api.PUT("/memory/:id/pin", func(c *gin.Context) {
 		id, err := strconv.Atoi(c.Param("id"))
