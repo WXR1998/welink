@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -48,6 +48,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [addPinned, setAddPinned] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
+
+  // hover 预览：hover 某条记忆时显示来源聊天记录
+  const [hoverFactId, setHoverFactId] = useState<number | null>(null);
+  const [hoverMsgs, setHoverMsgs] = useState<{ datetime: string; sender: string; content: string }[]>([]);
+  const [hoverLoading, setHoverLoading] = useState(false);
+  const [hoverPos, setHoverPos] = useState<{ top: number; left: number } | null>(null);
+  const [hoverCopied, setHoverCopied] = useState(false);
+  const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 用于把 contact_key 映射到头像 / 名称
   // 注意：后端 contact_key 带 contact:/group: 前缀，lookup 时要脱
@@ -106,6 +115,54 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     const t = setTimeout(() => { void fetchFacts(); }, 200);
     return () => clearTimeout(t);
   }, [fetchFacts]);
+
+  // hover 预览：hover 某条记忆时，debounce 300ms 后显示来源聊天记录
+  const showPreview = (fact: MemFact, rect: DOMRect) => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+    if (showTimer.current) clearTimeout(showTimer.current);
+    showTimer.current = setTimeout(async () => {
+      setHoverFactId(fact.id);
+      setHoverLoading(true);
+      setHoverMsgs([]);
+      const wouldOverflow = rect.right + 480 > window.innerWidth;
+      setHoverPos({
+        top: wouldOverflow ? rect.bottom + 4 : rect.top,
+        left: wouldOverflow ? rect.left : rect.right + 8,
+      });
+      try {
+        const r = await axios.get<{ messages: { datetime: string; sender: string; content: string }[] }>(
+          `/api/memory/${fact.id}/source`,
+        );
+        setHoverMsgs(r.data.messages || []);
+      } catch { /* ignore */ }
+      finally { setHoverLoading(false); }
+    }, 300);
+  };
+
+  const hidePreview = () => {
+    if (showTimer.current) { clearTimeout(showTimer.current); showTimer.current = null; }
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      setHoverFactId(null);
+      setHoverPos(null);
+      setHoverMsgs([]);
+    }, 500);
+  };
+
+  const handleCopyAll = () => {
+    const text = hoverMsgs.map(m => `[${m.datetime}] ${m.sender}: ${m.content}`).join('\n');
+    navigator.clipboard.writeText(text);
+    setHoverCopied(true);
+    setTimeout(() => setHoverCopied(false), 2000);
+  };
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (showTimer.current) clearTimeout(showTimer.current);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+    };
+  }, []);
 
   const togglePin = async (f: MemFact) => {
     await axios.put(`/api/memory/${f.id}/pin`, { pinned: !f.pinned });
@@ -309,9 +366,14 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 const info = lookup(f.contact_key);
                 const isEditing = editingId === f.id;
                 return (
-                  <div key={f.id} className={`bg-white dark:bg-[#1d1d1f] rounded-2xl border p-4 transition-colors ${
-                    f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
-                  }`}>
+                  <div
+                    key={f.id}
+                    className={`bg-white dark:bg-[#1d1d1f] rounded-2xl border p-4 transition-colors ${
+                      f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
+                    }`}
+                    onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={() => hidePreview()}
+                  >
                     <div className="flex items-start gap-3">
                       {info ? (
                         <img src={info.avatar} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0" title={info.name} />
@@ -472,6 +534,44 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 添加
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* hover 预览浮层 */}
+      {hoverFactId !== null && hoverPos && (
+        <div
+          className="fixed z-[8000] w-[460px] max-h-[420px] rounded-2xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden"
+          style={{ top: hoverPos.top, left: hoverPos.left }}
+          onMouseEnter={() => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } }}
+          onMouseLeave={() => hidePreview()}
+        >
+          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 shrink-0">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">来源聊天记录</span>
+            <button
+              onClick={handleCopyAll}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
+            >
+              {hoverCopied ? <Check size={12} /> : <Copy size={12} />}
+              {hoverCopied ? '已复制' : '复制全部'}
+            </button>
+          </div>
+          <div className="overflow-y-auto p-2 space-y-1 flex-1">
+            {hoverLoading ? (
+              <div className="py-4 text-center">
+                <Loader2 size={16} className="animate-spin inline text-gray-400" />
+              </div>
+            ) : hoverMsgs.length === 0 ? (
+              <div className="py-4 text-center text-xs text-gray-400">无来源聊天记录</div>
+            ) : (
+              hoverMsgs.map((m, idx) => (
+                <div key={idx} className="text-[11px] leading-relaxed break-words">
+                  <span className="text-gray-400">{m.datetime}</span>{' '}
+                  <span className="text-gray-600 dark:text-gray-300 font-medium">{m.sender}:</span>{' '}
+                  <span className="text-gray-700 dark:text-gray-200">{m.content}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

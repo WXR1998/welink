@@ -301,6 +301,57 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "pinned": body.Pinned})
 	})
+
+	// 查看某条记忆的来源聊天记录（hover 预览用）
+	api.GET("/memory/:id/source", func(c *gin.Context) {
+		id, err := strconv.Atoi(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "id 非法"})
+			return
+		}
+		db := getAIDB()
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
+			return
+		}
+		var contactKey string
+		var sourceFrom, sourceTo int
+		err = db.QueryRow("SELECT contact_key, source_from, source_to FROM mem_facts WHERE id = ?", id).
+			Scan(&contactKey, &sourceFrom, &sourceTo)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
+			return
+		}
+		// source_from / source_to 是 vec_messages 按 seq 排序后的索引
+		if sourceFrom < 0 || sourceTo < sourceFrom {
+			c.JSON(http.StatusOK, gin.H{"messages": []interface{}{}})
+			return
+		}
+		limit := sourceTo - sourceFrom + 1
+		rows, err := db.Query(
+			`SELECT datetime, sender, content FROM vec_messages WHERE contact_key = ? ORDER BY seq LIMIT ? OFFSET ?`,
+			contactKey, limit, sourceFrom)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		defer rows.Close()
+		type SrcMsg struct {
+			DateTime string `json:"datetime"`
+			Sender   string `json:"sender"`
+			Content  string `json:"content"`
+		}
+		var msgs []SrcMsg
+		for rows.Next() {
+			var m SrcMsg
+			rows.Scan(&m.DateTime, &m.Sender, &m.Content)
+			msgs = append(msgs, m)
+		}
+		if msgs == nil {
+			msgs = []SrcMsg{}
+		}
+		c.JSON(http.StatusOK, gin.H{"messages": msgs, "range": gin.H{"from": sourceFrom, "to": sourceTo}})
+	})
 }
 
 // getAIDB 并发安全地取 aiDB 快照；nil 表示未就绪。
