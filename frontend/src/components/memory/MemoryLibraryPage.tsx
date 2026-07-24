@@ -106,57 +106,63 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 async function renderChatToBlob(
   msgs: { datetime: string; sender: string; content: string }[],
   avatarLookup: (sender: string) => string | undefined,
+  title: string,
 ): Promise<Blob> {
+  const fontStack = '"PingFang SC", "Maple Mono NF CN", "Microsoft YaHei", -apple-system, sans-serif';
   const canvasW = 500;
   const padX = 16;
-  const avatarSize = 36;
+  const avatarSize = 32;
   const avatarGap = 8;
-  const contentX = padX + avatarSize + avatarGap; // 60
-  const maxBubbleW = canvasW - contentX - padX - 40; // leave room
+  const contentX = padX + avatarSize + avatarGap;
+  const maxBubbleW = canvasW - contentX - padX - 40;
   const bubblePadH = 10;
-  const bubblePadV = 8;
-  const lineH = 20;
-  const nameH = 16;
-  const msgGap = 10;
-  const tsGap = 18;
-  const timeGapThreshold = 5 * 60 * 1000; // 5 min
+  const bubblePadV = 7;
+  const lineH = 19;
+  const nameH = 15;
+  const msgGap = 6;
+  const sameSenderGap = 2;
+  const tsGap = 14;
+  const timeGapThreshold = 5 * 60 * 1000;
+  const titleH = 48;
 
-  // Pre-calc layout
   type LayoutMsg = {
     showTs: boolean;
+    showAvatar: boolean;
     wrappedLines: string[];
     bubbleW: number;
     bubbleH: number;
     msgH: number;
   };
 
-  // Use a temp canvas for text measurement
   const tmpCanvas = document.createElement('canvas');
   const tmpCtx = tmpCanvas.getContext('2d')!;
-  tmpCtx.font = '13px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+  tmpCtx.font = `13px ${fontStack}`;
 
   const layouts: LayoutMsg[] = [];
-  let totalH = padX; // top padding
+  let totalH = padX + titleH;
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
-    const showTs = i === 0 || (parseDateTime(m.datetime) - parseDateTime(msgs[i - 1].datetime) > timeGapThreshold);
+    const prev = i > 0 ? msgs[i - 1] : null;
+    const showTs = !prev || (parseDateTime(m.datetime) - parseDateTime(prev.datetime) > timeGapThreshold);
+    const showAvatar = !prev || prev.sender !== m.sender || showTs;
+
     if (showTs && i > 0) totalH += tsGap;
-    if (showTs) totalH += 22; // timestamp height
+    if (showTs) totalH += 22;
 
     const lines = wrapText(tmpCtx, m.content, maxBubbleW - bubblePadH * 2);
     const textW = Math.max(...lines.map(l => tmpCtx.measureText(l).width));
     const bubbleW = Math.min(maxBubbleW, textW + bubblePadH * 2);
     const bubbleH = lines.length * lineH + bubblePadV * 2;
-    const msgH = Math.max(avatarSize, nameH + bubbleH);
-    layouts.push({ showTs, wrappedLines: lines, bubbleW, bubbleH, msgH });
-    totalH += msgH + msgGap;
-  }
-  totalH += padX; // bottom padding
+    const msgH = showAvatar ? Math.max(avatarSize, nameH + bubbleH) : bubbleH;
+    layouts.push({ showTs, showAvatar, wrappedLines: lines, bubbleW, bubbleH, msgH });
 
-  // Create real canvas
+    if (showAvatar) totalH += msgH + msgGap;
+    else totalH += msgH + sameSenderGap;
+  }
+  totalH += padX;
+
   const canvas = document.createElement('canvas');
-  // Scale for retina
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvasW * dpr;
   canvas.height = totalH * dpr;
@@ -165,98 +171,114 @@ async function renderChatToBlob(
   const ctx = canvas.getContext('2d')!;
   ctx.scale(dpr, dpr);
 
-  // Background
   ctx.fillStyle = '#ededed';
   ctx.fillRect(0, 0, canvasW, totalH);
 
-  // Pre-load all unique sender avatars
+  // Title bar
+  ctx.fillStyle = '#f7f7f7';
+  ctx.fillRect(0, 0, canvasW, titleH + padX);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.font = `bold 14px ${fontStack}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const maxTitleW = canvasW - padX * 2;
+  let titleText = title;
+  if (tmpCtx.measureText(title).width > maxTitleW) {
+    while (tmpCtx.measureText(titleText + '\u2026').width > maxTitleW && titleText.length > 0) {
+      titleText = titleText.slice(0, -1);
+    }
+    titleText += '\u2026';
+  }
+  ctx.fillText(titleText, padX, padX + 8);
+
+  ctx.strokeStyle = '#dcdcdc';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, titleH + padX);
+  ctx.lineTo(canvasW, titleH + padX);
+  ctx.stroke();
+
+  // Pre-load avatars
   const senderAvatars = new Map<string, HTMLImageElement | null>();
   const uniqueSenders = [...new Set(msgs.map(m => m.sender))];
   for (const sender of uniqueSenders) {
     const avatarUrl = avatarLookup(sender);
     if (avatarUrl) {
-      try {
-        senderAvatars.set(sender, await loadImage(avatarUrl));
-      } catch {
-        senderAvatars.set(sender, null);
-      }
+      try { senderAvatars.set(sender, await loadImage(avatarUrl)); }
+      catch { senderAvatars.set(sender, null); }
     } else {
       senderAvatars.set(sender, null);
     }
   }
 
   // Draw messages
-  let y = padX;
+  let y = padX + titleH + padX;
   ctx.textBaseline = 'top';
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     const layout = layouts[i];
 
-    // Timestamp separator
     if (layout.showTs) {
       if (i > 0) y += tsGap;
       ctx.fillStyle = '#b2b2b2';
-      ctx.font = '11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+      ctx.font = `11px ${fontStack}`;
       ctx.textAlign = 'center';
       ctx.fillText(formatTimestamp(m.datetime), canvasW / 2, y);
       y += 22;
     }
 
-    // Avatar
     const avatarX = padX;
     const avatarY = y;
-    const senderColor = colorForName(m.sender);
-    const avatarImg = senderAvatars.get(m.sender);
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    if (avatarImg) {
-      ctx.clip();
-      ctx.drawImage(avatarImg, avatarX, avatarY, avatarSize, avatarSize);
-    } else {
-      ctx.fillStyle = senderColor;
-      ctx.fill();
-      // Draw first character
+    if (layout.showAvatar) {
+      const senderColor = colorForName(m.sender);
+      const avatarImg = senderAvatars.get(m.sender);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      if (avatarImg) { ctx.clip(); ctx.drawImage(avatarImg, avatarX, avatarY, avatarSize, avatarSize); }
+      else {
+        ctx.fillStyle = senderColor; ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold 14px ${fontStack}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(m.sender.charAt(0), avatarX + avatarSize / 2, avatarY + avatarSize / 2);
+      }
+      ctx.restore();
+
+      ctx.fillStyle = '#888';
+      ctx.font = `11px ${fontStack}`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(m.sender, contentX, y + 1);
+
+      const bubbleX = contentX;
+      const bubbleY = y + nameH;
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 16px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(m.sender.charAt(0), avatarX + avatarSize / 2, avatarY + avatarSize / 2);
+      roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.font = `13px ${fontStack}`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      let textY = bubbleY + bubblePadV;
+      for (const line of layout.wrappedLines) { ctx.fillText(line, bubbleX + bubblePadH, textY); textY += lineH; }
+      y += layout.msgH + msgGap;
+    } else {
+      const bubbleX = contentX;
+      const bubbleY = y;
+      ctx.fillStyle = '#fff';
+      roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.font = `13px ${fontStack}`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      let textY = bubbleY + bubblePadV;
+      for (const line of layout.wrappedLines) { ctx.fillText(line, bubbleX + bubblePadH, textY); textY += lineH; }
+      y += layout.msgH + sameSenderGap;
     }
-    ctx.restore();
-
-    // Sender name
-    ctx.fillStyle = '#888';
-    ctx.font = '11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(m.sender, contentX, y + 1);
-
-    // Content bubble
-    const bubbleX = contentX;
-    const bubbleY = y + nameH;
-    ctx.fillStyle = '#fff';
-    roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
-    ctx.fill();
-
-    // Content text
-    ctx.fillStyle = '#1a1a1a';
-    ctx.font = '13px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    let textY = bubbleY + bubblePadV;
-    for (const line of layout.wrappedLines) {
-      ctx.fillText(line, bubbleX + bubblePadH, textY);
-      textY += lineH;
-    }
-
-    y += layout.msgH + msgGap;
   }
 
-  // Convert to blob
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
@@ -329,6 +351,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverPos, setHoverPos] = useState<{ top: number; left: number } | null>(null);
   const [hoverCopied, setHoverCopied] = useState(false);
   const [hoverShotLoading, setHoverShotLoading] = useState(false);
+  const [hoverFactText, setHoverFactText] = useState('');
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -408,6 +431,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(async () => {
       setHoverFactId(fact.id);
+      setHoverFactText(fact.fact);
       setHoverLoading(true);
       setHoverMsgs([]);
       const wouldOverflow = rect.right + 480 > window.innerWidth;
@@ -446,7 +470,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (hoverMsgs.length === 0) return;
     setHoverShotLoading(true);
     try {
-      const blob = await renderChatToBlob(hoverMsgs, (sender) => senderAvatarMap.get(sender));
+      const blob = await renderChatToBlob(hoverMsgs, (sender) => senderAvatarMap.get(sender), hoverFactText);
 
       let copied = false;
 

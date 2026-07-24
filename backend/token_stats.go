@@ -10,6 +10,7 @@ import (
 // TokenUsage 记录单个模型的累计 token 使用量。
 type TokenUsage struct {
 	Model         string `json:"model"`
+	Kind          string `json:"kind"` // "chat" / "summary" / "embedding"
 	PromptTokens  int64  `json:"prompt_tokens"`
 	OutputTokens  int64  `json:"output_tokens"`
 	TotalTokens   int64  `json:"total_tokens"`
@@ -28,7 +29,7 @@ var globalTokenStats = &tokenStats{
 
 // recordTokenUsage 线程安全地记录一次调用的 token 消耗。
 // model: 模型名（如 "deepseek-chat"、"nomic-embed-text"）
-// kind: "llm" 或 "embedding"
+// kind: "chat"（AI 对话流式）/ "summary"（记忆总结非流式）/ "embedding"
 // promptTokens, outputTokens: 估算的 token 数
 func recordTokenUsage(model, kind string, promptTokens, outputTokens int) {
 	if model == "" {
@@ -39,7 +40,7 @@ func recordTokenUsage(model, kind string, promptTokens, outputTokens int) {
 	defer globalTokenStats.mu.Unlock()
 	entry, ok := globalTokenStats.usage[key]
 	if !ok {
-		entry = &TokenUsage{Model: model, IsEmbedding: kind == "embedding"}
+		entry = &TokenUsage{Model: model, Kind: kind, IsEmbedding: kind == "embedding"}
 		globalTokenStats.usage[key] = entry
 	}
 	entry.PromptTokens += int64(promptTokens)

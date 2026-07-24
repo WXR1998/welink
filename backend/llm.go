@@ -431,7 +431,7 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	)
 	// Token 统计：记录输出 token
 	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
-	recordTokenUsage(cfg.model, "llm", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens)
 	return err
 }
 
@@ -761,7 +761,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		"resp_chars", len(out),
 	)
 	outputTokens := estimateTokens(out)
-	recordTokenUsage(cfg.model, "llm", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "summary", promptTokens, outputTokens)
 	return out, err
 }
 
