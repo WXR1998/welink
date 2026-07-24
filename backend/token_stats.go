@@ -71,7 +71,9 @@ func initTokenStats(filePath string) {
 		return
 	}
 	var persisted struct {
-		Usage map[string]*TokenUsage `json:"usage"`
+		Usage       map[string]*TokenUsage `json:"usage"`
+		Daily       map[string]*TokenUsage `json:"daily"`
+		CurrentDate string                 `json:"current_date"`
 	}
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		return
@@ -80,17 +82,27 @@ func initTokenStats(filePath string) {
 	if globalTokenStats.usage == nil {
 		globalTokenStats.usage = make(map[string]*TokenUsage)
 	}
+	// 恢复当日统计：仅当磁盘上记录的日期和今天一致时才恢复
+	if persisted.CurrentDate == globalTokenStats.currentDate && persisted.Daily != nil {
+		globalTokenStats.daily = persisted.Daily
+	} else {
+		globalTokenStats.daily = make(map[string]*TokenUsage)
+	}
 }
 
-// saveTokenStatsLocked 将全量统计原子写入磁盘。调用方必须持锁。
+// saveTokenStatsLocked 将全量+当日统计原子写入磁盘。调用方必须持锁。
 func saveTokenStatsLocked() {
 	if globalTokenStats.filePath == "" {
 		return
 	}
 	data, err := json.MarshalIndent(struct {
-		Usage map[string]*TokenUsage `json:"usage"`
+		Usage       map[string]*TokenUsage `json:"usage"`
+		Daily       map[string]*TokenUsage `json:"daily"`
+		CurrentDate string                 `json:"current_date"`
 	}{
-		Usage: globalTokenStats.usage,
+		Usage:       globalTokenStats.usage,
+		Daily:       globalTokenStats.daily,
+		CurrentDate: globalTokenStats.currentDate,
 	}, "", "  ")
 	if err != nil {
 		return
