@@ -1430,29 +1430,41 @@ func serverMain() {
 			}
 		}
 
-		// 加载记忆事实：置顶事实（始终注入）+ 语义检索 top-10
-		memFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
-		if pinned, _ := GetPinnedMemFacts(contactKey); len(pinned) > 0 {
-			seen := make(map[string]bool, len(memFacts))
-			for _, f := range memFacts {
+		// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
+		pinnedFacts, _ := GetPinnedMemFacts(contactKey)
+		searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
+
+		// 去重：置顶事实不再出现在检索结果中
+		seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))
+		for _, p := range pinnedFacts {
+			seen[p.Fact] = true
+		}
+		var dedupSearched []string
+		for _, f := range searchedFacts {
+			if !seen[f] {
+				dedupSearched = append(dedupSearched, f)
 				seen[f] = true
 			}
-			var merged []string
-			for _, p := range pinned {
-				if !seen[p.Fact] {
-					merged = append(merged, "[📌 置顶] "+p.Fact)
-					seen[p.Fact] = true
-				}
-			}
-			memFacts = append(merged, memFacts...)
 		}
 
-		// 如果有记忆事实，注入到第一条 system 消息末尾
-		if len(memFacts) > 0 {
-			memSection := "\n\n【关于对方的已知事实（由 AI 从历史聊天中提炼）】\n"
-			for _, f := range memFacts {
+		// 分两块构建 prompt 片段，让下游模型区分信息来源
+		var memSection string
+		if len(pinnedFacts) > 0 {
+			memSection += "\n\n【手工置顶的背景知识】\n"
+			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
+			for _, p := range pinnedFacts {
+				memSection += "- " + p.Fact + "\n"
+			}
+		}
+		if len(dedupSearched) > 0 {
+			memSection += "\n\n【从聊天记录中提炼的事实】\n"
+			memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
+			for _, f := range dedupSearched {
 				memSection += "- " + f + "\n"
 			}
+		}
+
+		if memSection != "" {
 			for i := range body.Messages {
 				if body.Messages[i].Role == "system" {
 					body.Messages[i].Content += memSection
