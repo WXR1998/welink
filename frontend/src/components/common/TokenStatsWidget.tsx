@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Activity } from 'lucide-react';
-import axios from 'axios';
+import api from '../../services/api';
 
 interface TokenUsage {
   model: string;
@@ -24,7 +24,7 @@ export const TokenStatsWidget: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      const r = await axios.get<{ usage: TokenUsage[] }>('/api/token-stats');
+      const r = await api.get<{ usage: TokenUsage[] }>('/token-stats');
       setUsage(r.data.usage || []);
     } catch {
       /* ignore */
