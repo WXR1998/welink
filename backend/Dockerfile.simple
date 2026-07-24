@@ -1,10 +1,15 @@
+# syntax=docker/dockerfile:1
 FROM golang:1.25-alpine AS builder
 RUN apk add --no-cache git gcc musl-dev
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o welink-backend .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o welink-backend .
 
 FROM alpine:3.21
 RUN adduser -D -u 1001 welink && mkdir -p /app/prefs && chown -R welink:welink /app

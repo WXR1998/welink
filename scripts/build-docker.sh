@@ -10,6 +10,9 @@
 #
 set -euo pipefail
 
+# 启用 BuildKit，利用 --mount=type=cache 缓存 go mod / npm 下载
+export DOCKER_BUILDKIT=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-/volume4/docker/archive/compose.yaml}"
@@ -38,9 +41,8 @@ fi
 echo ""
 echo "📦 [1/2] 构建后端镜像 welink-backend:$SHA"
 echo "   Dockerfile: backend/Dockerfile.simple"
-echo "   --no-cache: 确保代码变更完全体现"
 echo ""
-docker build --no-cache --network=host \
+docker build --network=host \
   -f backend/Dockerfile.simple \
   -t "welink-backend:$SHA" \
   backend/
@@ -52,9 +54,8 @@ echo "✅ 后端镜像构建完成: welink-backend:$SHA"
 echo ""
 echo "📦 [2/2] 构建前端镜像 welink-frontend:$SHA"
 echo "   Dockerfile: frontend/Dockerfile.simple"
-echo "   --no-cache: 确保代码变更完全体现"
 echo ""
-docker build --no-cache --network=host \
+docker build --network=host \
   -f frontend/Dockerfile.simple \
   -t "welink-frontend:$SHA" \
   frontend/
@@ -66,7 +67,6 @@ echo "✅ 前端镜像构建完成: welink-frontend:$SHA"
 if [ -f "$COMPOSE_FILE" ]; then
   echo ""
   echo "📝 更新 $COMPOSE_FILE 中的镜像 tag..."
-  # 用 sed 替换 welink-backend 和 welink-frontend 的 tag
   sed -i.bak \
     -e "s|image: welink-backend:.*|image: welink-backend:$SHA|" \
     -e "s|image: welink-frontend:.*|image: welink-frontend:$SHA|" \
@@ -100,7 +100,6 @@ fi
 # ── 清理旧镜像 ────────────────────────────────────────────────────────────────
 echo ""
 echo "🧹 清理旧镜像 (保留当前 SHA: $SHA)..."
-# 列出所有 welink-backend 和 welink-frontend 镜像，排除当前 SHA
 OLD_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'welink-(backend|frontend):' | grep -v ":$SHA" || true)
 if [ -n "$OLD_IMAGES" ]; then
   echo "删除旧镜像:"
