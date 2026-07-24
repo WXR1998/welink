@@ -779,7 +779,9 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
-	resp, err := httpClientLLMSync.Do(req)
+	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
+		return httpClientLLMSync.Do(req)
+	})
 	if err != nil {
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
