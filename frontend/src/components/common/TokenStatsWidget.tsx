@@ -33,8 +33,8 @@ export const TokenStatsWidget: React.FC = () => {
 
   useEffect(() => {
     void fetchStats();
-    timerRef = setInterval(() => { void fetchStats(); }, 1000);
-    return () => { if (timerRef) clearInterval(timerRef); };
+    timerRef.current = setInterval(() => { void fetchStats(); }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
   const llmUsage = usage.filter(u => !u.is_embedding);
