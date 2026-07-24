@@ -3,6 +3,7 @@ import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon,
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { JobProgressPanel } from './JobProgressPanel';
 import { RelativeTime } from '../common/RelativeTime';
 
 interface MemFact {
@@ -216,6 +217,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
           手动添加
         </button>
       </header>
+
+      <JobProgressPanel contacts={contacts} groups={groups} />
 
       <div className="flex gap-4 flex-col lg:flex-row">
         {/* 左栏：联系人筛选 */}
