@@ -2694,7 +2694,39 @@ func serverMain() {
 			job.Current = startChunk // 已完成批数（续传时为非零）
 			job.mu.Unlock()
 
+			// 判断群聊/私聊，并获取显示名（用于 prompt 上下文）
+			isGroup := strings.HasPrefix(key, "group:")
+			var username string
+			if isGroup {
+				username = strings.TrimPrefix(key, "group:")
+			} else {
+				username = strings.TrimPrefix(key, "contact:")
+			}
+			displayName := username
+			if svc := getSvc(); svc != nil {
+				if isGroup {
+					for _, g := range svc.GetGroups() {
+						if g.Username == username {
+							displayName = g.Name
+							break
+						}
+					}
+				} else {
+					for _, s := range svc.GetCachedStats() {
+						if s.Username == username {
+							if s.Remark != "" {
+								displayName = s.Remark
+							} else if s.Nickname != "" {
+								displayName = s.Nickname
+							}
+							break
+						}
+					}
+				}
+			}
+
 			newFacts, extractErr := extractAndStoreFacts(key, msgs, prefs, db, cfg,
+				isGroup, displayName,
 				startChunk,
 				func(done, total int) {
 					job.mu.Lock()
