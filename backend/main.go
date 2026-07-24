@@ -225,6 +225,9 @@ func serverMain() {
 		dataLabel = "(configured)"
 	}
 	log.Printf("WeLink %s (commit %s) starting...", appVersion, gitCommit)
+
+	// 加载持久化的 token 使用统计（全量累计，跨重启不丢失）
+	initTokenStats(tokenStatsPath())
 	log.Printf("WeLink config: data_dir=%s port=%s timezone=%s workers=%d",
 		dataLabel, prefs.Port, prefs.Timezone, prefs.WorkerCount)
 
@@ -2556,6 +2559,7 @@ func serverMain() {
 	})
 
 	// GET /api/ai/vec/all-jobs — 列出所有构建/提炼任务及其进度
+	// 只返回运行中或已暂停的任务；已完成的不再返回。按 key 字典序排序。
 	api.GET("/ai/vec/all-jobs", func(c *gin.Context) {
 		vecJobsMu.Lock()
 		keys := make([]string, 0, len(vecJobs))
@@ -2563,11 +2567,16 @@ func serverMain() {
 			keys = append(keys, k)
 		}
 		vecJobsMu.Unlock()
+		sort.Strings(keys)
 
 		jobs := make([]gin.H, 0, len(keys))
 		for _, k := range keys {
 			p := GetVecBuildProgress(k)
 			if p == nil {
+				continue
+			}
+			// 跳过已完成的任务
+			if p.Done {
 				continue
 			}
 			jobs = append(jobs, gin.H{
@@ -2751,7 +2760,7 @@ func serverMain() {
 				return
 			}
 			cfg := defaultEmbeddingConfig(prefs)
-			totalChunks := (len(msgs) + memExtractChunkSize - 1) / memExtractChunkSize
+			totalChunks := (len(msgs) + memExtractStride - 1) / memExtractStride
 
 			// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
 			startChunk := 0

@@ -146,9 +146,10 @@ func extractAndStoreFacts(
 	abortCh <-chan struct{},
 ) (int, error) {
 	// 使用 stride 步进：每批 80 条，步进 64 条，重叠 16 条
-	totalChunks := 1
-	if len(msgs) > memExtractChunkSize {
-		totalChunks = (len(msgs)-memExtractChunkSize+memExtractStride) / memExtractStride + 1
+	// 总批数 = ceil(len(msgs) / stride)，保证最后一个不完整窗口也被处理
+	totalChunks := (len(msgs) + memExtractStride - 1) / memExtractStride
+	if totalChunks < 1 {
+		totalChunks = 1
 	}
 	total := 0
 	var lastErr error
