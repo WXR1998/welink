@@ -3052,13 +3052,6 @@ func serverMain() {
 		}})
 
 		// 构造 LLM 消息（注入检索上下文 + 记忆事实）
-		var memSection string
-		if len(memFacts) > 0 {
-			memSection = "\n\n【关于对方的已知事实（由 AI 从历史聊天中提炼）】\n"
-			for _, f := range memFacts {
-				memSection += "- " + f + "\n"
-			}
-		}
 		sysPrompt := fmt.Sprintf(
 			"你是一个聊天记录分析助手。以下是从聊天记录中混合检索（语义向量 + 关键词）到的相关片段（命中 %d 条，含上下文共 %d 条）：\n\n%s%s\n\n请根据以上内容回答用户问题，分析时请客观有洞察力，用中文回答。",
 			len(hitSeqs), len(results), ctxText, memSection,
