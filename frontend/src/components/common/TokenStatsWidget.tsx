@@ -31,7 +31,7 @@ export const TokenStatsWidget: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      const r = await api.get<{ usage: TokenUsage[] }>('/token-stats');
+      const r = await api.get<unknown, { usage: TokenUsage[] }>('/token-stats');
       setUsage(r.usage || []);
     } catch {
       /* ignore */
