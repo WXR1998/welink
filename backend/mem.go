@@ -138,6 +138,7 @@ var ErrAborted = fmt.Errorf("mem: 提炼已暂停")
 
 func extractAndStoreFacts(
 	key string, msgs []rawMsg, prefs Preferences, db *sql.DB, embCfg EmbeddingConfig,
+	isGroup bool, displayName string,
 	startChunk int,
 	onProgress func(done, total int),
 	onChunkDone func(chunkIdx int),
@@ -146,6 +147,18 @@ func extractAndStoreFacts(
 	totalChunks := (len(msgs) + memExtractChunkSize - 1) / memExtractChunkSize
 	total := 0
 	var lastErr error
+
+	// 获取所有置顶记忆作为背景上下文，帮助 LLM 理解聊天中的人物关系
+	var backgroundCtx string
+	if pinned, _ := GetPinnedMemFacts(""); len(pinned) > 0 {
+		var bg strings.Builder
+		for _, f := range pinned {
+			bg.WriteString("- ")
+			bg.WriteString(f.Fact)
+			bg.WriteString("\n")
+		}
+		backgroundCtx = bg.String()
+	}
 
 	for chunkIdx := startChunk; chunkIdx < totalChunks; chunkIdx++ {
 		// 检查是否被暂停
@@ -163,10 +176,14 @@ func extractAndStoreFacts(
 		}
 		chunk := msgs[i:end]
 
-		facts, err := extractFactsFromChunk(chunk, memLLMPrefs(prefs))
+		facts, err := extractFactsFromChunk(chunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx)
 		if err != nil {
 			lastErr = err
 		} else if len(facts) > 0 {
+			// 取本批消息的时间范围作为 metadata，拼在 fact 前面（不进 embedding）
+			chunkStart := chunk[0].DateTime
+			chunkEnd := chunk[len(chunk)-1].DateTime
+			timeRange := "[" + chunkStart + " ~ " + chunkEnd + "] "
 			embeddings, err := GetEmbeddingsBatch(facts, embCfg)
 			if err != nil {
 				lastErr = err
@@ -183,7 +200,9 @@ func extractAndStoreFacts(
 							if emb == nil || j >= len(facts) {
 								continue
 							}
-							if _, err := stmt.Exec(key, facts[j], i, end-1, encodeVec(emb), now, now); err == nil {
+							// 存入的 fact = 时间前缀 + 纯事实文本
+							factWithMeta := timeRange + facts[j]
+							if _, err := stmt.Exec(key, factWithMeta, i, end-1, encodeVec(emb), now, now); err == nil {
 								total++
 							}
 						}
@@ -208,31 +227,38 @@ func extractAndStoreFacts(
 }
 
 // memLLMPrefs 返回用于记忆提炼的 Preferences 副本。
-// - 若用户配置了 MemLLMBaseURL 或 MemLLMModel，则使用本地 Ollama 专用配置（隐私保护）。
+// - 若用户配置了 MemLLMBaseURL 或 MemLLMModel，则使用专用配置。
+//   - 填写了 MemLLMAPIKey → 使用云端模型（OpenAI 兼容，如 OpenRouter / DeepSeek 等）
+//   - 未填写 MemLLMAPIKey → 使用本地 Ollama（隐私保护，数据不出本机）
 // - 若两者均为空，则直接复用主 LLM 配置（与 AI 分析使用同一模型）。
 func memLLMPrefs(prefs Preferences) Preferences {
 	if prefs.MemLLMBaseURL == "" && prefs.MemLLMModel == "" {
-		// 未配置专用模型，沿用主 LLM
 		return prefs
 	}
 	p := prefs
-	p.LLMProvider = "ollama"
-	p.LLMAPIKey = ""
+	if prefs.MemLLMAPIKey != "" {
+		// 云端模型：使用用户提供的 API Key，保持主 LLM 的 provider
+		p.LLMAPIKey = prefs.MemLLMAPIKey
+	} else {
+		// 本地 Ollama：不需要 API Key
+		p.LLMProvider = "ollama"
+		p.LLMAPIKey = ""
+	}
 	if prefs.MemLLMBaseURL != "" {
 		p.LLMBaseURL = prefs.MemLLMBaseURL
-	} else {
+	} else if prefs.MemLLMAPIKey == "" {
 		p.LLMBaseURL = "http://localhost:11434/v1"
 	}
 	if prefs.MemLLMModel != "" {
 		p.LLMModel = prefs.MemLLMModel
-	} else {
+	} else if prefs.MemLLMAPIKey == "" {
 		p.LLMModel = "qwen2.5:7b"
 	}
 	return p
 }
 
 // extractFactsFromChunk 调用 LLM 从一批消息中提炼事实列表。
-func extractFactsFromChunk(chunk []rawMsg, prefs Preferences) ([]string, error) {
+func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, prefs Preferences, backgroundCtx string) ([]string, error) {
 	var sb strings.Builder
 	for _, m := range chunk {
 		sb.WriteString(m.DateTime)
@@ -243,15 +269,40 @@ func extractFactsFromChunk(chunk []rawMsg, prefs Preferences) ([]string, error) 
 		sb.WriteString("\n")
 	}
 
-	prompt := "从以下聊天记录中提取关键事实，以JSON数组格式输出。\n" +
-		"规则：\n" +
-		"1. 每条事实是一句完整的中文陈述\n" +
-		"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n" +
-		"3. 忽略寒暄、日常问候、无意义闲聊\n" +
-		"4. 用【对方】指代聊天对象\n" +
-		"5. 只输出JSON数组，不加任何解释，例如：[\"对方喜欢爬山\", \"对方在北京工作\"]\n" +
-		"6. 如果没有有价值的事实，输出：[]\n\n" +
-		"聊天记录：\n" + sb.String() + "\n输出："
+	bgSection := ""
+	if backgroundCtx != "" {
+		bgSection = "\n已知背景信息（用于理解聊天中的人物）：\n" + backgroundCtx + "\n"
+	}
+
+	var prompt string
+	if isGroup {
+		prompt = "从以下群聊记录中提取关键事实，以JSON数组格式输出。\n" +
+			"规则：\n" +
+			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n" +
+			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n" +
+			"3. 忽略寒暄、日常问候、无意义闲聊\n" +
+			"4. 用消息中出现的发言者名字来描述事实\n" +
+			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n" +
+			"6. 同一主题的零散信息合并成一条完整陈述\n" +
+			"7. 只输出JSON数组，不加任何解释，例如：[\"蒋钰瑶喜欢户外运动，经常周末和朋友去爬香山\", \"钟视航在北京做程序员，主要写后端\"]\n" +
+			"8. 如果没有有价值的事实，输出：[]\n" +
+			bgSection +
+			"\n聊天记录：\n" + sb.String() + "\n输出："
+	} else {
+		prompt = fmt.Sprintf("从以下聊天记录中提取关键事实，以JSON数组格式输出。\n"+
+			"规则：\n"+
+			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n"+
+			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n"+
+			"3. 忽略寒暄、日常问候、无意义闲聊\n"+
+			"4. 用【%s】指代聊天对象\n"+
+			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n"+
+			"6. 同一主题的零散信息合并成一条完整陈述\n"+
+			"7. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
+			"8. 如果没有有价值的事实，输出：[]\n"+
+			"%s"+
+			"\n聊天记录：\n%s\n输出：",
+			displayName, displayName, displayName, bgSection, sb.String())
+	}
 
 	reply, err := CompleteLLM([]LLMMessage{{Role: "user", Content: prompt}}, prefs)
 	if err != nil {
@@ -298,7 +349,13 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]string, e
 	}
 	queryVec := queryEmbs[0]
 
-	rows, err := db.Query(`SELECT fact, embedding FROM mem_facts WHERE contact_key = ?`, key)
+	var rows *sql.Rows
+	if key == "" {
+		// key 为空时搜索所有联系人的记忆（如 AI 首页跨联系人问答）
+		rows, err = db.Query(`SELECT fact, embedding FROM mem_facts`)
+	} else {
+		rows, err = db.Query(`SELECT fact, embedding FROM mem_facts WHERE contact_key = ?`, key)
+	}
 	if err != nil {
 		return nil, err
 	}
