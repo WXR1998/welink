@@ -407,8 +407,10 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverCopied, setHoverCopied] = useState(false);
   const [hoverShotLoading, setHoverShotLoading] = useState(false);
   const [hoverFactText, setHoverFactText] = useState('');
+  const [hoverVisible, setHoverVisible] = useState(false);
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 用于把 contact_key 映射到头像 / 名称
   // 注意：后端 contact_key 带 contact:/group: 前缀，lookup 时要脱
@@ -483,17 +485,46 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   // hover 预览：hover 某条记忆时，debounce 300ms 后显示来源聊天记录
   const showPreview = (fact: MemFact, rect: DOMRect) => {
     if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+    if (fadeTimer.current) { clearTimeout(fadeTimer.current); fadeTimer.current = null; }
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(async () => {
       setHoverFactId(fact.id);
       setHoverFactText(fact.fact);
       setHoverLoading(true);
       setHoverMsgs([]);
-      const wouldOverflow = rect.right + 480 > window.innerWidth;
-      setHoverPos({
-        top: wouldOverflow ? rect.bottom + 4 : rect.top,
-        left: wouldOverflow ? rect.left : rect.right + 8,
-      });
+
+      // 动态定位：
+      // - 元素在上半屏 → hover 框出现在下方，右上角贴元素右下角
+      // - 元素在下半屏 → hover 框出现在上方，右下角贴元素右上角
+      const POPUP_W = 460;
+      const POPUP_H = 420;
+      const GAP = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const elemCenterY = rect.top + rect.height / 2;
+      const inUpperHalf = elemCenterY < vh / 2;
+
+      // 右对齐到元素：hover 右边缘 = 元素右边缘
+      let left = rect.right - POPUP_W;
+
+      let top: number;
+      if (inUpperHalf) {
+        // 元素在上半屏 → hover 框出现在下方
+        top = rect.bottom + GAP;
+      } else {
+        // 元素在下半屏 → hover 框出现在上方
+        top = rect.top - POPUP_H - GAP;
+      }
+
+      // 溢出修正
+      if (left + POPUP_W > vw) left = vw - POPUP_W - GAP;
+      if (left < 0) left = GAP;
+      if (top + POPUP_H > vh) top = vh - POPUP_H - GAP;
+      if (top < 0) top = GAP;
+
+      setHoverPos({ top, left });
+      setHoverVisible(true);
       try {
         const r = await axios.get<{ messages: { datetime: string; sender: string; content: string }[] }>(
           `/api/memory/${fact.id}/source`,
@@ -508,9 +539,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (showTimer.current) { clearTimeout(showTimer.current); showTimer.current = null; }
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      setHoverFactId(null);
-      setHoverPos(null);
-      setHoverMsgs([]);
+      setHoverVisible(false);
+      if (fadeTimer.current) clearTimeout(fadeTimer.current);
+      fadeTimer.current = setTimeout(() => {
+        setHoverFactId(null);
+        setHoverPos(null);
+        setHoverMsgs([]);
+      }, 150);
     }, 100);
   };
 
@@ -944,9 +979,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       {/* hover 预览浮层 */}
       {hoverFactId !== null && hoverPos && (
         <div
-          className="fixed z-[8000] w-[460px] max-h-[420px] rounded-2xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden"
+          className={`fixed z-[8000] w-[460px] max-h-[420px] rounded-2xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden transition-opacity duration-150 ${hoverVisible ? 'opacity-100' : 'opacity-0'}`}
           style={{ top: hoverPos.top, left: hoverPos.left }}
-          onMouseEnter={() => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; } }}
+          onMouseEnter={() => {
+            if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+            if (fadeTimer.current) { clearTimeout(fadeTimer.current); fadeTimer.current = null; }
+            setHoverVisible(true);
+          }}
           onMouseLeave={() => hidePreview()}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 shrink-0">
