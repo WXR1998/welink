@@ -863,7 +863,7 @@ export async function generateAIScreenshot(options: AIScreenshotOptions): Promis
     ctx.fill();
 
     // 文字垂直居中 + 2px 下移修复
-    const textOffsetY = (questionLayout.bubbleH - questionLayout.textH) / 2 + 3;
+    const textOffsetY = (questionLayout.bubbleH - questionLayout.textH) / 2 + 4;
     ctx.fillStyle = '#ffffff';
     ctx.font = `${14 * S}px ${FF}`;
     ctx.textBaseline = 'top';
@@ -903,7 +903,7 @@ export async function generateAIScreenshot(options: AIScreenshotOptions): Promis
     ctx.fill();
 
     // Draw markdown content canvas on top
-    ctx.drawImage(answerCanvas, (bx + BUBBLE_PAD) * S, (y + BUBBLE_PAD - 2) * S);
+    ctx.drawImage(answerCanvas, (bx + BUBBLE_PAD) * S, (y + BUBBLE_PAD - 4) * S);
 
     y += bubbleH;
   }
