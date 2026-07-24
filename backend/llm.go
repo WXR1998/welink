@@ -349,6 +349,12 @@ func streamLLMCore(sendChunk func(StreamChunk), msgs []LLMMessage, prefs Prefere
 		baseURL:  prefs.LLMBaseURL,
 		model:    prefs.LLMModel,
 	}
+	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
+	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
+	// CompleteLLM 用于记忆提炼等非交互场景，禁用 thinking 大幅加速。
+	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
+		cfg.noThink = true
+	}
 	defaultsFor(&cfg)
 
 	err := dispatchLLMStream(sendChunk, msgs, cfg)
@@ -445,6 +451,10 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	}
 	if cfg.model == "" {
 		return fmt.Errorf("未配置模型")
+	}
+	// qwen3 等思考型模型在 Ollama CPU 上极慢，流式场景也禁用 thinking
+	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
+		cfg.noThink = true
 	}
 
 	reqBody := openAIRequest{Model: cfg.model, Messages: msgs, Stream: true}
@@ -703,6 +713,12 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		baseURL:  prefs.LLMBaseURL,
 		model:    prefs.LLMModel,
 	}
+	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
+	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
+	// CompleteLLM 用于记忆提炼等非交互场景，禁用 thinking 大幅加速。
+	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
+		cfg.noThink = true
+	}
 	defaultsFor(&cfg)
 	// Demo 模式下拒绝内网 baseURL，防 SSRF（M2/L4）
 	if err := guardOutboundURL(cfg.baseURL); err != nil {
@@ -872,6 +888,12 @@ func testLLMConn(prefs Preferences) (string, error) {
 		apiKey:   prefs.LLMAPIKey,
 		baseURL:  prefs.LLMBaseURL,
 		model:    prefs.LLMModel,
+	}
+	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
+	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
+	// CompleteLLM 用于记忆提炼等非交互场景，禁用 thinking 大幅加速。
+	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
+		cfg.noThink = true
 	}
 	defaultsFor(&cfg)
 
