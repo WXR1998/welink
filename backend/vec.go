@@ -254,28 +254,26 @@ func buildVecIndexCore(key, username string, isGroup bool, svc *service.ContactS
 
 	sendP(vecIndexProgress{Step: "embedding", Current: 0, Total: total})
 
-	// Ollama 较慢，用小批次；云端 API 支持更大批次
-	batchSize := 20
-	if cfg.Provider != "ollama" {
-		batchSize = 200
+	// 一次性把所有文本发给 GetEmbeddingsBatch，它内部会按 provider 分片调 API
+	texts := make([]string, total)
+	for i, m := range msgs {
+		// 拼入发送者，让语义更完整（"我: 好的" vs "对方: 好的"）
+		text := m.Sender + ": " + m.Content
+		// 截断超长文本：nomic-embed-text 默认上下文 2048 token，中文约 500 字/批
+		texts[i] = truncateRunes(text, 400)
 	}
+
+	// 内部分片：ollama 20 条/批，云端 API 1000 条/批
+	const batchSize = 1000 // 每批 DB 插入条数，非 ollama provider
 
 	for i := 0; i < total; i += batchSize {
 		end := i + batchSize
 		if end > total {
 			end = total
 		}
-		batch := msgs[i:end]
+		batchTexts := texts[i:end]
 
-		texts := make([]string, len(batch))
-		for j, m := range batch {
-			// 拼入发送者，让语义更完整（"我: 好的" vs "对方: 好的"）
-			text := m.Sender + ": " + m.Content
-			// 截断超长文本：nomic-embed-text 默认上下文 2048 token，中文约 500 字/批
-			texts[j] = truncateRunes(text, 400)
-		}
-
-		embeddings, err := GetEmbeddingsBatch(texts, cfg)
+		embeddings, err := GetEmbeddingsBatch(batchTexts, cfg)
 		if err != nil {
 			sendP(vecIndexProgress{Step: "error", Error: "Embedding 失败：" + err.Error()})
 			return
@@ -297,7 +295,7 @@ func buildVecIndexCore(key, username string, isGroup bool, svc *service.ContactS
 			if emb == nil {
 				continue
 			}
-			m := batch[j]
+			m := msgs[i+j]
 			if _, err := stmt.Exec(key, i+j, m.DateTime, m.Sender, m.Content, encodeVec(emb)); err != nil {
 				stmt.Close()
 				tx.Rollback()

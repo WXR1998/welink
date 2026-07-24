@@ -71,8 +71,16 @@ func defaultEmbeddingConfig(prefs Preferences) EmbeddingConfig {
 
 // ─── API 调用 ──────────────────────────────────────────────────────────────────
 
+// embeddingBatchSize 是单次 API 调用的最大文本数。
+// Ollama 本地较慢，用小批次；云端 API 支持更大批次。
+const (
+	ollamaBatchSize = 20
+	cloudBatchSize  = 1000
+)
+
 // GetEmbeddingsBatch 批量获取 texts 的向量。
 // Ollama 使用 /api/embed（支持批量），其他 provider 使用 OpenAI 兼容的 /embeddings。
+// 大批次会被自动分片，避免单次请求体过大导致超时或被拒绝。
 func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error) {
 	// Demo 模式：用确定性 mock 向量（和 demo_seed 存的一致，保证相似度能算）
 	if DemoMockActive() {
@@ -86,23 +94,40 @@ func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error
 	if err := guardOutboundURL(cfg.BaseURL); err != nil {
 		return nil, err
 	}
-	t := startTimer("embed_batch")
-	var (
-		vecs [][]float32
-		err  error
-	)
-	if cfg.Provider == "ollama" {
-		vecs, err = ollamaEmbeddingsBatch(texts, cfg)
-	} else {
-		vecs, err = openAIEmbeddingsBatch(texts, cfg)
+
+	batchSize := ollamaBatchSize
+	if cfg.Provider != "ollama" {
+		batchSize = cloudBatchSize
 	}
-	t.Done(err,
-		"provider", cfg.Provider,
-		"model", cfg.Model,
-		"batch_size", len(texts),
-		"dims", cfg.Dims,
-	)
-	return vecs, err
+
+	out := make([][]float32, len(texts))
+	for i := 0; i < len(texts); i += batchSize {
+		end := i + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		batch := texts[i:end]
+
+		var (
+			vecs [][]float32
+			err  error
+		)
+		if cfg.Provider == "ollama" {
+			vecs, err = ollamaEmbeddingsBatch(batch, cfg)
+		} else {
+			vecs, err = openAIEmbeddingsBatch(batch, cfg)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// 按原始顺序填充
+		for j, v := range vecs {
+			if v != nil && i+j < len(out) {
+				out[i+j] = v
+			}
+		}
+	}
+	return out, nil
 }
 
 func openAIEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error) {
