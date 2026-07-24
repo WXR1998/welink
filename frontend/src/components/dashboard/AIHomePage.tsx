@@ -3,12 +3,13 @@
  */
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Bot, Send, X, Search, RotateCcw, Loader2, Copy, Check, Square, ArrowLeft, Share2, Users, Plus, ChevronDown, ChevronRight, BrainCircuit, Globe, Sparkles } from 'lucide-react';
+import { Bot, Send, X, Search, RotateCcw, Loader2, Copy, Check, Square, ArrowLeft, Share2, Users, Plus, ChevronDown, ChevronRight, BrainCircuit, Globe, Sparkles, Camera } from 'lucide-react';
 import { CrossContactQA } from './CrossContactQA';
 import { ConversationHistory } from './ConversationHistory';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateShareImage } from '../../utils/shareImage';
+import { screenshotElement } from '../../utils/screenshot';
 import { RevealLink } from '../common/RevealLink';
 import { avatarSrc } from '../../utils/avatar';
 import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage } from '../../types';
@@ -258,6 +259,9 @@ const MessageBubble: React.FC<{
 }> = ({ msg, contactName, avatarUrl, prevQuestion, llmProvider, llmModel, onOpenSettings }) => {
   const [copied, setCopied] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [shotLoading, setShotLoading] = useState(false);
+  const [shotDone, setShotDone] = useState(false);
+  const bubbleRef = useRef<HTMLDivElement>(null);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [showPerfMetrics, setShowPerfMetrics] = useState<boolean>(() => {
     try { return localStorage.getItem('welink_home_perf_metrics') === '1'; } catch { return false; }
@@ -324,6 +328,26 @@ const MessageBubble: React.FC<{
     }
   };
 
+  const handleScreenshot = async () => {
+    if (shotLoading) return;
+    // Capture the full Q&A pair (question + answer) if available
+    const pairContainer = bubbleRef.current?.closest('[data-qa-pair]') as HTMLElement | null;
+    const target = pairContainer || bubbleRef.current;
+    if (!target) return;
+    setShotLoading(true);
+    try {
+      const result = await screenshotElement(target);
+      if (result.ok) {
+        setShotDone(true);
+        setTimeout(() => setShotDone(false), 2000);
+      }
+    } catch (e) {
+      console.error('Screenshot failed', e);
+    } finally {
+      setShotLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-2 flex-row group">
@@ -331,7 +355,7 @@ const MessageBubble: React.FC<{
           <Bot size={13} />
         </div>
         <div className="flex flex-col gap-1 max-w-[80%]">
-          <div className="px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed bg-[#f0f0f0] dark:bg-white/10 text-[#1d1d1f] dark:text-gray-100 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-hr:my-2">
+          <div ref={bubbleRef} className="px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed bg-[#f0f0f0] dark:bg-white/10 text-[#1d1d1f] dark:text-gray-100 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-hr:my-2">
             {msg.thinking && (
               <div className="not-prose mb-2">
                 <button
@@ -408,6 +432,15 @@ const MessageBubble: React.FC<{
               >
                 {copied ? <Check size={11} className="text-[#07c160]" /> : <Copy size={11} />}
                 {copied ? '已复制' : '复制'}
+              </button>
+              <button
+                onClick={handleScreenshot}
+                disabled={shotLoading}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-gray-400 hover:text-[#07c160] hover:bg-[#f0faf4] dark:hover:bg-[#07c160]/10 transition-colors disabled:opacity-50"
+                title="截图到剪贴板"
+              >
+                {shotLoading ? <Loader2 size={11} className="animate-spin" /> : shotDone ? <Check size={11} className="text-[#07c160]" /> : <Camera size={11} />}
+                {shotLoading ? '截图中…' : shotDone ? '已复制' : '截图'}
               </button>
               <button
                 onClick={handleShare}
@@ -1056,22 +1089,44 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
 
         {/* 消息区 */}
         <div className="flex-1 px-4 sm:px-6 py-6 space-y-5 max-w-3xl w-full mx-auto">
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              msg={msg}
-              contactName={shareContactName}
-              avatarUrl={shareAvatarUrl}
-              llmProvider={llmProvider}
-              llmModel={llmModel}
-              onOpenSettings={onOpenSettings}
-              prevQuestion={
-                msg.role === 'assistant'
-                  ? [...messages].slice(0, i).reverse().find(m => m.role === 'user')?.content
-                  : undefined
+          {(() => {
+            // Group messages into Q&A pairs (user question + following messages until next user msg)
+            const groups: { msgs: ChatMsg[]; indices: number[] }[] = [];
+            let cur: { msgs: ChatMsg[]; indices: number[] } | null = null;
+            messages.forEach((m, i) => {
+              if (m.role === 'user') {
+                if (cur) groups.push(cur);
+                cur = { msgs: [m], indices: [i] };
+              } else {
+                if (!cur) { cur = { msgs: [m], indices: [i] }; }
+                else { cur.msgs.push(m); cur.indices.push(i); }
               }
-            />
-          ))}
+            });
+            if (cur) groups.push(cur);
+            return groups.map((group, gi) => (
+              <div key={gi} data-qa-pair={gi}>
+                {group.msgs.map((msg, mi) => {
+                  const i = group.indices[mi];
+                  return (
+                    <MessageBubble
+                      key={i}
+                      msg={msg}
+                      contactName={shareContactName}
+                      avatarUrl={shareAvatarUrl}
+                      llmProvider={llmProvider}
+                      llmModel={llmModel}
+                      onOpenSettings={onOpenSettings}
+                      prevQuestion={
+                        msg.role === 'assistant'
+                          ? [...messages].slice(0, i).reverse().find(m => m.role === 'user')?.content
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+              </div>
+            ));
+          })()}
           <div ref={bottomRef} />
         </div>
 

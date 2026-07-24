@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2, Check, Copy } from 'lucide-react';
+import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Share2, Check, Copy, Camera } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { searchApi, calendarApi } from '../../services/api';
 import { generateShareImage } from '../../utils/shareImage';
+import { screenshotElement } from '../../utils/screenshot';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
@@ -53,6 +54,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
   const [sharingIdx, setSharingIdx] = useState(-1);
   const [sharedIdx, setSharedIdx] = useState(-1);
+  const [shotLoadingIdx, setShotLoadingIdx] = useState(-1);
+  const [shotDoneIdx, setShotDoneIdx] = useState(-1);
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
@@ -214,6 +217,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       });
       scrollToBottom();
 
+      // 收集之前的对话历史（用户提问 + AI 回答）
+      const history = messages.filter(m =>
+        (m.role === 'user' || m.role === 'assistant') && !m.searching && m.content
+      ).map(m => ({ role: m.role, content: m.content }));
+
       abortRef.current = new AbortController();
       const resp = await fetch('/api/ai/analyze', {
         method: 'POST',
@@ -231,6 +239,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 3. 如果数据不足以回答，诚实说明
 4. 用 Markdown 格式排版（列表、粗体等）
 5. 如果涉及多个联系人，用列表列出并简要说明` },
+            ...history,
             { role: 'user', content: `问题：${q}\n\n${dataContext}` },
           ],
           profile_id: profileId,
@@ -398,7 +407,25 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           </div>
         )}
 
-        {messages.map((msg, i) => (
+        {(() => {
+          // Group messages into Q&A pairs (user question + following messages until next user msg)
+          const groups: number[][] = [];
+          let cur: number[] | null = null;
+          messages.forEach((m, i) => {
+            if (m.role === 'user') {
+              if (cur) groups.push(cur);
+              cur = [i];
+            } else {
+              if (!cur) { cur = [i]; }
+              else { cur.push(i); }
+            }
+          });
+          if (cur) groups.push(cur);
+          return groups.map((indices, gi) => (
+            <div key={gi} data-qa-pair={gi}>
+              {indices.map(i => {
+                const msg = messages[i];
+                return (
           <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             {msg.role !== 'user' && (
               <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-white text-xs ${
@@ -416,7 +443,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     : 'bg-[#f0f0f0] dark:bg-white/10 rounded-bl-sm'
               }`}>
                 {msg.role === 'assistant' && !msg.searching ? (
-                  <div className="prose prose-sm dark:prose-invert max-w-none prose-strong:text-[#07c160]">
+                  <div data-msg-idx={i} className="prose prose-sm dark:prose-invert max-w-none prose-strong:text-[#07c160]">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content || '...'}</ReactMarkdown>
                   </div>
                 ) : msg.searching ? (
@@ -443,6 +470,30 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                   >
                     {copiedIdx === i ? <Check size={12} className="text-[#07c160]" /> : <Copy size={12} />}
                     {copiedIdx === i ? '已复制' : '复制'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (shotLoadingIdx >= 0) return;
+                      setShotLoadingIdx(i);
+                      try {
+                        const msgEl = document.querySelector(`[data-msg-idx="${i}"]`) as HTMLElement;
+                        const pairEl = msgEl?.closest('[data-qa-pair]') as HTMLElement | null;
+                        const el = pairEl || msgEl;
+                        if (el) {
+                          const result = await screenshotElement(el);
+                          if (result.ok) {
+                            setShotDoneIdx(i);
+                            setTimeout(() => setShotDoneIdx(-1), 2000);
+                          }
+                        }
+                      } catch (e) { console.error(e); }
+                      finally { setShotLoadingIdx(-1); }
+                    }}
+                    disabled={shotLoadingIdx >= 0}
+                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
+                  >
+                    {shotLoadingIdx === i ? <Loader2 size={12} className="animate-spin" /> : shotDoneIdx === i ? <Check size={12} className="text-[#07c160]" /> : <Camera size={12} />}
+                    {shotLoadingIdx === i ? '截图中…' : shotDoneIdx === i ? '已复制' : '截图'}
                   </button>
                   <button
                     onClick={async () => {
@@ -499,7 +550,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
               )}
             </div>
           </div>
-        ))}
+                );
+              })}
+            </div>
+          ));
+        })()}
       </div>
 
       {/* Input */}
