@@ -140,8 +140,8 @@ async function renderChatToBlob(
   const bubblePadV = 8;
   const lineH = 20;
   const nameH = 15;
-  const msgGap = 6;
-  const sameSenderGap = 3;
+  const avatarTopGap = 8;
+  const afterGap = 3;
   const tsGap = 14;
   const timeGapThreshold = 5 * 60 * 1000;
   const titleFont = `bold 14px ${font}`;
@@ -177,6 +177,7 @@ async function renderChatToBlob(
     const prev = i > 0 ? msgs[i - 1] : null;
     const showTs = !prev || (parseDateTime(m.datetime) - parseDateTime(prev.datetime) > timeGapThreshold);
     const showAvatar = !prev || prev.sender !== m.sender || showTs;
+    if (showAvatar && i > 0 && !showTs) totalH += avatarTopGap;
     if (showTs && i > 0) totalH += tsGap;
     if (showTs) totalH += 22;
     tmpCtx.font = contentFont;
@@ -186,8 +187,7 @@ async function renderChatToBlob(
     const bubbleH = lines.length * lineH + bubblePadV * 2;
     const msgH = showAvatar ? Math.max(avatarSize, nameH + bubbleH) : bubbleH;
     layouts.push({ showTs, showAvatar, wrappedLines: lines, bubbleW, bubbleH, msgH });
-    if (showAvatar) totalH += msgH + msgGap;
-    else totalH += msgH + sameSenderGap;
+    totalH += msgH + afterGap;
   }
   totalH += padX;
 
@@ -247,6 +247,9 @@ async function renderChatToBlob(
     const m = msgs[i];
     const layout = layouts[i];
 
+    // Extra gap above avatar message (but not when timestamp is shown)
+    if (layout.showAvatar && i > 0 && !layout.showTs) y += avatarTopGap;
+
     // Timestamp separator
     if (layout.showTs) {
       if (i > 0) y += tsGap;
@@ -298,7 +301,7 @@ async function renderChatToBlob(
         ctx.fillText(line, bubbleX + bubblePadH, textY);
         textY += lineH;
       }
-      y += layout.msgH + msgGap;
+      y += layout.msgH + afterGap;
     } else {
       // Same sender, no avatar/name — just bubble with vertically centered text
       const bubbleX = contentX;
@@ -314,7 +317,7 @@ async function renderChatToBlob(
         ctx.fillText(line, bubbleX + bubblePadH, textY);
         textY += lineH;
       }
-      y += layout.msgH + sameSenderGap;
+      y += layout.msgH + afterGap;
     }
   }
 
