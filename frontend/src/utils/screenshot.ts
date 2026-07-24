@@ -1,11 +1,15 @@
 /**
  * screenshot.ts — 截取 DOM 元素为图片并复制到剪贴板
  *
- * 使用 html2canvas 捕获真实 DOM，支持 Markdown 渲染后的内容。
+ * 实现：clone 元素到离屏 wrapper → 强制 CJK 字体 → html2canvas → 剪贴板
  * 三级回退：navigator.clipboard.write → execCommand('copy') → 下载图片
  */
 
 import html2canvas from 'html2canvas';
+
+const CJK_FONT_STACK =
+  "'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'Microsoft YaHei', " +
+  "'WenQuanYi Micro Hei', 'Noto Sans CJK SC', system-ui, -apple-system, sans-serif";
 
 export interface ScreenshotResult {
   ok: boolean;
@@ -17,18 +21,96 @@ export interface ScreenshotResult {
  * 将 DOM 元素截图为 PNG blob
  */
 export async function captureElementToBlob(element: HTMLElement): Promise<Blob> {
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    backgroundColor: null,
-    useCORS: true,
-    logging: false,
+  // Clone the element so we don't modify the original
+  const clone = element.cloneNode(true) as HTMLElement;
+
+  // Remove truncate/ellipsis so full text is visible
+  clone.querySelectorAll<HTMLElement>('.truncate').forEach(el => {
+    el.classList.remove('truncate');
+    el.style.whiteSpace = 'normal';
+    el.style.textOverflow = 'clip';
+    el.style.overflow = 'visible';
   });
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('canvas.toBlob returned null'));
-    }, 'image/png');
+  clone.querySelectorAll<HTMLElement>('[style*="text-overflow"]').forEach(el => {
+    if (el.style.textOverflow === 'ellipsis') el.style.textOverflow = 'clip';
   });
+
+  // Determine background from the element's computed style
+  let bg = '#ffffff';
+  try {
+    const computed = window.getComputedStyle(element);
+    if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+      bg = computed.backgroundColor;
+    }
+  } catch { /* use default white */ }
+
+  // Wrap in an off-screen container with proper background
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = `
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    background: ${bg};
+    padding: 16px;
+    font-family: ${CJK_FONT_STACK};
+    z-index: -1;
+  `;
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+
+  try {
+    // Wait for fonts and images
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch { /* ignore */ }
+    }
+    const imgs = Array.from(wrapper.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise<void>(resolve => {
+        img.addEventListener('load', () => resolve(), { once: true });
+        img.addEventListener('error', () => resolve(), { once: true });
+      });
+    }));
+    await new Promise<void>(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
+    const canvas = await html2canvas(wrapper, {
+      scale: 2,
+      backgroundColor: bg,
+      useCORS: true,
+      logging: false,
+      onclone: (clonedDoc) => {
+        // Force CJK font on all non-mono elements
+        const all = clonedDoc.querySelectorAll<HTMLElement>('*');
+        all.forEach(el => {
+          let cur = '';
+          try {
+            cur = clonedDoc.defaultView?.getComputedStyle(el).fontFamily ?? '';
+          } catch { /* ignore */ }
+          if (!/mono|courier|consolas|menlo/i.test(cur)) {
+            el.style.fontFamily = CJK_FONT_STACK;
+          }
+          // Remove ellipsis
+          if (el.style.textOverflow === 'ellipsis') el.style.textOverflow = 'clip';
+          if (el.classList.contains('truncate')) {
+            el.classList.remove('truncate');
+            el.style.whiteSpace = 'normal';
+            el.style.overflow = 'visible';
+          }
+        });
+      },
+    });
+
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('canvas.toBlob returned null'));
+      }, 'image/png');
+    });
+  } finally {
+    if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+  }
 }
 
 /**
