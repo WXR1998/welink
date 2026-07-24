@@ -2870,6 +2870,35 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"paused": true})
 	})
 
+	// POST /api/ai/abort-all — 停止所有正在运行的 embed/提炼任务
+	api.POST("/ai/abort-all", func(c *gin.Context) {
+		vecJobsMu.Lock()
+		keys := make([]string, 0, len(vecJobs))
+		for k := range vecJobs {
+			keys = append(keys, k)
+		}
+		vecJobsMu.Unlock()
+
+		aborted := 0
+		for _, k := range keys {
+			vecJobsMu.Lock()
+			job, ok := vecJobs[k]
+			vecJobsMu.Unlock()
+			if !ok {
+				continue
+			}
+			job.mu.Lock()
+			abortCh := job.abort
+			running := job.Step != "" && !job.Done && !job.Paused
+			job.mu.Unlock()
+			if running && abortCh != nil {
+				close(abortCh)
+				aborted++
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"aborted": aborted})
+	})
+
 	// POST /api/ai/rag  body: {key, messages, search_query?}
 	api.POST("/ai/rag", func(c *gin.Context) {
 		var body struct {

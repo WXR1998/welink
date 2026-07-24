@@ -14,6 +14,7 @@ export const MemorySection: React.FC = () => {
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [clearing, setClearing] = useState<'facts' | 'embeddings' | null>(null);
+  const [stopping, setStopping] = useState(false);
   const [jobs, setJobs] = useState<Array<{
     key: string; step: string; current: number; total: number;
     done: boolean; paused: boolean; error: string; fact_count: number;
@@ -73,6 +74,20 @@ export const MemorySection: React.FC = () => {
       setSaveMsg({ ok: false, text: '保存失败' });
     } finally {
       setSaving(false);
+      setTimeout(() => setSaveMsg(null), 3000);
+    }
+  };
+
+  const handleStopAll = async () => {
+    if (!confirm('确定停止所有正在运行的 embed/记忆提炼任务？')) return;
+    setStopping(true);
+    try {
+      await axios.post('/api/ai/abort-all');
+      setSaveMsg({ ok: true, text: '已发送停止信号' });
+    } catch {
+      setSaveMsg({ ok: false, text: '停止失败' });
+    } finally {
+      setStopping(false);
       setTimeout(() => setSaveMsg(null), 3000);
     }
   };
@@ -234,7 +249,17 @@ export const MemorySection: React.FC = () => {
         </div>
         {jobs.length > 0 && (
           <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-2">
-            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">运行中的任务</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">运行中的任务</p>
+              <button
+                onClick={handleStopAll}
+                disabled={stopping}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+              >
+                {stopping ? <Loader2 size={10} className="animate-spin" /> : <AlertCircle size={10} />}
+                停止全部
+              </button>
+            </div>
             <div className="space-y-2">
               {jobs.map(job => {
                 const pct = job.total > 0 ? Math.round((job.current / job.total) * 100) : 0;
