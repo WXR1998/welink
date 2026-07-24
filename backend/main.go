@@ -979,6 +979,7 @@ func serverMain() {
 			EmbeddingDims      int          `json:"embedding_dims"`
 			MemLLMBaseURL      string       `json:"mem_llm_base_url"`
 			MemLLMModel        string       `json:"mem_llm_model"`
+			MemLLMAPIKey       string       `json:"mem_llm_api_key"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1048,6 +1049,9 @@ func serverMain() {
 		existing.EmbeddingDims = incoming.EmbeddingDims
 		existing.MemLLMBaseURL = incoming.MemLLMBaseURL
 		existing.MemLLMModel = incoming.MemLLMModel
+		if !keepOld(incoming.MemLLMAPIKey) {
+			existing.MemLLMAPIKey = incoming.MemLLMAPIKey
+		}
 		if err := savePreferences(existing); err != nil {
 			log.Printf("[PREFS] Failed to save LLM preferences: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})

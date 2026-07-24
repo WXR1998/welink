@@ -203,6 +203,7 @@ type Preferences struct {
 	// 提炼时原始聊天内容只发给此模型，与主 LLM 配置隔离
 	MemLLMBaseURL string `json:"mem_llm_base_url,omitempty"` // 默认 http://localhost:11434/v1
 	MemLLMModel   string `json:"mem_llm_model,omitempty"`    // 默认 qwen2.5:7b
+	MemLLMAPIKey  string `json:"mem_llm_api_key,omitempty"`  // 留空=本地 Ollama(无需key)；填写=使用云端模型
 
 	// 自定义纪念日
 	CustomAnniversaries []CustomAnniversary `json:"custom_anniversaries,omitempty"`
@@ -538,6 +539,7 @@ func sanitizeForResponse(p Preferences) Preferences {
 	out.OneDriveAccessToken = ""
 	out.OneDriveRefreshToken = ""
 	out.PodcastTTSAPIKey = redact(out.PodcastTTSAPIKey)
+	out.MemLLMAPIKey = redact(out.MemLLMAPIKey)
 	out.MobilePairingToken = redact(out.MobilePairingToken)
 	if len(out.LLMProfiles) > 0 {
 		sanitized := make([]LLMProfile, len(out.LLMProfiles))
