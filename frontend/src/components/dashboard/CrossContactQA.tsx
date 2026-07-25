@@ -7,7 +7,6 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Check, Copy, Camera, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { searchApi, calendarApi } from '../../services/api';
 import { generateAIScreenshot } from '../../utils/shareImage';
 import type { ChatMessage } from '../../types';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
@@ -25,6 +24,53 @@ interface SearchHit {
   is_group: boolean;
   count: number;
   messages?: ChatMessage[];
+}
+
+// ── 记忆优先两级检索的响应类型 ──
+interface SourceMessage {
+  seq: number;
+  datetime: string;
+  sender: string;
+  content: string;
+}
+
+interface MemFact {
+  id?: number;
+  contact_key?: string;
+  fact: string;
+  source_from: number;
+  source_to: number;
+  pinned?: boolean;
+  created_at?: number;
+  updated_at?: number;
+}
+
+interface FactSource {
+  fact: MemFact;
+  messages: SourceMessage[];
+}
+
+interface ResolvedEntity {
+  name: string;
+  contact_key: string;
+  display_name: string;
+  is_group: boolean;
+}
+
+interface QueryDecomposition {
+  needs_memory: boolean;
+  entities: string[];
+  concepts: string[];
+  time_from: string;
+  time_to: string;
+}
+
+interface MemorySearchResponse {
+  decomposition: QueryDecomposition;
+  resolved_entities: ResolvedEntity[];
+  facts: MemFact[];
+  sources: FactSource[];
+  pinned_facts: MemFact[];
 }
 
 interface Message {
@@ -81,131 +127,59 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     scrollToBottom();
 
     try {
-      // ── Step 1: LLM 解析意图 ──
-      setMessages(prev => [...prev, { role: 'system', content: '正在理解你的问题...', searching: true }]);
+      // ── Step 1: 记忆优先两级检索 ──
+      // 调 /api/ai/memory-search，后端用 LLM 分解问题（needs_memory gate +
+      // 实体/概念/时间提取），然后搜索 mem_facts 并提取源聊天记录
+      setMessages(prev => [...prev, { role: 'system', content: '正在检索记忆库...', searching: true }]);
       scrollToBottom();
 
-      const intentResp = await fetch('/api/ai/complete', {
+      const memResp = await fetch('/api/ai/memory-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [{
-            role: 'system',
-            content: `你是一个问题解析助手。用户会问关于微信聊天记录的跨联系人问题。
-请分析用户意图并返回一个 JSON 对象（不要其他内容），格式：
-{
-  "type": "search" 或 "calendar" 或 "both",
-  "keywords": ["关键词1", "关键词2"],
-  "date_from": "YYYY-MM-DD" 或 null,
-  "date_to": "YYYY-MM-DD" 或 null,
-  "search_type": "all" 或 "contact" 或 "group",
-  "summary": "一句话描述你理解的意图"
-}
-
-规则：
-- 如果问题包含具体关键词（如"旅行""加班""买房"），type 设为 "search"
-- 如果问题包含时间范围（如"去年国庆""上个月"），type 设为 "calendar" 或 "both"
-- "去年国庆" = 去年的 10-01 到 10-07
-- "最近一个月" = 从今天往前推 30 天
-- 今天是 ${new Date().toISOString().slice(0, 10)}
-- keywords 提取核心搜索词，不要太泛
-- 只返回 JSON，不要其他文字`
-          }, {
-            role: 'user',
-            content: q,
-          }],
+          query: q,
+          profile_id: profileId,
         }),
       });
-      const intentData = await intentResp.json() as { content?: string; error?: string };
-      if (intentData.error) throw new Error(intentData.error);
+      const memData = await memResp.json() as MemorySearchResponse;
 
-      let intent: { type: string; keywords: string[]; date_from: string | null; date_to: string | null; search_type: string; summary: string };
-      try {
-        // 提取 JSON（LLM 可能包裹在 ```json ``` 里）
-        const raw = intentData.content ?? '';
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        intent = JSON.parse(jsonMatch?.[0] ?? raw);
-      } catch {
-        // fallback：直接用关键词搜索
-        intent = { type: 'search', keywords: [q], date_from: null, date_to: null, search_type: 'all', summary: q };
-      }
-
-      // ── Step 2: 执行搜索/查询 ──
+      // ── Step 2: 构建 dataContext ──
       let dataContext = '';
-      const allHits: SearchHit[] = [];
 
-      if (intent.type === 'search' || intent.type === 'both') {
-        for (const kw of intent.keywords.slice(0, 3)) {
-          setMessages(prev => {
-            const next = [...prev];
-            next[next.length - 1] = { role: 'system', content: `正在搜索「${kw}」...`, searching: true, tool: 'search' };
-            return next;
-          });
-          scrollToBottom();
-
-          try {
-            const results = await searchApi.global(kw, (intent.search_type as 'all' | 'contact' | 'group') || 'all');
-            if (results?.length) {
-              // 收集完整搜索结果用于前端展示
-              for (const r of results) {
-                if (!allHits.find(h => h.username === r.username)) {
-                  allHits.push({ display_name: r.display_name, username: r.username, is_group: r.is_group, count: r.messages.length, messages: r.messages });
-                }
+      if (memData.decomposition?.needs_memory === false) {
+        // 追问/总结类问题，可直接从上下文回答，不需要检索
+        dataContext = '';
+      } else {
+        // 从源聊天记录构建 context
+        if (memData.sources?.length > 0) {
+          dataContext += '\n【从记忆库检索到的相关聊天记录】\n';
+          for (const src of memData.sources) {
+            const factText = src.fact?.fact || '';
+            // 解析 contact_key 得到展示名
+            let displayName = src.fact?.contact_key || '未知';
+            for (const re of memData.resolved_entities || []) {
+              if (re.contact_key === src.fact?.contact_key) {
+                displayName = re.display_name || re.name;
+                break;
               }
-              dataContext += `\n【搜索「${kw}」结果：${results.length} 个联系人/群聊匹配】\n`;
-              for (const group of results.slice(0, 10)) {
-                dataContext += `\n${group.is_group ? '[群聊]' : '[联系人]'} ${privacyMode ? '***' : group.display_name}（${group.messages.length} 条匹配）：\n`;
-                for (const msg of group.messages.slice(0, 3)) {
-                  dataContext += `  [${msg.date} ${msg.time}] ${msg.is_mine ? '我' : (privacyMode ? '***' : group.display_name)}：${msg.content}\n`;
-                }
-              }
-            } else {
-              dataContext += `\n【搜索「${kw}」：无匹配结果】\n`;
             }
-          } catch {
-            dataContext += `\n【搜索「${kw}」失败】\n`;
-          }
-        }
-      }
-
-      if (intent.type === 'calendar' || intent.type === 'both') {
-        if (intent.date_from) {
-          setMessages(prev => {
-            const next = [...prev];
-            next[next.length - 1] = { role: 'system', content: `正在查询 ${intent.date_from} ~ ${intent.date_to || intent.date_from} 的聊天记录...`, searching: true, tool: 'calendar' };
-            return next;
-          });
-          scrollToBottom();
-
-          const from = new Date(intent.date_from);
-          const to = intent.date_to ? new Date(intent.date_to) : from;
-          const days: string[] = [];
-          const cur = new Date(from);
-          while (cur <= to && days.length < 14) { // 最多 14 天
-            days.push(cur.toISOString().slice(0, 10));
-            cur.setDate(cur.getDate() + 1);
-          }
-
-          dataContext += `\n【${intent.date_from} ~ ${intent.date_to || intent.date_from} 期间聊天活动】\n`;
-          for (const day of days) {
-            try {
-              const dayData = await calendarApi.getDay(day);
-              const allEntries = [...(dayData.contacts || []), ...(dayData.groups || [])];
-              if (allEntries.length > 0) {
-                const names = allEntries.slice(0, 10).map(e => `${privacyMode ? '***' : e.display_name}(${e.count}条)`).join('、');
-                dataContext += `${day}：与 ${allEntries.length} 人/群聊天 — ${names}\n`;
-              } else {
-                dataContext += `${day}：无聊天记录\n`;
-              }
-            } catch {
-              dataContext += `${day}：查询失败\n`;
+            dataContext += `\n■ ${privacyMode ? '***' : displayName}（事实：${factText}）\n`;
+            for (const msg of (src.messages || []).slice(0, 10)) {
+              const senderLabel = msg.sender === '我' ? '我' : (privacyMode ? '***' : displayName);
+              dataContext += `  [${msg.datetime}] ${senderLabel}：${msg.content}\n`;
             }
           }
         }
-      }
-
-      if (!dataContext.trim()) {
-        dataContext = '【未找到相关数据】';
+        // 添加置顶事实
+        if (memData.pinned_facts?.length > 0) {
+          dataContext += '\n【手工置顶的背景知识】\n';
+          for (const pf of memData.pinned_facts) {
+            dataContext += `- ${pf.fact}\n`;
+          }
+        }
+        if (!dataContext.trim()) {
+          dataContext = '【未找到相关记忆】';
+        }
       }
 
       // ── Step 3: LLM 汇总回答 ──
@@ -255,7 +229,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       // 替换 searching 消息为正式回答
       setMessages(prev => {
         const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content: '', searchHits: allHits.length > 0 ? allHits : undefined };
+        next[next.length - 1] = { role: 'assistant', content: '' };
         return next;
       });
 
