@@ -65,12 +65,19 @@ interface QueryDecomposition {
   time_to: string;
 }
 
+interface StreamUsage {
+  prompt_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
 interface MemorySearchResponse {
   decomposition: QueryDecomposition;
   resolved_entities: ResolvedEntity[];
   facts: MemFact[];
   sources: FactSource[];
   pinned_facts: MemFact[];
+  token_usage?: StreamUsage;
 }
 
 interface Message {
@@ -79,6 +86,13 @@ interface Message {
   tool?: string;
   searching?: boolean;
   searchHits?: SearchHit[]; // 完整搜索结果（用于展示在 AI 回答下方）
+  tokenUsage?: StreamUsage; // 本次提问+回答消耗的 token
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toString();
 }
 
 const EXAMPLE_QUESTIONS = [
@@ -142,6 +156,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         }),
       });
       const memData = await memResp.json() as MemorySearchResponse;
+
+      // 收集 memory-search 消耗的 token
+      let totalTokens = memData.token_usage?.total_tokens ?? 0;
 
       // ── Step 2: 构建 dataContext ──
       let dataContext = '';
@@ -242,8 +259,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           try {
-            const chunk = JSON.parse(line.slice(6)) as { delta?: string; done?: boolean; error?: string };
+            const chunk = JSON.parse(line.slice(6)) as { delta?: string; done?: boolean; error?: string; usage?: StreamUsage };
             if (chunk.error) throw new Error(chunk.error);
+            if (chunk.usage) {
+              totalTokens += chunk.usage.total_tokens ?? 0;
+            }
             if (chunk.delta) {
               full += chunk.delta;
               setMessages(prev => {
@@ -256,6 +276,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           } catch {}
         }
       }
+      // 保存 token 使用统计到最后一条 assistant 消息
+      setMessages(prev => {
+        const next = [...prev];
+        if (next[next.length - 1]?.role === 'assistant') {
+          next[next.length - 1] = { ...next[next.length - 1], tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens } };
+        }
+        return next;
+      });
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') {
         setMessages(prev => {
@@ -473,6 +501,12 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     {shotLoadingIdx === i ? <Loader2 size={12} className="animate-spin" /> : shotDoneIdx === i ? <Check size={12} className="text-[#07c160]" /> : <Camera size={12} />}
                     {shotLoadingIdx === i ? '截图中…' : shotDoneIdx === i ? '已复制' : '截图'}
                   </button>
+                  {msg.tokenUsage && (
+                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                      <span className="opacity-60">⚡</span>
+                      {formatTokens(msg.tokenUsage.total_tokens)} tokens
+                    </span>
+                  )}
                 </div>
               )}
               {/* 搜索结果完整列表 */}
