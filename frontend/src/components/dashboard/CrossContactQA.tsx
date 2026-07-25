@@ -95,6 +95,7 @@ interface Message {
   searching?: boolean;
   searchHits?: SearchHit[]; // 完整搜索结果（用于展示在 AI 回答下方）
   tokenUsage?: StreamUsage; // 本次提问+回答消耗的 token
+  elapsedMs?: number; // 本次提问+回答的耗时（毫秒）
   memorySearchData?: MemorySearchResponse; // 记忆检索详情（下拉框展示）
   llmPrompt?: LLMMessage[]; // 最终发给 LLM API 的原始 prompt
 }
@@ -149,6 +150,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     setMessages(prev => [...prev, { role: 'user', content: q }]);
     setLoading(true);
     scrollToBottom();
+
+    const startTime = Date.now();
 
     try {
       // ── Step 1: 记忆优先两级检索 ──
@@ -307,11 +310,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         });
         scrollToBottom();
       }
-      // 保存 token 使用统计到最后一条 assistant 消息
+      // 保存 token 使用统计和耗时到最后一条 assistant 消息
       setMessages(prev => {
         const next = [...prev];
         if (next[next.length - 1]?.role === 'assistant') {
-          next[next.length - 1] = { ...next[next.length - 1], tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens } };
+          next[next.length - 1] = { ...next[next.length - 1], tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens }, elapsedMs: Date.now() - startTime };
         }
         return next;
       });
@@ -543,6 +546,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     <span className="text-xs text-gray-400 flex items-center gap-1">
                       <span className="opacity-60">⚡</span>
                       {formatTokens(msg.tokenUsage.total_tokens)} tokens
+                      {msg.elapsedMs ? (
+                        <span className="ml-1 opacity-60">· {(msg.elapsedMs / 1000).toFixed(1)}s</span>
+                      ) : null}
                     </span>
                   )}
                 </div>
