@@ -1400,12 +1400,13 @@ func serverMain() {
 	// 后端拉取聊天记录 → 构造 prompt → 流式转发 LLM 响应
 	api.POST("/ai/analyze", func(c *gin.Context) {
 		var body struct {
-			Username  string       `json:"username"`
-			IsGroup   bool         `json:"is_group"`
-			From      int64        `json:"from"`
-			To        int64        `json:"to"`
-			Messages  []LLMMessage `json:"messages"`
-			ProfileID string       `json:"profile_id"`
+			Username    string       `json:"username"`
+			IsGroup     bool         `json:"is_group"`
+			From        int64        `json:"from"`
+			To          int64        `json:"to"`
+			Messages    []LLMMessage `json:"messages"`
+			ProfileID   string       `json:"profile_id"`
+			SkipMemory  bool         `json:"skip_memory"` // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1435,88 +1436,91 @@ func serverMain() {
 			}
 		}
 
-		// 提取用户最后一条问题作为语义检索词
-		var searchQ string
-		for i := len(body.Messages) - 1; i >= 0; i-- {
-			if body.Messages[i].Role == "user" {
-				searchQ = body.Messages[i].Content
-				break
+		// skip_memory=true 时跳过后端记忆注入（前端已通过 memory-search 注入）
+		if !body.SkipMemory {
+			// 提取用户最后一条问题作为语义检索词
+			var searchQ string
+			for i := len(body.Messages) - 1; i >= 0; i-- {
+				if body.Messages[i].Role == "user" {
+					searchQ = body.Messages[i].Content
+					break
+				}
 			}
-		}
 
-		// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
-		pinnedFacts, _ := GetPinnedMemFacts(contactKey)
-		searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
+			// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
+			pinnedFacts, _ := GetPinnedMemFacts(contactKey)
+			searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
 
-		// 去重：置顶事实不再出现在检索结果中
-		seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))
-		for _, p := range pinnedFacts {
-			seen[p.Fact] = true
-		}
-		var dedupSearched []MemFact
-		for _, f := range searchedFacts {
-			if !seen[f.Fact] {
-				dedupSearched = append(dedupSearched, f)
-				seen[f.Fact] = true
+			// 去重：置顶事实不再出现在检索结果中
+			seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))
+			for _, p := range pinnedFacts {
+				seen[p.Fact] = true
 			}
-		}
+			var dedupSearched []MemFact
+			for _, f := range searchedFacts {
+				if !seen[f.Fact] {
+					dedupSearched = append(dedupSearched, f)
+					seen[f.Fact] = true
+				}
+			}
 
-		// contactKey → 可读来源名称
-		resolveSource := func(ck string) string {
-			svc := getSvc()
-			if svc == nil {
+			// contactKey → 可读来源名称
+			resolveSource := func(ck string) string {
+				svc := getSvc()
+				if svc == nil {
+					return ck
+				}
+				if strings.HasPrefix(ck, "group:") {
+					uname := strings.TrimPrefix(ck, "group:")
+					for _, g := range svc.GetGroups() {
+						if g.Username == uname {
+							return "群聊「" + g.Name + "」"
+						}
+					}
+					return "群聊「" + uname + "」"
+				}
+				if strings.HasPrefix(ck, "contact:") {
+					uname := strings.TrimPrefix(ck, "contact:")
+					for _, s := range svc.GetCachedStats() {
+						if s.Username == uname {
+							if s.Remark != "" {
+								return "与「" + s.Remark + "」的私聊"
+							}
+							if s.Nickname != "" {
+								return "与「" + s.Nickname + "」的私聊"
+							}
+						}
+					}
+					return "与「" + uname + "」的私聊"
+				}
 				return ck
 			}
-			if strings.HasPrefix(ck, "group:") {
-				uname := strings.TrimPrefix(ck, "group:")
-				for _, g := range svc.GetGroups() {
-					if g.Username == uname {
-						return "群聊「" + g.Name + "」"
-					}
-				}
-				return "群聊「" + uname + "」"
-			}
-			if strings.HasPrefix(ck, "contact:") {
-				uname := strings.TrimPrefix(ck, "contact:")
-				for _, s := range svc.GetCachedStats() {
-					if s.Username == uname {
-						if s.Remark != "" {
-							return "与「" + s.Remark + "」的私聊"
-						}
-						if s.Nickname != "" {
-							return "与「" + s.Nickname + "」的私聊"
-						}
-					}
-				}
-				return "与「" + uname + "」的私聊"
-			}
-			return ck
-		}
 
-		// 分两块构建 prompt 片段，让下游模型区分信息来源
-		var memSection string
-		if len(pinnedFacts) > 0 {
-			memSection += "\n\n【手工置顶的背景知识】\n"
-			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
-			for _, p := range pinnedFacts {
-				src := resolveSource(p.ContactKey)
-				memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+			// 分两块构建 prompt 片段，让下游模型区分信息来源
+			var memSection string
+			if len(pinnedFacts) > 0 {
+				memSection += "\n\n【手工置顶的背景知识】\n"
+				memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
+				for _, p := range pinnedFacts {
+					src := resolveSource(p.ContactKey)
+					memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+				}
 			}
-		}
-		if len(dedupSearched) > 0 {
-			memSection += "\n\n【从聊天记录中提炼的事实】\n"
-			memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
-			for _, f := range dedupSearched {
-				src := resolveSource(f.ContactKey)
-				memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+			if len(dedupSearched) > 0 {
+				memSection += "\n\n【从聊天记录中提炼的事实】\n"
+				memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
+				for _, f := range dedupSearched {
+					src := resolveSource(f.ContactKey)
+					memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+				}
 			}
-		}
 
-		if memSection != "" {
-			for i := range body.Messages {
-				if body.Messages[i].Role == "system" {
-					body.Messages[i].Content += memSection
-					break
+			if memSection != "" {
+				for i := range body.Messages {
+					if body.Messages[i].Role == "system" {
+						body.Messages[i].Content += memSection
+						break
+					}
 				}
 			}
 		}
