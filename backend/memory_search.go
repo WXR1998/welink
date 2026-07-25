@@ -156,26 +156,62 @@ type QueryDecomposition struct {
 //
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
-func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
+func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
+
+	// 获取置顶记忆，用于 LLM 理解外号/简称与实体的映射关系
+	pinnedFacts, _ := GetPinnedMemFacts("")
+	var pinnedBlock string
+	if len(pinnedFacts) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n\n── 用户置顶的背景事实（包含外号、简称等映射关系，用于理解问题中的人名）──\n")
+		for _, f := range pinnedFacts {
+			fmt.Fprintf(&sb, "- %s\n", f.Fact)
+		}
+		pinnedBlock = sb.String()
+	}
+
+	// 构建上一轮分解结果的上下文（用于连续问答时沿用实体/概念/时间）
+	var prevBlock string
+	if prevDecomp != nil {
+		var sb strings.Builder
+		sb.WriteString("\n\n── 上一轮查询分解结果 ──\n")
+		if len(prevDecomp.Entities) > 0 {
+			fmt.Fprintf(&sb, "实体: %s\n", strings.Join(prevDecomp.Entities, ", "))
+		}
+		if len(prevDecomp.Concepts) > 0 {
+			fmt.Fprintf(&sb, "概念: %s\n", strings.Join(prevDecomp.Concepts, ", "))
+		}
+		if prevDecomp.TimeFrom != "" || prevDecomp.TimeTo != "" {
+			fmt.Fprintf(&sb, "时间范围: %s ~ %s\n", prevDecomp.TimeFrom, prevDecomp.TimeTo)
+		}
+		if len(prevDecomp.Groups) > 0 {
+			fmt.Fprintf(&sb, "指定群聊: %s\n", strings.Join(prevDecomp.Groups, ", "))
+		}
+		sb.WriteString("如果本轮问题是追问（如'那后来呢'、'还有呢'、'他呢'），请沿用上一轮的实体和概念。\n")
+		prevBlock = sb.String()
+	}
+
 	prompt := fmt.Sprintf(`你是 WeLink（微信聊天数据分析平台）的查询分析助手。
-分析用户的问题，判断是否需要检索聊天记忆库。
+分析用户的问题，判断是否需要检索聊天记忆库。%s%s
 
 今天是 %s。输出严格 JSON，不要任何解释或代码围栏：
 {"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD", "groups": ["群聊名"]}
 
 规则：
 1. needs_memory: 问题需要查阅聊天记录或记忆事实才能回答时为 true；追问、总结、澄清等可从上下文即答的为 false
-2. entities: 问题中提到的所有人名（如"张三和李四聊了什么"→ ["张三", "李四"]）。没有人名则空数组
+2. entities: 问题中提到的所有人名（如"张三和李四聊了什么"→ ["张三", "李四"]）。没有人名则空数组。外号/简称需根据置顶记忆还原为真实姓名
 3. concepts: 问题的核心语义概念，不要包含人名（如"张三分手了"→ ["分手"]；"张三和李四的关系"→ ["关系"]）
 4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
 5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年
 6. groups: 如果用户明确提到"在XXX群里"或指定了某个群聊，把群名放入 groups；否则空数组
+7. 连续问答时，如果本轮问题是追问且没有提到新的人名，沿用上一轮的 entities
 
 示例：
 - "张三什么时候分手的？" → {"needs_memory": true, "entities": ["张三"], "concepts": ["分手"], "time_from": "", "time_to": "", "groups": []}
 - "去年国庆我和谁聊天了？" → {"needs_memory": true, "entities": [], "concepts": ["国庆聊天"], "time_from": "2025-10-01", "time_to": "2025-10-07", "groups": []}
-- "你刚才说的再说一遍" → {"needs_memory": false, "entities": [], "concepts": [], "time_from": "", "time_to": "", "groups": []}`, today)
+- "你刚才说的再说一遍" → {"needs_memory": false, "entities": [], "concepts": [], "time_from": "", "time_to": "", "groups": []}
+- "那后来呢"（上一轮实体含"张三"）→ {"needs_memory": true, "entities": ["张三"], "concepts": ["后续发展"], "time_from": "", "time_to": "", "groups": []}`, pinnedBlock, prevBlock, today)
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
@@ -428,8 +464,9 @@ type MemorySearchResponse struct {
 func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.ContactService) {
 	api.POST("/ai/memory-search", func(c *gin.Context) {
 		var body struct {
-			Query     string `json:"query"`
-			ProfileID string `json:"profile_id"`
+			Query                 string              `json:"query"`
+			ProfileID             string              `json:"profile_id"`
+			PreviousDecomposition *QueryDecomposition `json:"previous_decomposition"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Query) == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query 必填"})
@@ -444,7 +481,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 1: LLM 查询分解
-		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, prefs)
+		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {

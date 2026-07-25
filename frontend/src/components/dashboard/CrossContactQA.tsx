@@ -176,12 +176,19 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       setMessages(prev => [...prev, { role: 'system', content: '正在检索记忆库...', searching: true }]);
       scrollToBottom();
 
+      // 提取上一轮分解结果，用于连续问答时沿用实体/概念/时间
+      const lastAssistantWithMem = [...messages].reverse().find(m =>
+        m.role === 'assistant' && m.memorySearchData?.decomposition
+      );
+      const prevDecomp = lastAssistantWithMem?.memorySearchData?.decomposition || null;
+
       const memResp = await fetch('/api/ai/memory-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: q,
           profile_id: profileId,
+          previous_decomposition: prevDecomp,
         }),
       });
       const memData = await memResp.json() as MemorySearchResponse;
