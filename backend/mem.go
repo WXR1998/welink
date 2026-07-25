@@ -418,9 +418,9 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, 
 	var rows *sql.Rows
 	if key == "" {
 		// key 为空时搜索所有联系人的记忆（如 AI 首页跨联系人问答）
-		rows, err = db.Query(`SELECT contact_key, fact, embedding FROM mem_facts`)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts`)
 	} else {
-		rows, err = db.Query(`SELECT contact_key, fact, embedding FROM mem_facts WHERE contact_key = ?`, key)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts WHERE contact_key = ?`, key)
 	}
 	if err != nil {
 		return nil, err
@@ -430,19 +430,21 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, 
 	type scored struct {
 		fact       string
 		contactKey string
+		sourceFrom int
+		sourceTo   int
 		sim        float32
 	}
 	var candidates []scored
 	for rows.Next() {
-		var contactKey string
-		var fact string
+		var s scored
 		var blob []byte
-		rows.Scan(&contactKey, &fact, &blob)
+		rows.Scan(&s.contactKey, &s.fact, &blob, &s.sourceFrom, &s.sourceTo)
 		vec := decodeVec(blob)
 		if len(vec) != len(queryVec) {
 			continue
 		}
-		candidates = append(candidates, scored{fact, contactKey, cosineSimilarity(queryVec, vec)})
+		s.sim = cosineSimilarity(queryVec, vec)
+		candidates = append(candidates, s)
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -457,6 +459,8 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, 
 		out[i] = MemFact{
 			Fact:       s.fact,
 			ContactKey: s.contactKey,
+			SourceFrom: s.sourceFrom,
+			SourceTo:   s.sourceTo,
 		}
 	}
 	return out, nil
