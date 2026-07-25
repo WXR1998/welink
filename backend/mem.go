@@ -400,7 +400,33 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 // ─── 检索 ─────────────────────────────────────────────────────────────────────
 
 // SearchMemFacts 对 mem_facts 执行语义检索，返回 top-K 最相关事实（带 ContactKey）。
+// factTimeStart 从事实文本中提取时间范围的起点。
+// 事实文本格式: "[2026-02-08 00:25 ~ 2026-02-08 10:30] 实际事实内容"
+// 返回 "2026-02-08 00:25" 或空字符串（无法解析时）。
+func factTimeStart(fact string) string {
+	if !strings.HasPrefix(fact, "[") {
+		return ""
+	}
+	end := strings.Index(fact, "]")
+	if end < 0 {
+		return ""
+	}
+	inner := fact[1:end]
+	tilde := strings.Index(inner, "~")
+	if tilde < 0 {
+		return ""
+	}
+	return strings.TrimSpace(inner[:tilde])
+}
+
 func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, error) {
+	return SearchMemFactsFiltered(key, query, topK, "", "", prefs)
+}
+
+// SearchMemFactsFiltered 在支持时间过滤的版本上搜索记忆事实。
+// timeFrom/timeTo 格式为 "YYYY-MM-DD"（空=不限定）。
+// 事实文本包含时间范围前缀 [start ~ end]，用 start 做时间过滤。
+func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string, prefs Preferences) ([]MemFact, error) {
 	aiDBMu.Lock()
 	db := aiDB
 	aiDBMu.Unlock()
@@ -444,6 +470,19 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, 
 			continue
 		}
 		s.sim = cosineSimilarity(queryVec, vec)
+
+		// 时间过滤：如果指定了时间范围，跳过不在范围内的事实
+		if timeFrom != "" || timeTo != "" {
+			factStart := factTimeStart(s.fact)
+			if factStart == "" {
+				// 无法解析时间，保留（宁多勿少）
+			} else if timeFrom != "" && factStart < timeFrom+" 00:00" {
+				continue
+			} else if timeTo != "" && factStart > timeTo+" 23:59" {
+				continue
+			}
+		}
+
 		candidates = append(candidates, s)
 	}
 

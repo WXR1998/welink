@@ -166,11 +166,16 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLM
 
 规则：
 1. needs_memory: 问题需要查阅聊天记录或记忆事实才能回答时为 true；追问、总结、澄清等可从上下文即答的为 false
-2. entities: 问题中明确提到的联系人名或群聊名（没有则空数组）
-3. concepts: 问题的核心语义概念，2-5个词或短语，用于向量检索记忆事实
+2. entities: 问题中提到的所有人名（如"张三和李四聊了什么"→ ["张三", "李四"]）。没有人名则空数组
+3. concepts: 问题的核心语义概念，不要包含人名（如"张三分手了"→ ["分手"]；"张三和李四的关系"→ ["关系"]）
 4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
 5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年
-6. groups: 如果用户明确提到"在XXX群里"或指定了某个群聊，把群名放入 groups；否则空数组`, today)
+6. groups: 如果用户明确提到"在XXX群里"或指定了某个群聊，把群名放入 groups；否则空数组
+
+示例：
+- "张三什么时候分手的？" → {"needs_memory": true, "entities": ["张三"], "concepts": ["分手"], "time_from": "", "time_to": "", "groups": []}
+- "去年国庆我和谁聊天了？" → {"needs_memory": true, "entities": [], "concepts": ["国庆聊天"], "time_from": "2025-10-01", "time_to": "2025-10-07", "groups": []}
+- "你刚才说的再说一遍" → {"needs_memory": false, "entities": [], "concepts": [], "time_from": "", "time_to": "", "groups": []}`, today)
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
@@ -507,14 +512,14 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				if len(allFacts) >= maxFacts {
 					break
 				}
-				facts, _ := SearchMemFacts(sk, searchQ, 10, prefs)
+				facts, _ := SearchMemFactsFiltered(sk, searchQ, 10, decomp.TimeFrom, decomp.TimeTo, prefs)
 				allFacts = append(allFacts, facts...)
 				pf, _ := GetPinnedMemFacts(sk)
 				pinnedFacts = append(pinnedFacts, pf...)
 			}
 		} else {
 			// 无实体 → 全局搜索
-			facts, _ := SearchMemFacts("", searchQ, 50, prefs)
+			facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
 			allFacts = append(allFacts, facts...)
 			pf, _ := GetPinnedMemFacts("")
 			pinnedFacts = append(pinnedFacts, pf...)
