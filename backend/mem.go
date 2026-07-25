@@ -447,9 +447,19 @@ func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, 
 		candidates = append(candidates, s)
 	}
 
+	// 按相似度降序
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].sim > candidates[j].sim
 	})
+	// 过滤掉相似度过低的结果（噪声）
+	const minSim = 0.3
+	filtered := candidates[:0]
+	for _, c := range candidates {
+		if c.sim >= minSim {
+			filtered = append(filtered, c)
+		}
+	}
+	candidates = filtered
 	if len(candidates) > topK {
 		candidates = candidates[:topK]
 	}

@@ -15,13 +15,15 @@ import (
 
 // AIMessage 与前端 AnalysisMessage 结构对应
 type AIMessage struct {
-	Role         string  `json:"role"`
-	Content      string  `json:"content"`
-	Provider     string  `json:"provider,omitempty"`
-	Model        string  `json:"model,omitempty"`
-	ElapsedSecs  float64 `json:"elapsedSecs,omitempty"`
-	TokensPerSec int     `json:"tokensPerSec,omitempty"`
-	CharCount    int     `json:"charCount,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	Provider         string          `json:"provider,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	ElapsedSecs      float64         `json:"elapsedSecs,omitempty"`
+	TokensPerSec     int             `json:"tokensPerSec,omitempty"`
+	CharCount        int             `json:"charCount,omitempty"`
+	MemorySearchData json.RawMessage `json:"memorySearchData,omitempty"` // 记忆检索详情（JSON 透传，前端展示用）
+	LLMPrompt        json.RawMessage `json:"llmPrompt,omitempty"`        // 最终发给 LLM 的原始 prompt
 }
 
 var (

@@ -499,20 +499,29 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		// 加上群聊 key
 		searchKeys = append(searchKeys, groupKeys...)
 
+		// 限制总 facts 数量，避免注入过多噪声
+		const maxFacts = 10
 		if len(searchKeys) > 0 {
 			// 有实体/群聊 → 按 contact_key 过滤搜索（降噪）
 			for _, sk := range searchKeys {
-				facts, _ := SearchMemFacts(sk, searchQ, 5, prefs)
+				if len(allFacts) >= maxFacts {
+					break
+				}
+				facts, _ := SearchMemFacts(sk, searchQ, 3, prefs)
 				allFacts = append(allFacts, facts...)
 				pf, _ := GetPinnedMemFacts(sk)
 				pinnedFacts = append(pinnedFacts, pf...)
 			}
 		} else {
 			// 无实体 → 全局搜索
-			facts, _ := SearchMemFacts("", searchQ, 10, prefs)
+			facts, _ := SearchMemFacts("", searchQ, 5, prefs)
 			allFacts = append(allFacts, facts...)
 			pf, _ := GetPinnedMemFacts("")
 			pinnedFacts = append(pinnedFacts, pf...)
+		}
+		// 截断到 maxFacts
+		if len(allFacts) > maxFacts {
+			allFacts = allFacts[:maxFacts]
 		}
 
 		// Step 4: 提取源聊天记录

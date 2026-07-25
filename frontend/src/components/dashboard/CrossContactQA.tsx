@@ -183,12 +183,13 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           for (const src of memData.sources) {
             const factText = src.fact?.fact || '';
             const sourceName = src.source_name || src.fact?.contact_key || '未知';
-            dataContext += `\n■ ${privacyMode ? '***' : sourceName}\n`;
-            dataContext += `  事实：${factText}\n`;
-            for (const msg of (src.messages || [])) {
+            dataContext += `\n■ ${privacyMode ? '***' : sourceName}（${factText}）\n`;
+            // 用 [说话人]: 文本 格式，每条一行，紧凑不浪费空间
+            const lines = (src.messages || []).map(msg => {
               const senderLabel = privacyMode ? '***' : (msg.sender || '未知');
-              dataContext += `  ${senderLabel}：${msg.content}\n`;
-            }
+              return `[${senderLabel}]: ${msg.content}`;
+            });
+            dataContext += lines.join('\n') + '\n';
           }
         }
         // 添加置顶事实
@@ -322,7 +323,12 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 
     const saveData = messages
       .filter(m => m.role === 'user' || (m.role === 'assistant' && !m.searching))
-      .map(m => ({ role: m.role, content: m.content }));
+      .map(m => {
+        const item: any = { role: m.role, content: m.content };
+        if (m.memorySearchData) item.memorySearchData = m.memorySearchData;
+        if (m.llmPrompt) item.llmPrompt = m.llmPrompt;
+        return item;
+      });
     fetch('/api/ai/conversations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -337,9 +343,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       const resp = await fetch(`/api/ai/conversations?key=${encodeURIComponent(key)}`);
       const data = await resp.json();
       if (data.messages?.length) {
-        setMessages(data.messages.map((m: { role: string; content: string }) => ({
+        setMessages(data.messages.map((m: any) => ({
           role: m.role as 'user' | 'assistant' | 'system',
           content: m.content,
+          memorySearchData: m.memorySearchData,
+          llmPrompt: m.llmPrompt,
         })));
         setConversationKey(key);
       }
@@ -571,7 +579,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           {msg.memorySearchData.sources.map((src, idx) => (
                             <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
                               <div className="text-gray-600 dark:text-gray-300">
-                                {privacyMode ? '***' : (src.fact.contact_key || '未知')}
+                                {privacyMode ? '***' : (src.source_name || src.fact?.contact_key || '未知')}
                               </div>
                               <div className="text-gray-400">事实: {src.fact.fact}</div>
                               <div className="text-gray-400">来源区间: seq {src.fact.source_from} ~ {src.fact.source_to}</div>
