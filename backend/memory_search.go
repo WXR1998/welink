@@ -18,8 +18,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -121,10 +123,11 @@ type QueryDecomposition struct {
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
 func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error) {
-	const prompt = `你是 WeLink（微信聊天数据分析平台）的查询分析助手。
+	today := time.Now().Format("2006-01-02")
+	prompt := fmt.Sprintf(`你是 WeLink（微信聊天数据分析平台）的查询分析助手。
 分析用户的问题，判断是否需要检索聊天记忆库。
 
-输出严格 JSON，不要任何解释或代码围栏：
+今天是 %s。输出严格 JSON，不要任何解释或代码围栏：
 {"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD"}
 
 规则：
@@ -132,7 +135,7 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error
 2. entities: 问题中明确提到的联系人名或群聊名（没有则空数组）
 3. concepts: 问题的核心语义概念，2-5个词或短语，用于向量检索记忆事实
 4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
-5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年`
+5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年`, today)
 
 	result, err := CompleteLLM([]LLMMessage{
 		{Role: "system", Content: prompt},
