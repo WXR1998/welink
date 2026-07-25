@@ -26,11 +26,19 @@ type LLMMessage struct {
 
 // StreamChunk 是 SSE 推给前端的单次增量
 type StreamChunk struct {
-	Delta   string   `json:"delta,omitempty"`
-	Thinking string  `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
-	Done    bool     `json:"done,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	RagMeta *RagMeta `json:"rag_meta,omitempty"`
+	Delta     string       `json:"delta,omitempty"`
+	Thinking  string       `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
+	Done      bool         `json:"done,omitempty"`
+	Error     string       `json:"error,omitempty"`
+	RagMeta   *RagMeta     `json:"rag_meta,omitempty"`
+	Usage     *StreamUsage `json:"usage,omitempty"` // 本次调用的 token 统计
+}
+
+// StreamUsage 携带本次 LLM 调用的 token 使用统计。
+type StreamUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
 }
 
 // RagMeta 携带 RAG 检索统计信息及命中消息（在 LLM 流式响应前发送）。
@@ -553,6 +561,12 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	// Token 统计：记录输出 token
 	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
 	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
+	// 推送 token 使用信息给前端
+	send(StreamChunk{Usage: &StreamUsage{
+		PromptTokens:  promptTokens,
+		OutputTokens:  outputTokens,
+		TotalTokens:   promptTokens + outputTokens,
+	}})
 	return err
 }
 

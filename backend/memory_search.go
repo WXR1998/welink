@@ -122,7 +122,7 @@ type QueryDecomposition struct {
 //
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
-func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error) {
+func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
 	prompt := fmt.Sprintf(`你是 WeLink（微信聊天数据分析平台）的查询分析助手。
 分析用户的问题，判断是否需要检索聊天记忆库。
@@ -137,17 +137,26 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error
 4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
 5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年`, today)
 
-	result, err := CompleteLLM([]LLMMessage{
+	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
 		{Role: "user", Content: query},
-	}, prefs)
+	}
+	promptTokens := estimateMsgTokens(llmMsgs)
+
+	result, err := CompleteLLM(llmMsgs, prefs)
 	if err != nil {
 		// 降级：假设需要记忆，用原始问题做搜索
 		return &QueryDecomposition{
-			NeedsMemory: true,
-			Concepts:    []string{query},
-		}, nil
+				NeedsMemory: true,
+				Concepts:    []string{query},
+			}, &StreamUsage{
+				PromptTokens: promptTokens,
+				OutputTokens: 0,
+				TotalTokens:  promptTokens,
+			}, nil
 	}
+
+	outputTokens := estimateTokens(result)
 
 	// 提取 JSON（LLM 可能在前后加文字或代码围栏）
 	raw := strings.TrimSpace(result)
@@ -161,9 +170,13 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error
 	if err := json.Unmarshal([]byte(raw), &decomp); err != nil {
 		// 降级
 		return &QueryDecomposition{
-			NeedsMemory: true,
-			Concepts:    []string{query},
-		}, nil
+				NeedsMemory: true,
+				Concepts:    []string{query},
+			}, &StreamUsage{
+				PromptTokens: promptTokens,
+				OutputTokens: outputTokens,
+				TotalTokens:  promptTokens + outputTokens,
+			}, nil
 	}
 
 	// 如果 concepts 为空，用原始问题兜底
@@ -171,7 +184,11 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error
 		decomp.Concepts = []string{query}
 	}
 
-	return &decomp, nil
+	return &decomp, &StreamUsage{
+		PromptTokens:  promptTokens,
+		OutputTokens:  outputTokens,
+		TotalTokens:   promptTokens + outputTokens,
+	}, nil
 }
 
 // ─── 实体名解析 ───────────────────────────────────────────────────────────────
@@ -290,6 +307,7 @@ type MemorySearchResponse struct {
 	Facts            []MemFact           `json:"facts"`             // 匹配到的记忆事实
 	Sources          []FactSource        `json:"sources"`           // 记忆事实对应的源聊天记录
 	PinnedFacts      []MemFact           `json:"pinned_facts"`      // 置顶事实（始终注入）
+	TokenUsage       *StreamUsage        `json:"token_usage"`       // DecomposeQuery 消耗的 token
 }
 
 // registerMemorySearchRoutes 注册 /api/ai/memory-search 端点。
@@ -322,12 +340,13 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 1: LLM 查询分解
-		decomp, _ := DecomposeQuery(body.Query, prefs)
+		decomp, decompUsage, _ := DecomposeQuery(body.Query, prefs)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
 			c.JSON(http.StatusOK, MemorySearchResponse{
 				Decomposition: decomp,
+				TokenUsage:    decompUsage,
 			})
 			return
 		}
@@ -391,6 +410,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			Facts:            allFacts,
 			Sources:          sources,
 			PinnedFacts:      pinnedFacts,
+			TokenUsage:       decompUsage,
 		})
 	})
 }
