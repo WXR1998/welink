@@ -38,8 +38,40 @@ type SourceMessage struct {
 
 // FactSource 是一条记忆事实及其对应的源聊天记录。
 type FactSource struct {
-	Fact     MemFact         `json:"fact"`     // 记忆事实（含 ContactKey, SourceFrom, SourceTo）
-	Messages []SourceMessage `json:"messages"` // 源聊天记录
+	Fact       MemFact         `json:"fact"`        // 记忆事实（含 ContactKey, SourceFrom, SourceTo）
+	Messages   []SourceMessage `json:"messages"`    // 源聊天记录
+	SourceName string          `json:"source_name"` // 可读来源名（如"群聊「xxx」"或"与「xxx」的私聊"）
+}
+
+// resolveSourceName 把 contact_key 解析为可读来源名称。
+func resolveSourceName(contactKey string, svc *service.ContactService) string {
+	if svc == nil || contactKey == "" {
+		return contactKey
+	}
+	if strings.HasPrefix(contactKey, "group:") {
+		uname := strings.TrimPrefix(contactKey, "group:")
+		for _, g := range svc.GetGroups() {
+			if g.Username == uname {
+				return "群聊「" + g.Name + "」"
+			}
+		}
+		return "群聊「" + uname + "」"
+	}
+	if strings.HasPrefix(contactKey, "contact:") {
+		uname := strings.TrimPrefix(contactKey, "contact:")
+		for _, s := range svc.GetCachedStats() {
+			if s.Username == uname {
+				if s.Remark != "" {
+					return "与「" + s.Remark + "」的私聊"
+				}
+				if s.Nickname != "" {
+					return "与「" + s.Nickname + "」的私聊"
+				}
+			}
+		}
+		return "与「" + uname + "」的私聊"
+	}
+	return contactKey
 }
 
 // ExtractFactSources 批量提取记忆事实对应的源聊天记录。
@@ -52,7 +84,7 @@ type FactSource struct {
 // source_to = chunk 结束下标 end-1。而 vec_messages.seq 也是按下标存的
 // （vec.go: stmt.Exec(key, i+j, ...)），所以 source_from/source_to 直接
 // 对应 vec_messages.seq 区间。
-func ExtractFactSources(facts []MemFact) ([]FactSource, error) {
+func ExtractFactSources(facts []MemFact, svc *service.ContactService) ([]FactSource, error) {
 	aiDBMu.Lock()
 	db := aiDB
 	aiDBMu.Unlock()
@@ -92,8 +124,9 @@ func ExtractFactSources(facts []MemFact) ([]FactSource, error) {
 
 		if len(msgs) > 0 {
 			out = append(out, FactSource{
-				Fact:     f,
-				Messages: msgs,
+				Fact:       f,
+				Messages:   msgs,
+				SourceName: resolveSourceName(f.ContactKey, svc),
 			})
 		}
 	}
@@ -469,21 +502,21 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		if len(searchKeys) > 0 {
 			// 有实体/群聊 → 按 contact_key 过滤搜索（降噪）
 			for _, sk := range searchKeys {
-				facts, _ := SearchMemFacts(sk, searchQ, 10, prefs)
+				facts, _ := SearchMemFacts(sk, searchQ, 5, prefs)
 				allFacts = append(allFacts, facts...)
 				pf, _ := GetPinnedMemFacts(sk)
 				pinnedFacts = append(pinnedFacts, pf...)
 			}
 		} else {
 			// 无实体 → 全局搜索
-			facts, _ := SearchMemFacts("", searchQ, 20, prefs)
+			facts, _ := SearchMemFacts("", searchQ, 10, prefs)
 			allFacts = append(allFacts, facts...)
 			pf, _ := GetPinnedMemFacts("")
 			pinnedFacts = append(pinnedFacts, pf...)
 		}
 
 		// Step 4: 提取源聊天记录
-		sources, _ := ExtractFactSources(allFacts)
+		sources, _ := ExtractFactSources(allFacts, svc)
 
 		// Step 5: 时间过滤
 		if decomp != nil && (decomp.TimeFrom != "" || decomp.TimeTo != "") {

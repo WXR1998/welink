@@ -48,6 +48,7 @@ interface MemFact {
 interface FactSource {
   fact: MemFact;
   messages: SourceMessage[];
+  source_name?: string;
 }
 
 interface ResolvedEntity {
@@ -181,18 +182,12 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           dataContext += '\n【从记忆库检索到的相关聊天记录】\n';
           for (const src of memData.sources) {
             const factText = src.fact?.fact || '';
-            // 解析 contact_key 得到展示名
-            let displayName = src.fact?.contact_key || '未知';
-            for (const re of memData.resolved_entities || []) {
-              if (re.contact_key === src.fact?.contact_key) {
-                displayName = re.display_name || re.name;
-                break;
-              }
-            }
-            dataContext += `\n■ ${privacyMode ? '***' : displayName}（事实：${factText}）\n`;
-            for (const msg of (src.messages || []).slice(0, 10)) {
-              const senderLabel = msg.sender === '我' ? '我' : (privacyMode ? '***' : displayName);
-              dataContext += `  [${msg.datetime}] ${senderLabel}：${msg.content}\n`;
+            const sourceName = src.source_name || src.fact?.contact_key || '未知';
+            dataContext += `\n■ ${privacyMode ? '***' : sourceName}\n`;
+            dataContext += `  事实：${factText}\n`;
+            for (const msg of (src.messages || [])) {
+              const senderLabel = privacyMode ? '***' : (msg.sender || '未知');
+              dataContext += `  ${senderLabel}：${msg.content}\n`;
             }
           }
         }
