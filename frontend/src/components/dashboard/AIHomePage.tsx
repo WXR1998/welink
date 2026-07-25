@@ -863,7 +863,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
   // ── 输入卡片（复用于两种布局）─────────────────────────────────────────────
 
   const inputCard = (
-    <div className="w-full max-w-xl mx-auto">
+    <div className="w-full">
       <div className={`bg-white dark:bg-[#1c1c1e] rounded-3xl border-2 shadow-sm transition-colors ${noSelectionHint ? 'border-amber-300 dark:border-amber-500/60' : 'border-gray-100 dark:border-white/10 focus-within:border-[#07c160]/40 dark:focus-within:border-[#07c160]/50'}`}>
         {/* 分析对象选择区 */}
         <div className="px-4 pt-3.5 pb-2.5">
@@ -946,7 +946,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
           消息量：{homeMsgLimit === null ? '全部' : `最近 ${homeMsgLimit} 条`} · 高级 {showAdvanced ? '▴' : '▾'}
         </button>
         {showAdvanced && (
-          <div className="mt-2 mx-auto max-w-xl">
+          <div className="mt-2">
             <div className="flex items-center justify-center gap-1.5 flex-wrap">
               <span className="text-[10px] text-gray-300">消息量:</span>
               {([100, 500, 1000] as const).map(n => (
@@ -1049,7 +1049,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
         </div>
 
         {/* 消息区 */}
-        <div className="flex-1 px-4 sm:px-6 py-6 space-y-2 max-w-3xl w-full mx-auto">
+        <div className="flex-1 px-4 sm:px-6 py-6 space-y-2 w-full">
           {(() => {
             // Group messages into Q&A pairs (user question + following messages until next user msg)
             const groups: { msgs: ChatMsg[]; indices: number[] }[] = [];
@@ -1097,7 +1097,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
           <AIConfigNotice
             visible={profiles.length === 0}
             onOpenSettings={onOpenSettings}
-            className="max-w-3xl mx-auto mb-3"
+            className="mb-3"
           />
           {inputCard}
         </div>
@@ -1152,7 +1152,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
       </div>
 
       {mode === 'cross' ? (
-        <div className="w-full max-w-3xl mx-auto" style={{ minHeight: 400 }}>
+        <div className="w-full" style={{ minHeight: 400 }}>
           <CrossContactQA
             onOpenSettings={onOpenSettings}
             onContactClick={uname => {
@@ -1173,12 +1173,12 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
         currentKey={conversationKey}
         onSelect={loadConversation}
         onNew={startNewConversation}
-        className="w-full max-w-xl mx-auto mb-4"
+        className="w-full mb-4"
       />
 
       {/* 新用户引导条：仅在首次访问 + 无选中对象时显示，标记首条用户动作后消失 */}
       {!onboarded && selectedItems.length === 0 && (
-        <div className="w-full max-w-xl mx-auto mb-3 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#fff9e6] to-[#fff3cc] dark:from-[#ff9500]/10 dark:to-[#ff9500]/15 border border-[#ff9500]/25 flex items-center justify-between gap-2 welink-onboard-pulse">
+        <div className="w-full mb-3 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#fff9e6] to-[#fff3cc] dark:from-[#ff9500]/10 dark:to-[#ff9500]/15 border border-[#ff9500]/25 flex items-center justify-between gap-2 welink-onboard-pulse">
           <span className="text-xs font-bold text-[#ff9500] flex items-center gap-1.5">
             👋 第一次来？先选一个联系人 / 群聊，再在下方输入问题
           </span>
@@ -1195,14 +1195,14 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
       <AIConfigNotice
         visible={profiles.length === 0}
         onOpenSettings={onOpenSettings}
-        className="w-full max-w-xl mb-4"
+        className="w-full mb-4"
       />
 
       {/* 输入卡片 */}
       {inputCard}
 
       {/* 智能建议 + 通用快捷提问 */}
-      <div className="mt-6 max-w-xl w-full flex flex-col items-center gap-3">
+      <div className="mt-6 w-full flex flex-col items-center gap-3">
         {/* 智能建议（基于用户 Top 联系人，最多 4 条） */}
         {smartSuggestions.length > 0 && (
           <div className="w-full">
@@ -1254,7 +1254,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
 
       {/* 最近聊天（联系人 + 群聊混合） */}
       {recentItems.length > 0 && (
-        <div className="w-full max-w-xl mt-8">
+        <div className="w-full mt-8">
           <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-3 text-center">最近聊天</p>
           <div className="flex gap-3 overflow-x-auto pb-1 justify-center flex-wrap">
             {recentItems.map(item => {
