@@ -243,6 +243,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         }),
         signal: abortRef.current.signal,
       });
+      if (!resp.ok) {
+        throw new Error(`AI 接口返回错误 ${resp.status}（${resp.statusText}），请稍后重试`);
+      }
 
       const reader = resp.body?.getReader();
       if (!reader) throw new Error('无法读取响应');
@@ -257,6 +260,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         return next;
       });
 
+      let streamError: string | null = null;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -267,7 +271,10 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           if (!line.startsWith('data: ')) continue;
           try {
             const chunk = JSON.parse(line.slice(6)) as { delta?: string; done?: boolean; error?: string; usage?: StreamUsage };
-            if (chunk.error) throw new Error(chunk.error);
+            if (chunk.error) {
+              streamError = chunk.error;
+              break;
+            }
             if (chunk.usage) {
               totalTokens += chunk.usage.total_tokens ?? 0;
             }
@@ -280,8 +287,25 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
               });
               scrollToBottom();
             }
-          } catch {}
+          } catch {
+            // 单条 SSE 解析失败时跳过，不中断整个流
+            continue;
+          }
         }
+        if (streamError) break;
+      }
+      // 如果流出错，追加明确的错误提示
+      if (streamError) {
+        const errorHint = full.trim()
+          ? `\n\n---\n⚠️ AI 回复中断：${streamError}\n可以在下方继续提问重试。`
+          : `⚠️ AI 回复失败：${streamError}\n可以在下方继续提问重试。`;
+        full += errorHint;
+        setMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { ...next[next.length - 1], content: full };
+          return next;
+        });
+        scrollToBottom();
       }
       // 保存 token 使用统计到最后一条 assistant 消息
       setMessages(prev => {
