@@ -145,7 +145,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     fetch('/api/preferences').then(r => r.json()).then(d => {
       const ps = d?.llm_profiles ?? [];
       setProfiles(ps);
-      if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+      // 优先用 localStorage 里保存的选择，其次用第一个 profile
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('cross-qa-profile-id') : null;
+      const exists = saved && ps.some((p: any) => p.id === saved);
+      if (exists) {
+        setProfileId(saved!);
+      } else if (ps.length > 0 && !profileId) {
+        setProfileId(ps[0].id);
+      }
     }).catch(() => {});
   }, []);
 
@@ -412,7 +419,10 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           {profiles.length > 1 && (
             <select
               value={profileId}
-              onChange={e => setProfileId(e.target.value)}
+              onChange={e => {
+                setProfileId(e.target.value);
+                try { localStorage.setItem('cross-qa-profile-id', e.target.value); } catch {}
+              }}
               className="text-[10px] text-[#576b95] bg-[#576b95]/10 px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer"
             >
               {profiles.map(p => (
