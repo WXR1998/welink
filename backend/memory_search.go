@@ -18,7 +18,10 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 
 	"welink/backend/service"
 )
@@ -270,6 +273,146 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 		// 5. 找不到：返回空 ContactKey
 		if !found {
 			out = append(out, ResolvedEntity{Name: entity, ContactKey: ""})
+		}
+	}
+	return out
+}
+
+// ─── /api/ai/memory-search 端点 ───────────────────────────────────────────────
+
+// MemorySearchResponse 是 /api/ai/memory-search 的响应。
+type MemorySearchResponse struct {
+	Decomposition    *QueryDecomposition `json:"decomposition"`     // LLM 查询分解结果
+	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"` // 实体名 → contact_key 解析结果
+	Facts            []MemFact           `json:"facts"`             // 匹配到的记忆事实
+	Sources          []FactSource        `json:"sources"`           // 记忆事实对应的源聊天记录
+	PinnedFacts      []MemFact           `json:"pinned_facts"`      // 置顶事实（始终注入）
+}
+
+// registerMemorySearchRoutes 注册 /api/ai/memory-search 端点。
+//
+// 这个端点编排完整的两级检索流程：
+//   1. DecomposeQuery — LLM 分解问题（needs_memory gate + 实体/概念/时间提取）
+//   2. 如果 needs_memory=false → 直接返回（问题可即答，省 token）
+//   3. ResolveEntities — 把实体名映射到 contact_key（缩小搜索范围，降噪）
+//   4. SearchMemFacts — 用 concepts 做 embedding 搜索 mem_facts
+//      - 有实体 → 按 contact_key 过滤搜索
+//      - 无实体 → 全局搜索
+//   5. ExtractFactSources — 从 mem_facts 的 source_from/source_to 提取源聊天记录
+//   6. 时间过滤 — 如果分解出时间范围，过滤源聊天记录
+func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.ContactService) {
+	api.POST("/ai/memory-search", func(c *gin.Context) {
+		var body struct {
+			Query     string `json:"query"`
+			ProfileID string `json:"profile_id"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Query) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query 必填"})
+			return
+		}
+
+		prefs := loadPreferences()
+		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		if cfg.provider == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
+			return
+		}
+
+		// Step 1: LLM 查询分解
+		decomp, _ := DecomposeQuery(body.Query, prefs)
+
+		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
+		if decomp != nil && !decomp.NeedsMemory {
+			c.JSON(http.StatusOK, MemorySearchResponse{
+				Decomposition: decomp,
+			})
+			return
+		}
+
+		// Step 2: 实体名解析
+		svc := getSvc()
+		var resolvedEntities []ResolvedEntity
+		if decomp != nil && len(decomp.Entities) > 0 && svc != nil {
+			resolvedEntities = ResolveEntities(decomp.Entities, svc)
+		}
+
+		// Step 3: 搜索 mem_facts
+		// 用 concepts 作为 embedding 搜索 query（多概念用空格拼接）
+		searchQ := body.Query
+		if decomp != nil && len(decomp.Concepts) > 0 {
+			searchQ = strings.Join(decomp.Concepts, " ")
+		}
+
+		var allFacts []MemFact
+		var pinnedFacts []MemFact
+
+		// 检查是否有成功解析的实体
+		hasResolvedEntity := false
+		for _, re := range resolvedEntities {
+			if re.ContactKey != "" {
+				hasResolvedEntity = true
+				break
+			}
+		}
+
+		if hasResolvedEntity {
+			// 有实体 → 按 contact_key 过滤搜索（降噪）
+			for _, re := range resolvedEntities {
+				if re.ContactKey == "" {
+					continue
+				}
+				facts, _ := SearchMemFacts(re.ContactKey, searchQ, 10, prefs)
+				allFacts = append(allFacts, facts...)
+				pf, _ := GetPinnedMemFacts(re.ContactKey)
+				pinnedFacts = append(pinnedFacts, pf...)
+			}
+		} else {
+			// 无实体 → 全局搜索
+			facts, _ := SearchMemFacts("", searchQ, 20, prefs)
+			allFacts = append(allFacts, facts...)
+			pf, _ := GetPinnedMemFacts("")
+			pinnedFacts = append(pinnedFacts, pf...)
+		}
+
+		// Step 4: 提取源聊天记录
+		sources, _ := ExtractFactSources(allFacts)
+
+		// Step 5: 时间过滤
+		if decomp != nil && (decomp.TimeFrom != "" || decomp.TimeTo != "") {
+			sources = filterSourcesByTime(sources, decomp.TimeFrom, decomp.TimeTo)
+		}
+
+		c.JSON(http.StatusOK, MemorySearchResponse{
+			Decomposition:    decomp,
+			ResolvedEntities: resolvedEntities,
+			Facts:            allFacts,
+			Sources:          sources,
+			PinnedFacts:      pinnedFacts,
+		})
+	})
+}
+
+// filterSourcesByTime 按时间范围过滤源聊天记录。
+// vec_messages.datetime 格式为 "YYYY-MM-DD HH:MM"。
+// timeFrom/timeTo 格式为 "YYYY-MM-DD"。
+func filterSourcesByTime(sources []FactSource, timeFrom, timeTo string) []FactSource {
+	var out []FactSource
+	for _, s := range sources {
+		var filtered []SourceMessage
+		for _, m := range s.Messages {
+			if timeFrom != "" && m.Datetime < timeFrom+" 00:00" {
+				continue
+			}
+			if timeTo != "" && m.Datetime > timeTo+" 23:59" {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		if len(filtered) > 0 {
+			out = append(out, FactSource{
+				Fact:     s.Fact,
+				Messages: filtered,
+			})
 		}
 	}
 	return out

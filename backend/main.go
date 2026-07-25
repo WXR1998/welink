@@ -4407,6 +4407,9 @@ func serverMain() {
 	// 记忆库相关端点（/api/memory/*）
 	registerMemoryRoutes(api)
 
+	// 记忆优先两级检索端点（/api/ai/memory-search）
+	registerMemorySearchRoutes(api, getSvc)
+
 	// Token 使用统计端点
 	registerTokenStatsRoutes(api)
 
