@@ -122,7 +122,7 @@ type QueryDecomposition struct {
 //
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
-func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, *StreamUsage, error) {
+func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
 	prompt := fmt.Sprintf(`你是 WeLink（微信聊天数据分析平台）的查询分析助手。
 分析用户的问题，判断是否需要检索聊天记忆库。
@@ -149,7 +149,7 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, *Stre
 		return &QueryDecomposition{
 				NeedsMemory: true,
 				Concepts:    []string{query},
-			}, &StreamUsage{
+			}, llmMsgs, &StreamUsage{
 				PromptTokens: promptTokens,
 				OutputTokens: 0,
 				TotalTokens:  promptTokens,
@@ -302,12 +302,13 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 
 // MemorySearchResponse 是 /api/ai/memory-search 的响应。
 type MemorySearchResponse struct {
-	Decomposition    *QueryDecomposition `json:"decomposition"`     // LLM 查询分解结果
-	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"` // 实体名 → contact_key 解析结果
-	Facts            []MemFact           `json:"facts"`             // 匹配到的记忆事实
-	Sources          []FactSource        `json:"sources"`           // 记忆事实对应的源聊天记录
-	PinnedFacts      []MemFact           `json:"pinned_facts"`      // 置顶事实（始终注入）
-	TokenUsage       *StreamUsage        `json:"token_usage"`       // DecomposeQuery 消耗的 token
+	Decomposition    *QueryDecomposition `json:"decomposition"`      // LLM 查询分解结果
+	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"`  // 实体名 → contact_key 解析结果
+	Facts            []MemFact           `json:"facts"`              // 匹配到的记忆事实
+	Sources          []FactSource        `json:"sources"`            // 记忆事实对应的源聊天记录
+	PinnedFacts      []MemFact           `json:"pinned_facts"`       // 置顶事实（始终注入）
+	TokenUsage       *StreamUsage        `json:"token_usage"`        // DecomposeQuery 消耗的 token
+	DecomposePrompt  []LLMMessage        `json:"decompose_prompt"`   // DecomposeQuery 发给 LLM 的原始 prompt
 }
 
 // registerMemorySearchRoutes 注册 /api/ai/memory-search 端点。
@@ -340,13 +341,14 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 1: LLM 查询分解
-		decomp, decompUsage, _ := DecomposeQuery(body.Query, prefs)
+		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, prefs)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
 			c.JSON(http.StatusOK, MemorySearchResponse{
-				Decomposition: decomp,
-				TokenUsage:    decompUsage,
+				Decomposition:   decomp,
+				TokenUsage:      decompUsage,
+				DecomposePrompt: decompPrompt,
 			})
 			return
 		}
@@ -411,6 +413,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			Sources:          sources,
 			PinnedFacts:      pinnedFacts,
 			TokenUsage:       decompUsage,
+			DecomposePrompt:  decompPrompt,
 		})
 	})
 }
