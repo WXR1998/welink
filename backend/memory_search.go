@@ -110,6 +110,7 @@ type QueryDecomposition struct {
 	Concepts    []string `json:"concepts"`     // 关键语义概念（用于 embedding 搜索）
 	TimeFrom    string   `json:"time_from"`    // 时间范围起点 YYYY-MM-DD（空=不限定）
 	TimeTo      string   `json:"time_to"`      // 时间范围终点 YYYY-MM-DD（空=不限定）
+	Groups      []string `json:"groups"`       // 用户明确指定的群聊名（"在XXX群里..."）
 }
 
 // DecomposeQuery 用 LLM 分析用户问题，输出结构化查询分解。
@@ -128,14 +129,15 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLM
 分析用户的问题，判断是否需要检索聊天记忆库。
 
 今天是 %s。输出严格 JSON，不要任何解释或代码围栏：
-{"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD"}
+{"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD", "groups": ["群聊名"]}
 
 规则：
 1. needs_memory: 问题需要查阅聊天记录或记忆事实才能回答时为 true；追问、总结、澄清等可从上下文即答的为 false
 2. entities: 问题中明确提到的联系人名或群聊名（没有则空数组）
 3. concepts: 问题的核心语义概念，2-5个词或短语，用于向量检索记忆事实
 4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
-5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年`, today)
+5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年
+6. groups: 如果用户明确提到"在XXX群里"或指定了某个群聊，把群名放入 groups；否则空数组`, today)
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
@@ -298,6 +300,45 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 	return out
 }
 
+// FindGroupsContainingContact 返回包含指定联系人（wxid）的所有群聊 username。
+// 用于"我问关于 A 的问题"时，也在包含 A 的群里搜索记忆。
+func FindGroupsContainingContact(contactWxid string, svc *service.ContactService) []string {
+	if svc == nil || contactWxid == "" {
+		return nil
+	}
+	memberships := svc.GetAllRoomMemberships()
+	var groups []string
+	for groupU, members := range memberships {
+		for _, m := range members {
+			if m == contactWxid {
+				groups = append(groups, groupU)
+				break
+			}
+		}
+	}
+	return groups
+}
+
+// ResolveGroupName 把群聊名映射到 group:username。
+func ResolveGroupName(groupName string, svc *service.ContactService) string {
+	if svc == nil || groupName == "" {
+		return ""
+	}
+	lower := strings.ToLower(groupName)
+	for _, g := range svc.GetGroups() {
+		if strings.ToLower(g.Name) == lower || strings.ToLower(g.Username) == lower {
+			return "group:" + g.Username
+		}
+	}
+	// 模糊匹配
+	for _, g := range svc.GetGroups() {
+		if strings.Contains(strings.ToLower(g.Name), lower) || strings.Contains(lower, strings.ToLower(g.Name)) {
+			return "group:" + g.Username
+		}
+	}
+	return ""
+}
+
 // ─── /api/ai/memory-search 端点 ───────────────────────────────────────────────
 
 // MemorySearchResponse 是 /api/ai/memory-search 的响应。
@@ -360,6 +401,40 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			resolvedEntities = ResolveEntities(decomp.Entities, svc)
 		}
 
+		// Step 2b: 解析用户指定的群聊 + 找到包含联系人的群聊
+		var groupKeys []string // group:username 列表
+		if decomp != nil && len(decomp.Groups) > 0 && svc != nil {
+			for _, gn := range decomp.Groups {
+				gk := ResolveGroupName(gn, svc)
+				if gk != "" {
+					groupKeys = append(groupKeys, gk)
+				}
+			}
+		}
+		// 对于每个成功解析的联系人，找到包含 ta 的群聊
+		for _, re := range resolvedEntities {
+			if re.ContactKey == "" || strings.HasPrefix(re.ContactKey, "group:") {
+				continue
+			}
+			// re.ContactKey = "contact:wxid_xxx"
+			contactWxid := strings.TrimPrefix(re.ContactKey, "contact:")
+			groupsForContact := FindGroupsContainingContact(contactWxid, svc)
+			for _, g := range groupsForContact {
+				gk := "group:" + g
+				// 去重
+				found := false
+				for _, ek := range groupKeys {
+					if ek == gk {
+						found = true
+						break
+					}
+				}
+				if !found {
+					groupKeys = append(groupKeys, gk)
+				}
+			}
+		}
+
 		// Step 3: 搜索 mem_facts
 		// 用 concepts 作为 embedding 搜索 query（多概念用空格拼接）
 		searchQ := body.Query
@@ -379,15 +454,24 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			}
 		}
 
+		// 收集所有要搜索的 contact_key
+		var searchKeys []string
 		if hasResolvedEntity {
-			// 有实体 → 按 contact_key 过滤搜索（降噪）
 			for _, re := range resolvedEntities {
-				if re.ContactKey == "" {
-					continue
+				if re.ContactKey != "" {
+					searchKeys = append(searchKeys, re.ContactKey)
 				}
-				facts, _ := SearchMemFacts(re.ContactKey, searchQ, 10, prefs)
+			}
+		}
+		// 加上群聊 key
+		searchKeys = append(searchKeys, groupKeys...)
+
+		if len(searchKeys) > 0 {
+			// 有实体/群聊 → 按 contact_key 过滤搜索（降噪）
+			for _, sk := range searchKeys {
+				facts, _ := SearchMemFacts(sk, searchQ, 10, prefs)
 				allFacts = append(allFacts, facts...)
-				pf, _ := GetPinnedMemFacts(re.ContactKey)
+				pf, _ := GetPinnedMemFacts(sk)
 				pinnedFacts = append(pinnedFacts, pf...)
 			}
 		} else {
