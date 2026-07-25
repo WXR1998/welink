@@ -642,6 +642,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	inThinkTag := false
 	thinkBuf := ""
 	parseFails := 0 // 累计 chunk 解析失败数，超阈值即中止，避免静默丢数据（H3）
+	gotDone := false // 是否收到 [DONE] 标记
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -650,6 +651,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 		}
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
+			gotDone = true
 			break
 		}
 		var chunk struct {
@@ -724,6 +726,13 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 如果流结束时还有未 flush 的思考内容
 	if thinkBuf != "" {
 		send(StreamChunk{Thinking: thinkBuf})
+	}
+	// 检测流是否被意外中断（没收到 [DONE] 就结束了）
+	if !gotDone {
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", err)
+		}
+		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
 	}
 	return scanner.Err()
 }
