@@ -377,6 +377,30 @@ func ResolveGroupName(groupName string, svc *service.ContactService) string {
 	return ""
 }
 
+// GetGroupKeysWithFacts 返回所有有记忆事实的群聊 contact_key（group:xxx）。
+// 用于跨群聊搜索：即使某个群不包含查询中的联系人，
+// 群成员也可能在群里讨论该联系人的事情。
+func GetGroupKeysWithFacts() []string {
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(`SELECT DISTINCT contact_key FROM mem_facts WHERE contact_key LIKE 'group:%'`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		rows.Scan(&k)
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // ─── /api/ai/memory-search 端点 ───────────────────────────────────────────────
 
 // MemorySearchResponse 是 /api/ai/memory-search 的响应。
@@ -504,26 +528,47 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		// 加上群聊 key
 		searchKeys = append(searchKeys, groupKeys...)
 
-		// 限制总 facts 数量，避免注入过多噪声
+		// 搜索策略：
+		// 1. 解析出的联系人私聊 facts（如果有）
+		// 2. 所有有记忆总结的群聊 facts（群成员会在群里讨论彼此的事）
+		// 3. 用户指定的群聊 facts
 		const maxFacts = 50
-		if len(searchKeys) > 0 {
-			// 有实体/群聊 → 按 contact_key 过滤搜索（降噪）
-			for _, sk := range searchKeys {
-				if len(allFacts) >= maxFacts {
-					break
-				}
-				facts, _ := SearchMemFactsFiltered(sk, searchQ, 10, decomp.TimeFrom, decomp.TimeTo, prefs)
-				allFacts = append(allFacts, facts...)
-				pf, _ := GetPinnedMemFacts(sk)
-				pinnedFacts = append(pinnedFacts, pf...)
+		const perKeyTopK = 10
+
+		// 1. 搜索解析出的联系人私聊 facts
+		for _, re := range resolvedEntities {
+			if len(allFacts) >= maxFacts {
+				break
 			}
-		} else {
-			// 无实体 → 全局搜索
+			if re.ContactKey == "" || strings.HasPrefix(re.ContactKey, "group:") {
+				continue
+			}
+			facts, _ := SearchMemFactsFiltered(re.ContactKey, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
+			allFacts = append(allFacts, facts...)
+			pf, _ := GetPinnedMemFacts(re.ContactKey)
+			pinnedFacts = append(pinnedFacts, pf...)
+		}
+
+		// 2. 搜索所有有记忆总结的群聊 facts
+		groupKeysWithFacts := GetGroupKeysWithFacts()
+		for _, gk := range groupKeysWithFacts {
+			if len(allFacts) >= maxFacts {
+				break
+			}
+			facts, _ := SearchMemFactsFiltered(gk, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
+			allFacts = append(allFacts, facts...)
+			pf, _ := GetPinnedMemFacts(gk)
+			pinnedFacts = append(pinnedFacts, pf...)
+		}
+
+		// 3. 如果没有解析出实体，也没有群聊 facts，回退到全局搜索
+		if len(allFacts) == 0 {
 			facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
 			allFacts = append(allFacts, facts...)
 			pf, _ := GetPinnedMemFacts("")
 			pinnedFacts = append(pinnedFacts, pf...)
 		}
+
 		// 截断到 maxFacts
 		if len(allFacts) > maxFacts {
 			allFacts = allFacts[:maxFacts]
