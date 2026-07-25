@@ -16,6 +16,11 @@ package main
 
 
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 // SourceMessage 是记忆事实对应的源聊天记录中的一条消息。
 type SourceMessage struct {
 	Seq      int    `json:"seq"`
@@ -88,3 +93,75 @@ func ExtractFactSources(facts []MemFact) ([]FactSource, error) {
 	return out, nil
 }
 
+
+// ─── LLM 查询分解 ─────────────────────────────────────────────────────────────
+
+// QueryDecomposition 是 LLM 查询分解的结果。
+type QueryDecomposition struct {
+	NeedsMemory bool     `json:"needs_memory"` // 是否需要检索记忆
+	Entities    []string `json:"entities"`     // 相关实体名（联系人/群聊名）
+	Concepts    []string `json:"concepts"`     // 关键语义概念（用于 embedding 搜索）
+	TimeFrom    string   `json:"time_from"`    // 时间范围起点 YYYY-MM-DD（空=不限定）
+	TimeTo      string   `json:"time_to"`      // 时间范围终点 YYYY-MM-DD（空=不限定）
+}
+
+// DecomposeQuery 用 LLM 分析用户问题，输出结构化查询分解。
+//
+// 这是方案2的核心：把笼统的"发生了什么事情"分解为：
+//   - needs_memory: 是否真的需要去检索记忆（追问/总结类可即答）
+//   - entities: 涉及哪些联系人/群聊（用于缩小搜索范围，降噪）
+//   - concepts: 核心语义概念（用于 embedding 搜索 mem_facts）
+//   - time_range: 时间范围（用于过滤源聊天记录）
+//
+// 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
+// 保证流程不中断（最坏情况退化为全量搜索）。
+func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error) {
+	const prompt = `你是 WeLink（微信聊天数据分析平台）的查询分析助手。
+分析用户的问题，判断是否需要检索聊天记忆库。
+
+输出严格 JSON，不要任何解释或代码围栏：
+{"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD"}
+
+规则：
+1. needs_memory: 问题需要查阅聊天记录或记忆事实才能回答时为 true；追问、总结、澄清等可从上下文即答的为 false
+2. entities: 问题中明确提到的联系人名或群聊名（没有则空数组）
+3. concepts: 问题的核心语义概念，2-5个词或短语，用于向量检索记忆事实
+4. time_from/time_to: 问题涉及特定时间段时给出日期范围（YYYY-MM-DD）；不涉及则留空字符串
+5. 如果问题提到"最近"，time_from 设为三个月前的日期；"去年"则取去年全年`
+
+	result, err := CompleteLLM([]LLMMessage{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: query},
+	}, prefs)
+	if err != nil {
+		// 降级：假设需要记忆，用原始问题做搜索
+		return &QueryDecomposition{
+			NeedsMemory: true,
+			Concepts:    []string{query},
+		}, nil
+	}
+
+	// 提取 JSON（LLM 可能在前后加文字或代码围栏）
+	raw := strings.TrimSpace(result)
+	if start := strings.Index(raw, "{"); start >= 0 {
+		if end := strings.LastIndex(raw, "}"); end > start {
+			raw = raw[start : end+1]
+		}
+	}
+
+	var decomp QueryDecomposition
+	if err := json.Unmarshal([]byte(raw), &decomp); err != nil {
+		// 降级
+		return &QueryDecomposition{
+			NeedsMemory: true,
+			Concepts:    []string{query},
+		}, nil
+	}
+
+	// 如果 concepts 为空，用原始问题兜底
+	if len(decomp.Concepts) == 0 {
+		decomp.Concepts = []string{query}
+	}
+
+	return &decomp, nil
+}
