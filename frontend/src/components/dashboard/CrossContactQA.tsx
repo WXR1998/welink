@@ -130,6 +130,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const collapseAllDetails = useCallback(() => {
+    // 收起消息区域内所有展开的 <details> 元素
+    if (!scrollRef.current) return;
+    const details = scrollRef.current.querySelectorAll('details[open]');
+    details.forEach(d => {
+      d.removeAttribute('open');
+    });
+  }, []);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -697,6 +706,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         })()}
       </div>
 
+      {/* 收起全部 + Input */}
+      <div className="flex items-center justify-between mb-1.5">
+        <button
+          onClick={collapseAllDetails}
+          className="text-[10px] text-gray-400 hover:text-[#07c160] transition-colors"
+        >
+          收起全部
+        </button>
+      </div>
       {/* Input */}
       <form onSubmit={e => { e.preventDefault(); const q = input.trim(); if (q) { setInput(''); askQuestion(q); } }} className="flex gap-2">
         <input
