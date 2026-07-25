@@ -63,6 +63,7 @@ interface QueryDecomposition {
   concepts: string[];
   time_from: string;
   time_to: string;
+  groups?: string[];
 }
 
 interface StreamUsage {
@@ -83,6 +84,7 @@ interface MemorySearchResponse {
   sources: FactSource[];
   pinned_facts: MemFact[];
   token_usage?: StreamUsage;
+  decompose_prompt?: LLMMessage[];
 }
 
 interface Message {
@@ -241,6 +243,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           is_group: false,
           messages: llmMessages,
           profile_id: profileId,
+          skip_memory: true,
         }),
         signal: abortRef.current.signal,
       });
@@ -556,6 +559,13 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                         </div>
                       </div>
                     )}
+                    {/* 用户指定的群聊 */}
+                    {msg.memorySearchData?.decomposition?.groups && msg.memorySearchData.decomposition.groups.length > 0 && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">指定群聊</div>
+                        <div className="text-gray-500">{msg.memorySearchData.decomposition.groups.join('、')}</div>
+                      </div>
+                    )}
                     {/* 源聊天记录 */}
                     {msg.memorySearchData?.sources && msg.memorySearchData.sources.length > 0 && (
                       <div>
@@ -596,6 +606,22 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                         </div>
                       </div>
                     )}
+                    {/* 嵌套下拉框：查询分解 prompt */}
+                    {msg.memorySearchData?.decompose_prompt && msg.memorySearchData.decompose_prompt.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          查询分解 prompt（{msg.memorySearchData.decompose_prompt.length} 条消息）
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {msg.memorySearchData.decompose_prompt.map((m, idx) => (
+                            <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-100 dark:border-gray-800">
+                              <div className="text-[10px] font-semibold text-gray-400 mb-1">{m.role}</div>
+                              <div className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words">{m.content}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     {/* 嵌套下拉框：发给 LLM 的原始 prompt */}
                     {msg.llmPrompt && msg.llmPrompt.length > 0 && (
                       <details className="mt-2">
@@ -606,7 +632,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           {msg.llmPrompt.map((m, idx) => (
                             <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-100 dark:border-gray-800">
                               <div className="text-[10px] font-semibold text-gray-400 mb-1">{m.role}</div>
-                              <pre className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono">{m.content}</pre>
+                              <div className="text-xs text-gray-600 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                              </div>
                             </div>
                           ))}
                         </div>
