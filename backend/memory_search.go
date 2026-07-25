@@ -19,6 +19,8 @@ package main
 import (
 	"encoding/json"
 	"strings"
+
+	"welink/backend/service"
 )
 
 // SourceMessage 是记忆事实对应的源聊天记录中的一条消息。
@@ -164,4 +166,111 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, error
 	}
 
 	return &decomp, nil
+}
+
+// ─── 实体名解析 ───────────────────────────────────────────────────────────────
+
+// ResolvedEntity 是实体名解析的结果。
+type ResolvedEntity struct {
+	Name        string `json:"name"`         // 原始实体名（LLM 提取的）
+	ContactKey  string `json:"contact_key"`  // 解析后的 contact_key（contact:xxx 或 group:xxx），空=未匹配
+	DisplayName string `json:"display_name"` // 展示名
+	IsGroup     bool   `json:"is_group"`
+}
+
+// ResolveEntities 把 LLM 提取的实体名（如"张三"）映射到 contact_key。
+//
+// 用 ContactService 的联系人/群聊列表做匹配：
+//   - 精确匹配 Remark / Nickname / Alias（联系人）或 Name（群聊）
+//   - 大小写不敏感
+//   - 找不到时尝试子串模糊匹配
+//   - 找不到的实体返回空 ContactKey（调用方可跳过或降级为全局搜索）
+//
+// 这是方案2的降噪关键：如果用户问"我和张三聊了什么"，只搜索
+// contact:张三 的 mem_facts，而不是全库扫描。
+func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedEntity {
+	if svc == nil || len(entities) == 0 {
+		return nil
+	}
+
+	contacts := svc.GetCachedStats()
+	groups := svc.GetGroups()
+
+	// 建索引：lower(name) → contact_key
+	contactIndex := make(map[string]string) // lower(name) → "contact:username"
+	displayNames := make(map[string]string) // contact_key → display name
+	for _, c := range contacts {
+		// 跳过群聊和系统账号（GetCachedStats 可能包含群聊）
+		if strings.HasSuffix(c.Username, "@chatroom") || strings.HasPrefix(c.Username, "gh_") {
+			continue
+		}
+		key := "contact:" + c.Username
+		name := c.Remark
+		if name == "" {
+			name = c.Nickname
+		}
+		if name != "" {
+			contactIndex[strings.ToLower(name)] = key
+			displayNames[key] = name
+		}
+		if c.Alias != "" {
+			contactIndex[strings.ToLower(c.Alias)] = key
+		}
+		contactIndex[strings.ToLower(c.Username)] = key
+	}
+
+	groupIndex := make(map[string]string) // lower(name) → "group:username"
+	for _, g := range groups {
+		key := "group:" + g.Username
+		if g.Name != "" {
+			groupIndex[strings.ToLower(g.Name)] = key
+			displayNames[key] = g.Name
+		}
+		groupIndex[strings.ToLower(g.Username)] = key
+	}
+
+	var out []ResolvedEntity
+	for _, entity := range entities {
+		entity = strings.TrimSpace(entity)
+		if entity == "" {
+			continue
+		}
+		lower := strings.ToLower(entity)
+
+		// 1. 精确匹配联系人
+		if key, ok := contactIndex[lower]; ok {
+			out = append(out, ResolvedEntity{Name: entity, ContactKey: key, DisplayName: displayNames[key], IsGroup: false})
+			continue
+		}
+		// 2. 精确匹配群聊
+		if key, ok := groupIndex[lower]; ok {
+			out = append(out, ResolvedEntity{Name: entity, ContactKey: key, DisplayName: displayNames[key], IsGroup: true})
+			continue
+		}
+		// 3. 子串模糊匹配联系人（实体名是某联系人名的子串）
+		found := false
+		for name, key := range contactIndex {
+			if strings.Contains(name, lower) || strings.Contains(lower, name) {
+				out = append(out, ResolvedEntity{Name: entity, ContactKey: key, DisplayName: displayNames[key], IsGroup: false})
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		// 4. 子串模糊匹配群聊
+		for name, key := range groupIndex {
+			if strings.Contains(name, lower) || strings.Contains(lower, name) {
+				out = append(out, ResolvedEntity{Name: entity, ContactKey: key, DisplayName: displayNames[key], IsGroup: true})
+				found = true
+				break
+			}
+		}
+		// 5. 找不到：返回空 ContactKey
+		if !found {
+			out = append(out, ResolvedEntity{Name: entity, ContactKey: ""})
+		}
+	}
+	return out
 }
