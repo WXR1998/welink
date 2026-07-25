@@ -71,6 +71,11 @@ interface StreamUsage {
   total_tokens: number;
 }
 
+interface LLMMessage {
+  role: string;
+  content: string;
+}
+
 interface MemorySearchResponse {
   decomposition: QueryDecomposition;
   resolved_entities: ResolvedEntity[];
@@ -213,14 +218,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       ).map(m => ({ role: m.role, content: m.content }));
 
       abortRef.current = new AbortController();
-      const resp = await fetch('/api/ai/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: '__cross_contact__',
-          is_group: false,
-          messages: [
-            { role: 'system', content: `你是 WeLink 的 AI 助手，用户刚问了一个关于微信聊天记录的问题。
+      const llmMessages: LLMMessage[] = [
+        { role: 'system', content: `你是 WeLink 的 AI 助手，用户刚问了一个关于微信聊天记录的问题。
 以下是从数据库中检索到的相关数据。请基于这些数据回答用户的问题。
 
 要求：
@@ -229,9 +228,16 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 3. 如果数据不足以回答，诚实说明
 4. 用 Markdown 格式排版（列表、粗体等）
 5. 如果涉及多个联系人，用列表列出并简要说明` },
-            ...history,
-            { role: 'user', content: `问题：${q}\n\n${dataContext}` },
-          ],
+        ...history,
+        { role: 'user', content: `问题：${q}\n\n${dataContext}` },
+      ];
+      const resp = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: '__cross_contact__',
+          is_group: false,
+          messages: llmMessages,
           profile_id: profileId,
         }),
         signal: abortRef.current.signal,
@@ -243,10 +249,10 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       let buf = '';
       let full = '';
 
-      // 替换 searching 消息为正式回答
+      // 替换 searching 消息为正式回答，附带检索详情
       setMessages(prev => {
         const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content: '' };
+        next[next.length - 1] = { role: 'assistant', content: '', memorySearchData: memData, llmPrompt: llmMessages };
         return next;
       });
 
@@ -508,6 +514,104 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     </span>
                   )}
                 </div>
+              )}
+              {/* 检索详情下拉框 */}
+              {msg.role === 'assistant' && !msg.searching && msg.content && (msg.memorySearchData || msg.llmPrompt) && (
+                <details className="mt-1.5 w-full">
+                  <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none flex items-center gap-1">
+                    <Search size={10} />
+                    检索详情
+                  </summary>
+                  <div className="mt-2 p-3 bg-gray-50 dark:bg-white/5 rounded-xl text-xs space-y-3">
+                    {/* 查询分解 */}
+                    {msg.memorySearchData?.decomposition && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">查询分解</div>
+                        <div className="space-y-0.5 text-gray-500">
+                          <div>需要检索记忆: {msg.memorySearchData.decomposition.needs_memory ? '是' : '否（可即答）'}</div>
+                          {msg.memorySearchData.decomposition.entities?.length > 0 && (
+                            <div>实体: {msg.memorySearchData.decomposition.entities.join('、')}</div>
+                          )}
+                          {msg.memorySearchData.decomposition.concepts?.length > 0 && (
+                            <div>概念: {msg.memorySearchData.decomposition.concepts.join('、')}</div>
+                          )}
+                          {(msg.memorySearchData.decomposition.time_from || msg.memorySearchData.decomposition.time_to) && (
+                            <div>时间范围: {msg.memorySearchData.decomposition.time_from || '?'} ~ {msg.memorySearchData.decomposition.time_to || '?'}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {/* 解析实体 */}
+                    {msg.memorySearchData?.resolved_entities && msg.memorySearchData.resolved_entities.length > 0 && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">解析实体</div>
+                        <div className="space-y-0.5 text-gray-500">
+                          {msg.memorySearchData.resolved_entities.map((re, idx) => (
+                            <div key={idx}>
+                              {re.name} → {re.contact_key || '未匹配'} {re.display_name ? `(${re.display_name})` : ''}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* 源聊天记录 */}
+                    {msg.memorySearchData?.sources && msg.memorySearchData.sources.length > 0 && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          检索到 {msg.memorySearchData.sources.length} 条记忆事实及源聊天记录
+                        </div>
+                        <div className="space-y-2">
+                          {msg.memorySearchData.sources.map((src, idx) => (
+                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                              <div className="text-gray-600 dark:text-gray-300">
+                                {privacyMode ? '***' : (src.fact.contact_key || '未知')}
+                              </div>
+                              <div className="text-gray-400">事实: {src.fact.fact}</div>
+                              <div className="text-gray-400">来源区间: seq {src.fact.source_from} ~ {src.fact.source_to}</div>
+                              <div className="mt-1 space-y-0.5">
+                                {(src.messages || []).slice(0, 5).map((m, mIdx) => (
+                                  <div key={mIdx} className="text-gray-500">
+                                    [{m.datetime}] {m.sender}：{m.content}
+                                  </div>
+                                ))}
+                                {src.messages && src.messages.length > 5 && (
+                                  <div className="text-gray-400">... 还有 {src.messages.length - 5} 条</div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* 置顶事实 */}
+                    {msg.memorySearchData?.pinned_facts && msg.memorySearchData.pinned_facts.length > 0 && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">置顶事实</div>
+                        <div className="space-y-0.5 text-gray-500">
+                          {msg.memorySearchData.pinned_facts.map((pf, idx) => (
+                            <div key={idx}>- {pf.fact}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* 嵌套下拉框：发给 LLM 的原始 prompt */}
+                    {msg.llmPrompt && msg.llmPrompt.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          发送给 LLM 的原始 prompt（{msg.llmPrompt.length} 条消息）
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {msg.llmPrompt.map((m, idx) => (
+                            <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-100 dark:border-gray-800">
+                              <div className="text-[10px] font-semibold text-gray-400 mb-1">{m.role}</div>
+                              <pre className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono">{m.content}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </details>
               )}
               {/* 搜索结果完整列表 */}
               {msg.searchHits && msg.searchHits.length > 0 && !msg.searching && msg.content && (
