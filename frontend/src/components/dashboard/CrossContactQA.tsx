@@ -92,6 +92,8 @@ interface Message {
   searching?: boolean;
   searchHits?: SearchHit[]; // 完整搜索结果（用于展示在 AI 回答下方）
   tokenUsage?: StreamUsage; // 本次提问+回答消耗的 token
+  memorySearchData?: MemorySearchResponse; // 记忆检索详情（下拉框展示）
+  llmPrompt?: LLMMessage[]; // 最终发给 LLM API 的原始 prompt
 }
 
 function formatTokens(n: number): string {
