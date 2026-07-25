@@ -421,7 +421,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           });
           if (cur) groups.push(cur);
           return groups.map((indices, gi) => (
-            <div key={gi} data-qa-pair={gi}>
+            <div key={gi} data-qa-pair={gi} className="space-y-3">
               {indices.map(i => {
                 const msg = messages[i];
                 return (

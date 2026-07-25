@@ -1152,7 +1152,7 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
       </div>
 
       {mode === 'cross' ? (
-        <div className="w-full max-w-xl mx-auto" style={{ minHeight: 400 }}>
+        <div className="w-full max-w-3xl mx-auto" style={{ minHeight: 400 }}>
           <CrossContactQA
             onOpenSettings={onOpenSettings}
             onContactClick={uname => {
