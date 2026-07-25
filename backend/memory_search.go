@@ -174,7 +174,7 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLM
 		return &QueryDecomposition{
 				NeedsMemory: true,
 				Concepts:    []string{query},
-			}, &StreamUsage{
+			}, llmMsgs, &StreamUsage{
 				PromptTokens: promptTokens,
 				OutputTokens: outputTokens,
 				TotalTokens:  promptTokens + outputTokens,
@@ -186,7 +186,7 @@ func DecomposeQuery(query string, prefs Preferences) (*QueryDecomposition, []LLM
 		decomp.Concepts = []string{query}
 	}
 
-	return &decomp, &StreamUsage{
+	return &decomp, llmMsgs, &StreamUsage{
 		PromptTokens:  promptTokens,
 		OutputTokens:  outputTokens,
 		TotalTokens:   promptTokens + outputTokens,
