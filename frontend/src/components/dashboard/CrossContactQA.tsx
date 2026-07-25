@@ -569,30 +569,17 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                         <div className="text-gray-500">{msg.memorySearchData.decomposition.groups.join('、')}</div>
                       </div>
                     )}
-                    {/* 源聊天记录 */}
+                    {/* 记忆事实（不展示源聊天记录） */}
                     {msg.memorySearchData?.sources && msg.memorySearchData.sources.length > 0 && (
                       <div>
                         <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                          检索到 {msg.memorySearchData.sources.length} 条记忆事实及源聊天记录
+                          检索到 {msg.memorySearchData.sources.length} 条记忆事实
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1">
                           {msg.memorySearchData.sources.map((src, idx) => (
                             <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-                              <div className="text-gray-600 dark:text-gray-300">
-                                {privacyMode ? '***' : (src.source_name || src.fact?.contact_key || '未知')}
-                              </div>
-                              <div className="text-gray-400">事实: {src.fact.fact}</div>
-                              <div className="text-gray-400">来源区间: seq {src.fact.source_from} ~ {src.fact.source_to}</div>
-                              <div className="mt-1 space-y-0.5">
-                                {(src.messages || []).slice(0, 5).map((m, mIdx) => (
-                                  <div key={mIdx} className="text-gray-500">
-                                    [{m.datetime}] {m.sender}：{m.content}
-                                  </div>
-                                ))}
-                                {src.messages && src.messages.length > 5 && (
-                                  <div className="text-gray-400">... 还有 {src.messages.length - 5} 条</div>
-                                )}
-                              </div>
+                              <span className="text-gray-500 text-[10px]">{privacyMode ? '***' : (src.source_name || src.fact?.contact_key || '未知')}</span>
+                              <div className="text-gray-600 dark:text-gray-300 text-xs">{src.fact.fact}</div>
                             </div>
                           ))}
                         </div>
