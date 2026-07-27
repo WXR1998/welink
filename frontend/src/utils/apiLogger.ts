@@ -126,20 +126,22 @@ export function initApiLogger() {
       const durationMs = Math.round(performance.now() - startTime);
       const contentType = response.headers.get('content-type') || '';
 
-      // 如果响应不是 JSON，克隆并读取文本（可能是 HTML 错误页）
+      // 始终克隆响应读取内容（用于日志展示）
       const isJson = contentType.includes('application/json');
       let responseSnippet = '';
       let nonJsonResponse = false;
 
       if (!isJson) {
         nonJsonResponse = true;
-        try {
-          const cloned = response.clone();
-          const text = await cloned.text();
-          responseSnippet = truncate(text, SNIPPET_LENGTH);
-        } catch {
-          responseSnippet = '[无法读取响应体]';
-        }
+      }
+
+      // 对所有响应都记录响应体摘要
+      try {
+        const cloned = response.clone();
+        const text = await cloned.text();
+        responseSnippet = truncate(text, SNIPPET_LENGTH);
+      } catch {
+        responseSnippet = '[无法读取响应体]';
       }
 
       // 对于非 JSON 响应（如 502 HTML 错误页），记录为 error
