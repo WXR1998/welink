@@ -68,6 +68,36 @@ func getLLMApiLogs() []LLMApiLogEntry {
 	return out
 }
 
+// limitedBuffer 是一个 io.Writer，只保留前 max 字节的数据。
+// 用于在 TeeReader 中捕获响应体片段，供日志展示。
+type limitedBuffer struct {
+	buf    []byte
+	max    int
+	filled bool
+}
+
+func (lb *limitedBuffer) Write(p []byte) (int, error) {
+	if lb.filled {
+		return len(p), nil
+	}
+	remaining := lb.max - len(lb.buf)
+	if remaining <= 0 {
+		lb.filled = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		lb.buf = append(lb.buf, p[:remaining]...)
+		lb.filled = true
+		return len(p), nil
+	}
+	lb.buf = append(lb.buf, p...)
+	return len(p), nil
+}
+
+func (lb *limitedBuffer) String() string {
+	return string(lb.buf)
+}
+
 func truncateStr(s string, max int) string {
 	if len(s) <= max {
 		return s

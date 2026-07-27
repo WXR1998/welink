@@ -1,5 +1,5 @@
 /**
- * API 日志页面 — 展示所有被拦截的 fetch 请求/响应日志
+ * API 日志页面 — 展示前端 fetch + 后端 LLM API 调用的合并日志
  * 用于调试 "Unexpected token '<'" 等后端返回非 JSON 的问题
  */
 
@@ -43,6 +43,8 @@ interface UnifiedLogEntry {
   responseSnippet: string;
   error: string;
   nonJsonResponse: boolean;
+  provider?: string;
+  model?: string;
 }
 
 const LEVEL_CONFIG: Record<LogLevel, { icon: React.ReactNode; color: string; bg: string }> = {
@@ -129,6 +131,8 @@ export const ApiLogsPage: React.FC = () => {
       responseSnippet: e.response_body,
       error: e.error,
       nonJsonResponse: false,
+      provider: e.provider,
+      model: e.model,
     })),
   ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
@@ -198,9 +202,9 @@ export const ApiLogsPage: React.FC = () => {
 
       {/* Log entries */}
       <div className="space-y-1">
-        {filtered.length === 0 && (
+        {allEntries.length === 0 && (
           <div className="text-center text-sm text-gray-400 py-12">
-            {allEntries.length === 0 ? '暂无日志记录' : '没有匹配的日志'}
+            暂无日志记录
           </div>
         )}
         {filtered.map(entry => {
@@ -209,6 +213,9 @@ export const ApiLogsPage: React.FC = () => {
           const sourceIcon = entry.source === 'backend'
             ? <Server size={12} className="text-purple-500 flex-shrink-0" />
             : <Cloud size={12} className="text-blue-400 flex-shrink-0" />;
+          const sourceBadge = entry.source === 'backend'
+            ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold flex-shrink-0">后端</span>
+            : <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-bold flex-shrink-0">前端</span>;
           return (
             <div
               key={entry.id}
@@ -222,6 +229,7 @@ export const ApiLogsPage: React.FC = () => {
               >
                 <span className={`flex-shrink-0 ${config.color}`}>{config.icon}</span>
                 {sourceIcon}
+                {sourceBadge}
                 <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">
                   {formatTime(entry.timestamp)}
                 </span>
@@ -256,6 +264,12 @@ export const ApiLogsPage: React.FC = () => {
 
               {isExpanded && (
                 <div className="px-3 pb-3 space-y-2">
+                  {entry.provider && (
+                    <div className="text-[10px] text-gray-500">
+                      Provider: <span className="font-mono">{entry.provider}</span>
+                      {entry.model && <> · Model: <span className="font-mono">{entry.model}</span></>}
+                    </div>
+                  )}
                   {entry.error && (
                     <div>
                       <div className="text-[10px] text-gray-400 font-bold mb-1">错误信息</div>
@@ -274,9 +288,7 @@ export const ApiLogsPage: React.FC = () => {
                   )}
                   {entry.responseSnippet && (
                     <div>
-                      <div className="text-[10px] text-gray-400 font-bold mb-1">
-                        响应体{entry.nonJsonResponse ? '（⚠️ 后端返回了非 JSON 内容）' : ''}
-                      </div>
+                      <div className="text-[10px] text-gray-400 font-bold mb-1">响应体</div>
                       <pre className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
                         {entry.responseSnippet}
                       </pre>

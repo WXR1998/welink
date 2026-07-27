@@ -4,6 +4,9 @@
  * 拦截全局 fetch，记录每次 API 调用的 URL、method、status、
  * 请求体摘要、响应体摘要。当响应不是 JSON（如返回 HTML 错误页）
  * 时，特别标记并保存原始响应文本，方便在日志页面调试。
+ *
+ * 对于 SSE 流式响应（text/event-stream），使用 TransformStream
+ * 透传的同时累积响应体内容，实时更新日志条目。
  */
 
 export type LogLevel = 'error' | 'warn' | 'info';
@@ -32,9 +35,17 @@ let entries: ApiLogEntry[] = [];
 let nextId = 1;
 let listeners: Set<() => void> = new Set();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
 function notify() {
   listeners.forEach(fn => fn());
+}
+
+function notifyDebounced() {
+  if (notifyTimer) clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(() => {
+    notify();
+  }, 300);
 }
 
 export function subscribe(fn: () => void): () => void {
@@ -85,7 +96,7 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max) + '…[truncated]';
 }
 
-function addEntry(entry: Omit<ApiLogEntry, 'id'>) {
+function addEntry(entry: Omit<ApiLogEntry, 'id'>): number {
   const full: ApiLogEntry = { ...entry, id: nextId++ };
   entries.unshift(full); // 最新的放最前面
   if (entries.length > MAX_ENTRIES) {
@@ -93,6 +104,15 @@ function addEntry(entry: Omit<ApiLogEntry, 'id'>) {
   }
   persist();
   notify();
+  return full.id;
+}
+
+function updateEntry(id: number, partial: Partial<ApiLogEntry>) {
+  const entry = entries.find(e => e.id === id);
+  if (!entry) return;
+  Object.assign(entry, partial);
+  persist();
+  notifyDebounced();
 }
 
 /**
@@ -100,7 +120,8 @@ function addEntry(entry: Omit<ApiLogEntry, 'id'>) {
  *
  * 拦截策略：
  *   - 包装 window.fetch，记录请求/响应信息
- *   - 当响应 Content-Type 不是 application/json 时，读取响应文本并标记 nonJsonResponse
+ *   - SSE 流式响应使用 TransformStream 透传 + 累积内容
+ *   - 非 SSE 响应克隆后读取 body 供日志展示
  *   - 当 fetch 本身抛错（网络断开等），记录 error 级别日志
  */
 export function initApiLogger() {
@@ -111,7 +132,7 @@ export function initApiLogger() {
       : input instanceof URL ? input.toString()
       : input.url;
 
-    // 跳过自身轮询端点，避免递归日志 + OOM
+    // 跳过自身轮询端点，避免递归 + OOM
     if (url.includes('/ai/llm-logs')) {
       return originalFetch(input as RequestInfo, init);
     }
@@ -132,41 +153,67 @@ export function initApiLogger() {
       const durationMs = Math.round(performance.now() - startTime);
       const contentType = response.headers.get('content-type') || '';
 
-      // SSE 流式响应（text/event-stream）不能克隆后读取整个 body，
-      // 否则会阻塞 fetch 返回，导致前端无法实时读取流。
+      // SSE 流式响应：使用 TransformStream 透传 + 累积内容
       const isSSE = contentType.includes('text/event-stream');
+
+      if (isSSE && response.body) {
+        const entryId = addEntry({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          method,
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          durationMs,
+          requestSnippet,
+          responseSnippet: '[SSE 接收中…]',
+          error: '',
+          nonJsonResponse: false,
+        });
+
+        let accumulated = '';
+        const decoder = new TextDecoder();
+
+        const transformedBody = response.body.pipeThrough(new TransformStream({
+          transform(chunk: Uint8Array, controller: TransformStreamDefaultController) {
+            accumulated += decoder.decode(chunk, { stream: true });
+            // 限制累积大小，保留最后部分
+            if (accumulated.length > SNIPPET_LENGTH * 4) {
+              accumulated = '…[earlier data truncated]\n' + accumulated.slice(-SNIPPET_LENGTH * 3);
+            }
+            controller.enqueue(chunk);
+            updateEntry(entryId, { responseSnippet: truncate(accumulated, SNIPPET_LENGTH) });
+          },
+          flush() {
+            updateEntry(entryId, { responseSnippet: truncate(accumulated, SNIPPET_LENGTH) });
+          },
+        }));
+
+        return new Response(transformedBody, {
+          headers: response.headers,
+          status: response.status,
+          statusText: response.statusText,
+        });
+      }
+
+      // 非 SSE 响应：克隆后读取 body 供日志展示
       const isJson = contentType.includes('application/json');
       let responseSnippet = '';
       let nonJsonResponse = false;
 
-      if (isSSE) {
-        // SSE 是预期的流式响应，不是错误
-        responseSnippet = '[SSE 流式响应]';
-      } else if (!isJson) {
-        // 非 JSON 且非 SSE（如 502 HTML 错误页）
+      if (!isJson) {
         nonJsonResponse = true;
-        try {
-          const cloned = response.clone();
-          const text = await cloned.text();
-          responseSnippet = truncate(text, SNIPPET_LENGTH);
-        } catch {
-          responseSnippet = '[无法读取响应体]';
-        }
-      } else {
-        // JSON 响应，读取摘要
-        try {
-          const cloned = response.clone();
-          const text = await cloned.text();
-          responseSnippet = truncate(text, SNIPPET_LENGTH);
-        } catch {
-          responseSnippet = '[无法读取响应体]';
-        }
       }
 
-      // SSE 流式响应是正常的，不算 error
-      const level: LogLevel = isSSE ? 'info'
-        : nonJsonResponse ? 'error'
-        : (response.status >= 400 ? 'error' : 'info');
+      try {
+        const cloned = response.clone();
+        const text = await cloned.text();
+        responseSnippet = truncate(text, SNIPPET_LENGTH);
+      } catch {
+        responseSnippet = '[无法读取响应体]';
+      }
+
+      const level: LogLevel = nonJsonResponse ? 'error' : (response.status >= 400 ? 'error' : 'info');
 
       addEntry({
         timestamp: new Date().toISOString(),

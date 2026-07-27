@@ -642,9 +642,11 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 		return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
-
-	scanner := bufio.NewScanner(resp.Body)
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	scanner := bufio.NewScanner(teeReader)
 	// 用于检测 <think>...</think> 标签（MiniMax / DeepSeek-R1 等思考模型）
 	inThinkTag := false
 	thinkBuf := ""
@@ -737,10 +739,13 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 检测流是否被意外中断（没收到 [DONE] 就结束了）
 	if !gotDone {
 		if err := scanner.Err(); err != nil {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
 			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", err)
 		}
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
 		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
 	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	return scanner.Err()
 }
 
@@ -965,8 +970,6 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
-
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -974,9 +977,15 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("响应为空")
 	}
@@ -1038,17 +1047,21 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
-
 	var result struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	for _, block := range result.Content {
 		if block.Type == "text" && block.Text != "" {
 			return block.Text, nil
