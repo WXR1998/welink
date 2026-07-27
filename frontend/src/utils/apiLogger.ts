@@ -126,26 +126,41 @@ export function initApiLogger() {
       const durationMs = Math.round(performance.now() - startTime);
       const contentType = response.headers.get('content-type') || '';
 
-      // 始终克隆响应读取内容（用于日志展示）
+      // SSE 流式响应（text/event-stream）不能克隆后读取整个 body，
+      // 否则会阻塞 fetch 返回，导致前端无法实时读取流。
+      const isSSE = contentType.includes('text/event-stream');
       const isJson = contentType.includes('application/json');
       let responseSnippet = '';
       let nonJsonResponse = false;
 
-      if (!isJson) {
+      if (isSSE) {
+        // SSE 是预期的流式响应，不是错误
+        responseSnippet = '[SSE 流式响应]';
+      } else if (!isJson) {
+        // 非 JSON 且非 SSE（如 502 HTML 错误页）
         nonJsonResponse = true;
+        try {
+          const cloned = response.clone();
+          const text = await cloned.text();
+          responseSnippet = truncate(text, SNIPPET_LENGTH);
+        } catch {
+          responseSnippet = '[无法读取响应体]';
+        }
+      } else {
+        // JSON 响应，读取摘要
+        try {
+          const cloned = response.clone();
+          const text = await cloned.text();
+          responseSnippet = truncate(text, SNIPPET_LENGTH);
+        } catch {
+          responseSnippet = '[无法读取响应体]';
+        }
       }
 
-      // 对所有响应都记录响应体摘要
-      try {
-        const cloned = response.clone();
-        const text = await cloned.text();
-        responseSnippet = truncate(text, SNIPPET_LENGTH);
-      } catch {
-        responseSnippet = '[无法读取响应体]';
-      }
-
-      // 对于非 JSON 响应（如 502 HTML 错误页），记录为 error
-      const level: LogLevel = nonJsonResponse ? 'error' : (response.status >= 400 ? 'error' : 'info');
+      // SSE 流式响应是正常的，不算 error
+      const level: LogLevel = isSSE ? 'info'
+        : nonJsonResponse ? 'error'
+        : (response.status >= 400 ? 'error' : 'info');
 
       addEntry({
         timestamp: new Date().toISOString(),
