@@ -110,6 +110,12 @@ export function initApiLogger() {
     const url = typeof input === 'string' ? input
       : input instanceof URL ? input.toString()
       : input.url;
+
+    // 跳过自身轮询端点，避免递归日志 + OOM
+    if (url.includes('/ai/llm-logs')) {
+      return originalFetch(input as RequestInfo, init);
+    }
+
     const method = (init?.method || 'GET').toUpperCase();
     const startTime = performance.now();
 
