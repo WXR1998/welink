@@ -200,7 +200,7 @@ export const ApiLogsPage: React.FC = () => {
       <div className="space-y-1">
         {filtered.length === 0 && (
           <div className="text-center text-sm text-gray-400 py-12">
-            {entries.length === 0 ? '暂无日志记录' : '没有匹配的日志'}
+            {allEntries.length === 0 ? '暂无日志记录' : '没有匹配的日志'}
           </div>
         )}
         {filtered.map(entry => {
