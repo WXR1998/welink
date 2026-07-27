@@ -418,15 +418,16 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     }
 
     const saveData = messages
-      .filter(m => m.role === 'user' || (m.role === 'assistant' && !m.searching))
+      .filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
       .map(m => {
         const item: any = { role: m.role, content: m.content };
+        if (m.searching) item.searching = true;
         if (m.memorySearchData) item.memorySearchData = m.memorySearchData;
         if (m.llmPrompt) item.llmPrompt = m.llmPrompt;
         return item;
       });
-    // 没有可保存的内容时跳过（比如只有 searching 消息）
-    if (saveData.length === 0) return;
+    // 至少要有一条 user 消息才保存
+    if (!saveData.some(m => m.role === 'user')) return;
     fetch('/api/ai/conversations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -444,6 +445,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         setMessages(data.messages.map((m: any) => ({
           role: m.role as 'user' | 'assistant' | 'system',
           content: m.content,
+          searching: m.searching || false,
           memorySearchData: m.memorySearchData,
           llmPrompt: m.llmPrompt,
         })));
