@@ -29,7 +29,7 @@ RUN printf 'server {\n\
         index index.html;\n\
         try_files $uri $uri/ /index.html;\n\
     }\n\
-    location ~* ^/api/ai/(analyze|rag|day-rag) {\n\
+    location ~* ^/api/ai/(analyze|rag|day-rag|memory-search) {\n\
         set $backend http://backend:8080;\n\
         proxy_pass $backend;\n\
         proxy_http_version     1.1;\n\
