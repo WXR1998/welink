@@ -191,6 +191,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           previous_decomposition: prevDecomp,
         }),
       });
+      if (!memResp.ok) {
+        const errText = await memResp.text().catch(() => memResp.statusText);
+        throw new Error(`记忆检索失败 (${memResp.status})：${errText.slice(0, 200)}`);
+      }
+      const memContentType = memResp.headers.get('content-type') || '';
+      if (!memContentType.includes('application/json')) {
+        const errText = await memResp.text().catch(() => '未知错误');
+        throw new Error(`后端返回了非 JSON 响应 (${memResp.status})，可能后端崩溃或被反向代理拦截。响应前 200 字符：${errText.slice(0, 200)}`);
+      }
       const memData = await memResp.json() as MemorySearchResponse;
 
       // 收集 memory-search 消耗的 token
