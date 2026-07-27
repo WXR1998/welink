@@ -182,6 +182,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       );
       const prevDecomp = lastAssistantWithMem?.memorySearchData?.decomposition || null;
 
+      // SSE 流式读取 memory-search，实时显示每个步骤的进度
       const memResp = await fetch('/api/ai/memory-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -195,12 +196,50 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         const errText = await memResp.text().catch(() => memResp.statusText);
         throw new Error(`记忆检索失败 (${memResp.status})：${errText.slice(0, 200)}`);
       }
-      const memContentType = memResp.headers.get('content-type') || '';
-      if (!memContentType.includes('application/json')) {
-        const errText = await memResp.text().catch(() => '未知错误');
-        throw new Error(`后端返回了非 JSON 响应 (${memResp.status})，可能后端崩溃或被反向代理拦截。响应前 200 字符：${errText.slice(0, 200)}`);
+
+      const memReader = memResp.body?.getReader();
+      if (!memReader) throw new Error('无法读取记忆检索响应');
+      const memDecoder = new TextDecoder();
+      let memBuf = '';
+      let memData: MemorySearchResponse | null = null;
+
+      while (true) {
+        const { done, value } = await memReader.read();
+        if (done) break;
+        memBuf += memDecoder.decode(value, { stream: true });
+        const memLines = memBuf.split('\n');
+        memBuf = memLines.pop() ?? '';
+        for (const line of memLines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as {
+              type: 'progress' | 'result' | 'done';
+              step?: string;
+              detail?: string;
+              data?: MemorySearchResponse;
+            };
+            if (evt.type === 'progress' && evt.detail) {
+              setMessages(prev => {
+                const next = [...prev];
+                if (next[next.length - 1]?.searching) {
+                  next[next.length - 1] = { ...next[next.length - 1], content: evt.detail! };
+                }
+                return next;
+              });
+              scrollToBottom();
+            }
+            if (evt.type === 'result' && evt.data) {
+              memData = evt.data;
+            }
+          } catch {
+            continue;
+          }
+        }
       }
-      const memData = await memResp.json() as MemorySearchResponse;
+
+      if (!memData) {
+        throw new Error('记忆检索未返回结果');
+      }
 
       // 收集 memory-search 消耗的 token
       let totalTokens = memData.token_usage?.total_tokens ?? 0;

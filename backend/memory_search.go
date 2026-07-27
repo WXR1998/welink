@@ -500,20 +500,76 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			return
 		}
 
+		// SSE 流式响应：每个步骤推送进度 + 最终推送完整结果
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式响应"})
+			return
+		}
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+		// 立即发一行 keepalive，防止 nginx 在等待 LLM 时超时
+		fmt.Fprintf(c.Writer, ": keepalive\n\n")
+		flusher.Flush()
+
+		// keepalive 心跳：每 15 秒发一行 SSE 注释
+		keepaliveDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					fmt.Fprintf(c.Writer, ": keepalive\n\n")
+					flusher.Flush()
+				case <-keepaliveDone:
+					return
+				}
+			}
+		}()
+
+		sendProgress := func(step string, detail string) {
+			data, _ := json.Marshal(map[string]string{"type": "progress", "step": step, "detail": detail})
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		sendResult := func(resp MemorySearchResponse) {
+			data, _ := json.Marshal(map[string]any{"type": "result", "data": resp})
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		sendDone := func() {
+			data, _ := json.Marshal(map[string]string{"type": "done"})
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
 		// Step 1: LLM 查询分解
+		sendProgress("decompose", "正在用 LLM 分解问题...")
 		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
-			c.JSON(http.StatusOK, MemorySearchResponse{
+			close(keepaliveDone)
+			sendResult(MemorySearchResponse{
 				Decomposition:   decomp,
 				TokenUsage:      decompUsage,
 				DecomposePrompt: decompPrompt,
 			})
+			sendDone()
 			return
 		}
 
 		// Step 2: 实体名解析
+		entityNames := ""
+		if decomp != nil {
+			entityNames = strings.Join(decomp.Entities, "、")
+		}
+		sendProgress("resolve_entities", fmt.Sprintf("解析实体名: %s", entityNames))
 		svc := getSvc()
 		var resolvedEntities []ResolvedEntity
 		if decomp != nil && len(decomp.Entities) > 0 && svc != nil {
@@ -555,11 +611,11 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 3: 搜索 mem_facts
-		// 用 concepts 作为 embedding 搜索 query（多概念用空格拼接）
 		searchQ := body.Query
 		if decomp != nil && len(decomp.Concepts) > 0 {
 			searchQ = strings.Join(decomp.Concepts, " ")
 		}
+		sendProgress("search_facts", fmt.Sprintf("搜索记忆事实 (query: %s)", truncate(searchQ, 60)))
 
 		var allFacts []MemFact
 		var pinnedFacts []MemFact
@@ -632,6 +688,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 4: 提取源聊天记录
+		sendProgress("extract_sources", fmt.Sprintf("从 %d 条记忆事实中提取源聊天记录...", len(allFacts)))
 		sources, _ := ExtractFactSources(allFacts, svc)
 
 		// Step 5: 时间过滤
@@ -639,7 +696,9 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			sources = filterSourcesByTime(sources, decomp.TimeFrom, decomp.TimeTo)
 		}
 
-		c.JSON(http.StatusOK, MemorySearchResponse{
+		// 推送最终结果
+		close(keepaliveDone)
+		sendResult(MemorySearchResponse{
 			Decomposition:    decomp,
 			ResolvedEntities: resolvedEntities,
 			Facts:            allFacts,
@@ -648,6 +707,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			TokenUsage:       decompUsage,
 			DecomposePrompt:  decompPrompt,
 		})
+		sendDone()
 	})
 }
 
