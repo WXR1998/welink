@@ -17,6 +17,7 @@ import (
 type AIMessage struct {
 	Role             string          `json:"role"`
 	Content          string          `json:"content"`
+	Searching        bool            `json:"searching,omitempty"`        // 是否处于检索/生成中的中间状态
 	Provider         string          `json:"provider,omitempty"`
 	Model            string          `json:"model,omitempty"`
 	ElapsedSecs      float64         `json:"elapsedSecs,omitempty"`
