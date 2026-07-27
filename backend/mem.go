@@ -39,6 +39,9 @@ func initMemTables() error {
 	if err := addColumnIfMissing("mem_facts", "updated_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("mem: updated_at col: %w", err)
 	}
+	if err := addColumnIfMissing("mem_facts", "version", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return fmt.Errorf("mem: version col: %w", err)
+	}
 	return nil
 }
 
@@ -76,7 +79,7 @@ func GetMemFactsCount(key string) (int, error) {
 		return 0, nil
 	}
 	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ?", key).Scan(&count)
+	err := db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion).Scan(&count)
 	return count, err
 }
 
@@ -101,8 +104,8 @@ func GetMemFacts(key string) ([]MemFact, error) {
 		return nil, nil
 	}
 	rows, err := db.Query(
-		"SELECT id, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts WHERE contact_key = ? ORDER BY pinned DESC, id",
-		key,
+		"SELECT id, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts WHERE contact_key = ? AND version = ? ORDER BY pinned DESC, id",
+		key, memFactVersion,
 	)
 	if err != nil {
 		return nil, err
@@ -126,6 +129,10 @@ func GetMemFacts(key string) ([]MemFact, error) {
 
 const memExtractChunkSize = 150      // 每段最多 150 条消息（上限，实际段大小由时间和条数共同决定）
 const memMaxTimeGap = 24 * time.Hour // 每段最多跨越 24 小时；超过此间隔的消息强行切分到新段
+
+// memFactVersion 是当前记忆提取管线生成的记忆版本号。
+// v1 = 旧管线（固定 80 条分段）；v2 = 新管线（摘要链 + 动态分段）。
+const memFactVersion = 2
 
 // ─── 上下文摘要链 ─────────────────────────────────────────────────────────────
 
@@ -434,14 +441,14 @@ func extractAndStoreFacts(
 					tx, err := db.Begin()
 					if err == nil {
 						stmt, err := tx.Prepare(
-							"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?)")
+							"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)")
 						if err != nil {
 							tx.Rollback()
 						} else {
 							now := time.Now().Unix()
 							for j, emb := range dedupEmbs {
 								factWithMeta := timeRange + dedupFacts[j]
-								if _, err := stmt.Exec(key, factWithMeta, seg.Start, seg.End-1, encodeVec(emb), now, now); err == nil {
+								if _, err := stmt.Exec(key, factWithMeta, seg.Start, seg.End-1, encodeVec(emb), memFactVersion, now, now); err == nil {
 									total++
 								}
 							}
@@ -646,9 +653,9 @@ func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string
 	var rows *sql.Rows
 	if key == "" {
 		// key 为空时搜索所有联系人的记忆（如 AI 首页跨联系人问答）
-		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts`)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts WHERE version = ?`, memFactVersion)
 	} else {
-		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts WHERE contact_key = ?`, key)
+		rows, err = db.Query(`SELECT contact_key, fact, embedding, source_from, source_to FROM mem_facts WHERE contact_key = ? AND version = ?`, key, memFactVersion)
 	}
 	if err != nil {
 		return nil, err

@@ -229,3 +229,49 @@ if seg.GapSplit {
 - 续传时重新调用 `computeSegments` 得到相同的分段边界
 - `startChunk`（检查点）仍然表示"从第几段开始"
 - 检查点语义不变，只是分段边界从固定步进变为动态计算
+
+---
+
+## 八、记忆版本管理
+
+### 动机
+
+新管线（摘要链 + 动态分段）与旧管线（固定 80 条分段）生成的记忆格式不同。为了：
+- 在不删除旧版本记忆的情况下使用新版本
+- 支持回滚（切回旧分支后旧记忆仍然存在）
+- 支持 A/B 对比（旧 v1 记忆 vs 新 v2 记忆）
+
+### 方案
+
+在 `mem_facts` 表中新增 `version` 列（`INTEGER NOT NULL DEFAULT 1`）：
+
+| version | 管线 | 说明 |
+|---------|------|------|
+| 1 | 旧管线 | 固定 80 条分段，无摘要链 |
+| 2 | 新管线 | 摘要链 + 动态分段（150 条上限 + 24h 间隔切分）|
+
+### 代码改动
+
+```go
+// mem.go
+const memFactVersion = 2  // 当前记忆提取管线版本
+```
+
+所有与 `mem_facts` 交互的 SQL 均按 `version` 过滤：
+
+| 操作 | 旧代码 | 新代码 |
+|------|--------|--------|
+| 提炼存储 | `INSERT ... (created_at, updated_at)` | `INSERT ... (version, created_at, updated_at)` with `memFactVersion` |
+| 计数 | `SELECT COUNT(*) ... WHERE contact_key = ?` | `... AND version = ?` |
+| 列表 | `SELECT ... WHERE contact_key = ?` | `... AND version = ?` |
+| 语义检索 | `SELECT ... FROM mem_facts` | `... WHERE version = ?` |
+| 置顶记忆 | `SELECT ... WHERE pinned = 1` | `... AND version = ?` |
+| 重建删除 | `DELETE ... WHERE contact_key = ?` | `... AND version = 2` |
+| 手动添加 | `INSERT ... (pinned, created_at, ...)` | `INSERT ... (pinned, version, created_at, ...)` with `version = 2` |
+
+### 涉及文件
+
+- `backend/mem.go` — schema 迁移、提炼存储、计数、列表、语义检索
+- `backend/memory_api.go` — 列表、计数、手动添加、删除非置顶、置顶记忆
+- `backend/main.go` — 重建时删除、计数
+- `backend/demo_seed.go` — demo 数据插入

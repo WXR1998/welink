@@ -16,8 +16,8 @@ import (
 func registerMemoryRoutes(api *gin.RouterGroup) {
 	// 全局列表 + 筛选
 	api.GET("/memory/list", func(c *gin.Context) {
-		contact := c.Query("contact")                // 为空则全量
-		q := strings.TrimSpace(c.Query("q"))         // 关键词（fact LIKE）
+		contact := c.Query("contact")        // 为空则全量
+		q := strings.TrimSpace(c.Query("q")) // 关键词（fact LIKE）
 		pinnedOnly := c.Query("pinned") == "1"
 		limit, _ := strconv.Atoi(c.Query("limit"))
 		if limit <= 0 || limit > 500 {
@@ -49,10 +49,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			whereParts = append(whereParts, `fact LIKE ? ESCAPE '\'`)
 			args = append(args, "%"+escapeLikePattern(q)+"%")
 		}
-		where := ""
-		if len(whereParts) > 0 {
-			where = " WHERE " + strings.Join(whereParts, " AND ")
-		}
+		where := " WHERE " + strings.Join(whereParts, " AND ")
 
 		// 先统计总数
 		var total int
@@ -89,7 +86,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		rows, err := db.Query(`
 			SELECT contact_key, COUNT(*) AS n, SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) AS pinned
-			FROM mem_facts
+			FROM mem_facts WHERE version = 2
 			GROUP BY contact_key
 			ORDER BY n DESC`)
 		if err != nil {
@@ -151,8 +148,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		now := time.Now().Unix()
 		res, err := db.Exec(
-			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-			body.ContactKey, body.Fact, 0, 0, emb, pinned, now, now,
+			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+			body.ContactKey, body.Fact, 0, 0, emb, pinned, 2, now, now,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -233,7 +230,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			return
 		}
 		// 删除所有未置顶的事实
-		res, err := tx.Exec("DELETE FROM mem_facts WHERE pinned = 0")
+		res, err := tx.Exec("DELETE FROM mem_facts WHERE pinned = 0 AND version = 2")
 		if err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -372,11 +369,11 @@ func GetPinnedMemFacts(contactKey string) ([]MemFact, error) {
 	var err error
 	if contactKey != "" {
 		rows, err = db.Query(
-			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND contact_key = ? ORDER BY updated_at DESC",
+			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND contact_key = ? AND version = ? ORDER BY updated_at DESC",
 			contactKey)
 	} else {
 		rows, err = db.Query(
-			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 ORDER BY updated_at DESC")
+			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND version = ? ORDER BY updated_at DESC", memFactVersion)
 	}
 	if err != nil {
 		return nil, err

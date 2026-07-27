@@ -2876,7 +2876,7 @@ func serverMain() {
 				startChunk = prevOffset + 1
 			} else {
 				// 全新开始：清空旧事实，reset 检查点
-				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ?", key); err != nil {
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = 2", key); err != nil {
 					setErr("清理旧记忆失败：" + err.Error())
 					return
 				}
@@ -2887,7 +2887,7 @@ func serverMain() {
 
 			// 统计已有事实数（续传时保留）
 			var prevFactCount int
-			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ?", key).Scan(&prevFactCount)
+			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ? AND version = 2", key).Scan(&prevFactCount)
 
 			job.mu.Lock()
 			job.Total = totalChunks
