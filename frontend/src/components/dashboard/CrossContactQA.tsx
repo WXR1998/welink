@@ -140,6 +140,13 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     });
   }, []);
   const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const convKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     fetch('/api/preferences').then(r => r.json()).then(d => {
@@ -381,7 +388,25 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         });
         scrollToBottom();
       }
-      // 保存 token 使用统计和耗时到最后一条 assistant 消息
+      // 如果组件已卸载（用户离开了页面），直接保存最终结果到后端
+      if (!mountedRef.current) {
+        const key = convKeyRef.current || `cross-qa:${Date.now()}`;
+        const finalMessages = [
+          ...messages.filter(m => (m.role === 'user' || m.role === 'assistant') && !m.searching && m.content),
+          { role: 'assistant' as const, content: full, memorySearchData: memData, llmPrompt: llmMessages,
+            tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens },
+            elapsedMs: Date.now() - startTime },
+        ];
+        fetch('/api/ai/conversations', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, messages: finalMessages }),
+        }).then(() => {
+          window.dispatchEvent(new Event('welink:conversation-saved'));
+        }).catch(() => {});
+        return;
+      }
+      // 组件仍挂载：保存 token 使用统计和耗时到最后一条 assistant 消息
       setMessages(prev => {
         const next = [...prev];
         if (next[next.length - 1]?.role === 'assistant') {
@@ -416,6 +441,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       key = `cross-qa:${Date.now()}`;
       setConversationKey(key);
     }
+    convKeyRef.current = key;
 
     const saveData = messages
       .filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
@@ -450,6 +476,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           llmPrompt: m.llmPrompt,
         })));
         setConversationKey(key);
+        convKeyRef.current = key;
       }
     } catch {}
   }, []);
