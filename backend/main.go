@@ -1538,7 +1538,29 @@ func serverMain() {
 			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			flusher.Flush()
 		}
+
+		// SSE keepalive：防止 nginx 反向代理在等待 LLM 首 token 时超时（504）
+		// 发送 SSE 注释行（以 : 开头），客户端会自动忽略，但能保持连接活跃
+		fmt.Fprintf(c.Writer, ": keepalive\n\n")
+		flusher.Flush()
+		keepaliveDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					fmt.Fprintf(c.Writer, ": keepalive\n\n")
+					flusher.Flush()
+				case <-keepaliveDone:
+					return
+				}
+			}
+		}()
+
 		streamLLMCoreWithProfile(sendChunk, body.Messages, prefs, body.ProfileID)
+
+		close(keepaliveDone)
 	})
 
 	// ── AI 分身：三层记忆 + session 机制 ──

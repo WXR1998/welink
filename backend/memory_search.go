@@ -219,8 +219,28 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 	promptTokens := estimateMsgTokens(llmMsgs)
 
-	result, err := CompleteLLM(llmMsgs, prefs)
-	if err != nil {
+	// 带 30 秒超时调用 LLM，防止 nginx 反向代理 504 超时
+	type llmResult struct {
+		text string
+		err  error
+	}
+	ch := make(chan llmResult, 1)
+	go func() {
+		text, err := CompleteLLM(llmMsgs, prefs)
+		ch <- llmResult{text, err}
+	}()
+
+	var result string
+	var llmErr error
+	select {
+	case r := <-ch:
+		result = r.text
+		llmErr = r.err
+	case <-time.After(30 * time.Second):
+		llmErr = fmt.Errorf("LLM 响应超时（30s）")
+	}
+
+	if llmErr != nil {
 		// 降级：假设需要记忆，用原始问题做搜索
 		return &QueryDecomposition{
 				NeedsMemory: true,
