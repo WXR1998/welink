@@ -254,9 +254,17 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       // ── Step 2: 构建 dataContext ──
       let dataContext = '';
 
+      // 即使不需要检索记忆（追问/总结类），也注入置顶的背景知识
+      if (memData.pinned_facts?.length > 0) {
+        dataContext += '\n【手工置顶的背景知识】\n';
+        for (const pf of memData.pinned_facts) {
+          dataContext += `- ${pf.fact}\n`;
+        }
+      }
+
       if (memData.decomposition?.needs_memory === false) {
         // 追问/总结类问题，可直接从上下文回答，不需要检索
-        dataContext = '';
+        // 置顶事实已注入，dataContext 不再添加其他内容
       } else {
         // 从源聊天记录构建 context
         if (memData.sources?.length > 0) {
@@ -271,13 +279,6 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
               return `[${senderLabel}]: ${msg.content}`;
             });
             dataContext += lines.join('\n') + '\n';
-          }
-        }
-        // 添加置顶事实
-        if (memData.pinned_facts?.length > 0) {
-          dataContext += '\n【手工置顶的背景知识】\n';
-          for (const pf of memData.pinned_facts) {
-            dataContext += `- ${pf.fact}\n`;
           }
         }
         if (!dataContext.trim()) {
