@@ -2800,13 +2800,15 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"facts": facts})
 	})
 
-	// POST /api/ai/mem/build?key= — 独立触发记忆事实提炼（无需重建向量索引）
+	// POST /api/ai/mem/build?key=&rebuild= — 独立触发记忆事实提炼（无需重建向量索引）
+	// rebuild=true 时清除 v2 记忆和检查点，强制重新提取
 	api.POST("/ai/mem/build", func(c *gin.Context) {
 		key := c.Query("key")
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 key 参数"})
 			return
 		}
+		rebuild := c.Query("rebuild") == "true"
 		job := getOrCreateJob(key)
 		job.mu.Lock()
 		if job.Step != "" && !job.Done && job.Error == "" && !job.Paused {
@@ -2866,6 +2868,15 @@ func serverMain() {
 			}
 			cfg := defaultEmbeddingConfig(prefs)
 			totalChunks := len(computeSegments(msgs))
+
+			if rebuild {
+				// rebuild 模式：清除 v2 记忆 + 重置检查点，强制重新提取
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = 2", key); err != nil {
+					setErr("清理旧记忆失败：" + err.Error())
+					return
+				}
+				db.Exec(`UPDATE vec_index_status SET extract_offset = -1 WHERE contact_key = ?`, key)
+			}
 
 			// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
 			startChunk := 0
