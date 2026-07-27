@@ -48,6 +48,7 @@ const SettingsPage       = lazy(() => import('./components/settings').then(m => 
 const GroupsView         = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupsView })));
 const GroupDetailModal   = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupDetailModal })));
 const ContactModal       = lazy(() => import('./components/contact/ContactModal').then(m => ({ default: m.ContactModal })));
+const ApiLogsPage         = lazy(() => import('./components/dashboard/ApiLogsPage').then(m => ({ default: m.ApiLogsPage })));
 
 // 切 tab / 打开 modal 时的兜底 loading
 const ChunkLoading: React.FC = () => (
@@ -86,7 +87,7 @@ function AppInner() {
 
   // State — 从 URL hash 恢复当前 tab + 联系人/群聊弹窗
   // hash 格式：#/stats  #/stats/contact/wxid_abc  #/groups/group/xxx@chatroom
-  const VALID_TABS: TabType[] = ['dashboard', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'urls', 'skills', 'labs', 'export', 'memory', 'tasks', 'settings'];
+  const VALID_TABS: TabType[] = ['dashboard', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'urls', 'skills', 'labs', 'export', 'memory', 'tasks', 'settings', 'apilogs'];
 
   const parseHash = (): { tab: TabType; contactId?: string; groupId?: string } => {
     const raw = window.location.hash.replace('#/', '').replace('#', '');
@@ -561,6 +562,8 @@ function AppInner() {
           <SkillsView />
         ) : activeTab === 'labs' ? (
           <LabsPage contacts={contacts} />
+        ) : activeTab === 'apilogs' ? (
+          <ApiLogsPage />
         ) : activeTab === 'search' ? (
           <SearchView
             contacts={contacts}

@@ -22,11 +22,15 @@ import App from './App'
 import './index.css'
 import './runtimeConfig' // side-effect: 吸收 URL ?server=&token= + 挂全局 axios 拦截器
 import { initFrontendLogger } from './utils/frontendLogger'
+import { initApiLogger } from './utils/apiLogger'
 import { ToastProvider, ToastBridge } from './components/common/Toast'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
 
 // 初始化前端日志收集（捕获 console.error、未捕获异常，批量上报后端）
 initFrontendLogger()
+
+// 初始化 API 请求日志拦截（记录 fetch 请求/响应，用于日志页面调试）
+initApiLogger()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
