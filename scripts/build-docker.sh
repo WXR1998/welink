@@ -40,10 +40,10 @@ fi
 # ── 构建后端 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "📦 [1/2] 构建后端镜像 welink-backend:$SHA"
-echo "   Dockerfile: backend/Dockerfile.simple"
+echo "   Dockerfile: backend/Dockerfile"
 echo ""
 docker build --network=host \
-  -f backend/Dockerfile.simple \
+  -f backend/Dockerfile \
   -t "welink-backend:$SHA" \
   backend/
 
@@ -53,10 +53,10 @@ echo "✅ 后端镜像构建完成: welink-backend:$SHA"
 # ── 构建前端 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "📦 [2/2] 构建前端镜像 welink-frontend:$SHA"
-echo "   Dockerfile: frontend/Dockerfile.simple"
+echo "   Dockerfile: frontend/Dockerfile"
 echo ""
 docker build --network=host \
-  -f frontend/Dockerfile.simple \
+  -f frontend/Dockerfile \
   -t "welink-frontend:$SHA" \
   frontend/
 
