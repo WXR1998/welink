@@ -407,11 +407,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     }
   }, [loading, profileId, privacyMode, scrollToBottom]);
 
-  // 自动保存对话
+  // 自动保存对话（包括 AI 正在回答时）
   useEffect(() => {
-    if (loading || messages.length === 0) return;
-    const hasAssistant = messages.some(m => m.role === 'assistant' && !m.searching && m.content);
-    if (!hasAssistant) return;
+    if (messages.length === 0) return;
 
     let key = conversationKey;
     if (!key) {
@@ -427,6 +425,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         if (m.llmPrompt) item.llmPrompt = m.llmPrompt;
         return item;
       });
+    // 没有可保存的内容时跳过（比如只有 searching 消息）
+    if (saveData.length === 0) return;
     fetch('/api/ai/conversations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -434,7 +434,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     }).then(() => {
       window.dispatchEvent(new Event('welink:conversation-saved'));
     }).catch(() => {});
-  }, [messages, loading, conversationKey]);
+  }, [messages, conversationKey]);
 
   const loadConversation = useCallback(async (key: string) => {
     try {
