@@ -649,33 +649,43 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		const perKeyTopK = 10
 
 		// 1. 搜索解析出的联系人私聊 facts
+		contactKeys := make([]string, 0, len(resolvedEntities))
 		for _, re := range resolvedEntities {
-			if len(allFacts) >= maxFacts {
-				break
+			if re.ContactKey != "" && !strings.HasPrefix(re.ContactKey, "group:") {
+				contactKeys = append(contactKeys, re.ContactKey)
 			}
-			if re.ContactKey == "" || strings.HasPrefix(re.ContactKey, "group:") {
-				continue
-			}
-			facts, _ := SearchMemFactsFiltered(re.ContactKey, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
-			allFacts = append(allFacts, facts...)
-			pf, _ := GetPinnedMemFacts(re.ContactKey)
-			pinnedFacts = append(pinnedFacts, pf...)
 		}
-
 		// 2. 搜索所有有记忆总结的群聊 facts
 		groupKeysWithFacts := GetGroupKeysWithFacts()
+
+		// 合并所有要搜索的 key
+		type searchTarget struct {
+			key     string
+			label   string
+		}
+		var targets []searchTarget
+		for _, ck := range contactKeys {
+			targets = append(targets, searchTarget{key: ck, label: resolveSourceName(ck, svc)})
+		}
 		for _, gk := range groupKeysWithFacts {
+			targets = append(targets, searchTarget{key: gk, label: resolveSourceName(gk, svc)})
+		}
+
+		totalTargets := len(targets)
+		for i, t := range targets {
 			if len(allFacts) >= maxFacts {
 				break
 			}
-			facts, _ := SearchMemFactsFiltered(gk, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
+			sendProgress("search_facts", fmt.Sprintf("搜索记忆事实 (%d/%d) %s", i+1, totalTargets, t.label))
+			facts, _ := SearchMemFactsFiltered(t.key, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
 			allFacts = append(allFacts, facts...)
-			pf, _ := GetPinnedMemFacts(gk)
+			pf, _ := GetPinnedMemFacts(t.key)
 			pinnedFacts = append(pinnedFacts, pf...)
 		}
 
 		// 3. 如果没有解析出实体，也没有群聊 facts，回退到全局搜索
 		if len(allFacts) == 0 {
+			sendProgress("search_facts", "全局搜索记忆事实...")
 			facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
 			allFacts = append(allFacts, facts...)
 			pf, _ := GetPinnedMemFacts("")
