@@ -124,8 +124,8 @@ func GetMemFacts(key string) ([]MemFact, error) {
 
 // ─── LLM 提炼 ─────────────────────────────────────────────────────────────────
 
-const memExtractChunkSize = 80 // 每批送给 LLM 的消息条数
-const memExtractStride = 64    // 步进（重叠 16 条，衔接上下文）
+const memExtractChunkSize = 150      // 每段最多 150 条消息（上限，实际段大小由时间和条数共同决定）
+const memMaxTimeGap = 24 * time.Hour // 每段最多跨越 24 小时；超过此间隔的消息强行切分到新段
 
 // ─── 上下文摘要链 ─────────────────────────────────────────────────────────────
 
@@ -229,6 +229,72 @@ func parseExtractResult(reply string) (memExtractResult, error) {
 	return result, fmt.Errorf("解析JSON失败：未找到有效JSON (原文：%s)", truncate(reply, 120))
 }
 
+// parseMsgTime 解析消息的 DateTime 字符串（格式 "2006-01-02 15:04"）。
+func parseMsgTime(s string) time.Time {
+	t, err := time.ParseInLocation("2006-01-02 15:04", s, time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// memSegment 是动态计算的消息分段。
+type memSegment struct {
+	Start    int  // 起始消息下标（含）
+	End      int  // 结束消息下标（不含）
+	GapSplit bool // true 表示本段因时间间隔超过 24h 而从上一段切分出来
+}
+
+// computeSegments 根据消息条数上限和时间间隔动态计算分段。
+// 切分条件（任一满足即切分）：
+//   - 段内消息数达到 memExtractChunkSize
+//   - 相邻消息间隔超过 24h（强行切分，新段不继承未消解指代）
+//   - 段总时间跨度超过 24h
+//
+// 时间解析失败时退化为纯条数切分。
+func computeSegments(msgs []rawMsg) []memSegment {
+	var segments []memSegment
+	i := 0
+	gapSplit := false // 第一段不是 gap split
+	for i < len(msgs) {
+		start := i
+		end := i + 1
+		startTime := parseMsgTime(msgs[start].DateTime)
+		for end < len(msgs) && (end-start) < memExtractChunkSize {
+			prevTime := parseMsgTime(msgs[end-1].DateTime)
+			currTime := parseMsgTime(msgs[end].DateTime)
+			if prevTime.IsZero() || currTime.IsZero() {
+				end++
+				continue
+			}
+			if currTime.Sub(prevTime) > memMaxTimeGap {
+				break
+			}
+			if !startTime.IsZero() && currTime.Sub(startTime) > memMaxTimeGap {
+				break
+			}
+			end++
+		}
+		segments = append(segments, memSegment{
+			Start:    start,
+			End:      end,
+			GapSplit: gapSplit,
+		})
+		gapSplit = false
+		if end < len(msgs) && end > 0 {
+			prevEndTime := parseMsgTime(msgs[end-1].DateTime)
+			nextStartTime := parseMsgTime(msgs[end].DateTime)
+			if !prevEndTime.IsZero() && !nextStartTime.IsZero() {
+				if nextStartTime.Sub(prevEndTime) > memMaxTimeGap {
+					gapSplit = true
+				}
+			}
+		}
+		i = end
+	}
+	return segments
+}
+
 // extractAndStoreFacts 将消息分批送给 LLM 提炼事实，再对事实做 embedding 存库。
 //
 //   - startChunk：从哪个批次开始（0 = 全新，>0 = 续传）。调用方负责在续传时不清空 mem_facts。
@@ -247,9 +313,9 @@ func extractAndStoreFacts(
 	onChunkDone func(chunkIdx int),
 	abortCh <-chan struct{},
 ) (int, error) {
-	// 使用 stride 步进：每批 80 条，步进 64 条，重叠 16 条
-	// 总批数 = ceil(len(msgs) / stride)，保证最后一个不完整窗口也被处理
-	totalChunks := (len(msgs) + memExtractStride - 1) / memExtractStride
+	// 动态计算分段：综合考虑条数上限（150 条）和时间间隔（24h）
+	segments := computeSegments(msgs)
+	totalChunks := len(segments)
 	if totalChunks < 1 {
 		totalChunks = 1
 	}
@@ -306,12 +372,15 @@ func extractAndStoreFacts(
 			default:
 			}
 		}
-		i := chunkIdx * memExtractStride
-		end := i + memExtractChunkSize
-		if end > len(msgs) {
-			end = len(msgs)
+		seg := segments[chunkIdx]
+		chunk := msgs[seg.Start:seg.End]
+
+		// 如果本段因时间间隔过大而从上一段切分，清除未消解指代和当前话题
+		// 但保留人物表，因为群聊中的人物可能仍然相关
+		if seg.GapSplit {
+			runningSummary.Unresolved = nil
+			runningSummary.ActiveTopics = nil
 		}
-		chunk := msgs[i:end]
 
 		result, err := extractFactsFromChunk(chunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx, runningSummary)
 		if err != nil {
@@ -372,7 +441,7 @@ func extractAndStoreFacts(
 							now := time.Now().Unix()
 							for j, emb := range dedupEmbs {
 								factWithMeta := timeRange + dedupFacts[j]
-								if _, err := stmt.Exec(key, factWithMeta, i, end-1, encodeVec(emb), now, now); err == nil {
+								if _, err := stmt.Exec(key, factWithMeta, seg.Start, seg.End-1, encodeVec(emb), now, now); err == nil {
 									total++
 								}
 							}

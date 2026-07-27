@@ -35,9 +35,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1243,7 +1243,9 @@ func serverMain() {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			if list == nil { list = []ConversationEntry{} }
+			if list == nil {
+				list = []ConversationEntry{}
+			}
 			c.JSON(http.StatusOK, gin.H{"conversations": list})
 			return
 		}
@@ -1400,13 +1402,13 @@ func serverMain() {
 	// 后端拉取聊天记录 → 构造 prompt → 流式转发 LLM 响应
 	api.POST("/ai/analyze", func(c *gin.Context) {
 		var body struct {
-			Username    string       `json:"username"`
-			IsGroup     bool         `json:"is_group"`
-			From        int64        `json:"from"`
-			To          int64        `json:"to"`
-			Messages    []LLMMessage `json:"messages"`
-			ProfileID   string       `json:"profile_id"`
-			SkipMemory  bool         `json:"skip_memory"` // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
+			Username   string       `json:"username"`
+			IsGroup    bool         `json:"is_group"`
+			From       int64        `json:"from"`
+			To         int64        `json:"to"`
+			Messages   []LLMMessage `json:"messages"`
+			ProfileID  string       `json:"profile_id"`
+			SkipMemory bool         `json:"skip_memory"` // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1602,8 +1604,8 @@ func serverMain() {
 	// 步骤: 加载消息 → 统计分析 → LLM提炼长期档案 → LLM提炼中期近况 → 组装prompt
 	api.POST("/ai/clone/learn", func(c *gin.Context) {
 		var body struct {
-			Username string   `json:"username"`
-			Count    int      `json:"count"`
+			Username       string   `json:"username"`
+			Count          int      `json:"count"`
 			Groups         []string `json:"groups"`
 			Bio            string   `json:"bio"`
 			ExtractProfile bool     `json:"extract_profile"`
@@ -1787,15 +1789,15 @@ func serverMain() {
 
 		// 最终结果
 		result, _ := json.Marshal(gin.H{
-			"done":           true,
-			"session_id":     sessionID,
-			"sample_count":   len(theirTexts) + len(groupSamples),
-			"private_count":  len(theirTexts),
-			"group_count":    len(groupSamples),
-			"has_profile":    profileText != "",
-			"has_recent":     false,
-			"avg_msg_len":    avgLen,
-			"emoji_pct":      emojiPct,
+			"done":          true,
+			"session_id":    sessionID,
+			"sample_count":  len(theirTexts) + len(groupSamples),
+			"private_count": len(theirTexts),
+			"group_count":   len(groupSamples),
+			"has_profile":   profileText != "",
+			"has_recent":    false,
+			"avg_msg_len":   avgLen,
+			"emoji_pct":     emojiPct,
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", result)
 		flusher.Flush()
@@ -1870,7 +1872,7 @@ func serverMain() {
 	api.POST("/ai/clone/history/:username", func(c *gin.Context) {
 		uname := c.Param("username")
 		var body struct {
-			Role    string `json:"role"`    // user / assistant
+			Role    string `json:"role"` // user / assistant
 			Content string `json:"content"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
@@ -1923,9 +1925,15 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 			return
 		}
-		if body.Rounds <= 0 { body.Rounds = 10 }
-		if body.Rounds > 30 { body.Rounds = 30 }
-		if body.MyName == "" { body.MyName = "我" }
+		if body.Rounds <= 0 {
+			body.Rounds = 10
+		}
+		if body.Rounds > 30 {
+			body.Rounds = 30
+		}
+		if body.MyName == "" {
+			body.MyName = "我"
+		}
 
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
@@ -2052,7 +2060,11 @@ func serverMain() {
 		} else if body.SkillType == "contact" && svc != nil {
 			for _, c := range svc.GetCachedStats() {
 				if c.Username == body.Username {
-					if c.Remark != "" { targetName = c.Remark } else if c.Nickname != "" { targetName = c.Nickname }
+					if c.Remark != "" {
+						targetName = c.Remark
+					} else if c.Nickname != "" {
+						targetName = c.Nickname
+					}
 					break
 				}
 			}
@@ -2223,25 +2235,31 @@ func serverMain() {
 	api.POST("/ai/group-sim", func(c *gin.Context) {
 		var body struct {
 			GroupUsername string `json:"group_username"`
-			MessageCount int    `json:"message_count"`
-			ProfileID    string `json:"profile_id"`
-			UserMessage  string `json:"user_message"`
-			History      []struct {
+			MessageCount  int    `json:"message_count"`
+			ProfileID     string `json:"profile_id"`
+			UserMessage   string `json:"user_message"`
+			History       []struct {
 				Speaker string `json:"speaker"`
 				Content string `json:"content"`
 			} `json:"history"`
 			Rounds  int      `json:"rounds"`
 			Topic   string   `json:"topic"`   // 话题/场景设定
-			Mood    string   `json:"mood"`     // 聊天氛围
+			Mood    string   `json:"mood"`    // 聊天氛围
 			Members []string `json:"members"` // 指定参与成员（为空则自动选 top 10）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 			return
 		}
-		if body.MessageCount <= 0 { body.MessageCount = 1000 }
-		if body.Rounds <= 0 { body.Rounds = 5 }
-		if body.Rounds > 20 { body.Rounds = 20 }
+		if body.MessageCount <= 0 {
+			body.MessageCount = 1000
+		}
+		if body.Rounds <= 0 {
+			body.Rounds = 5
+		}
+		if body.Rounds > 20 {
+			body.Rounds = 20
+		}
 
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
@@ -2267,18 +2285,20 @@ func serverMain() {
 		type memberInfo struct {
 			Name       string
 			Count      int
-			Samples    []string  // 文本消息样本
-			TotalChars int       // 总字符数
-			TextCount  int       // 文本消息数
-			EmojiCount int       // 含表情的消息数
-			QMarkCount int       // 含问号的消息数（爱提问）
-			ExclCount  int       // 含感叹号的消息数（情绪化）
-			ShortCount int       // <=5字的消息数（简短回复型）
-			LongCount  int       // >=50字的消息数（长篇大论型）
+			Samples    []string // 文本消息样本
+			TotalChars int      // 总字符数
+			TextCount  int      // 文本消息数
+			EmojiCount int      // 含表情的消息数
+			QMarkCount int      // 含问号的消息数（爱提问）
+			ExclCount  int      // 含感叹号的消息数（情绪化）
+			ShortCount int      // <=5字的消息数（简短回复型）
+			LongCount  int      // >=50字的消息数（长篇大论型）
 		}
 		memberMap := make(map[string]*memberInfo)
 		for _, m := range msgs {
-			if m.Speaker == "" || m.Speaker == "未知" { continue }
+			if m.Speaker == "" || m.Speaker == "未知" {
+				continue
+			}
 			mi, ok := memberMap[m.Speaker]
 			if !ok {
 				mi = &memberInfo{Name: m.Speaker}
@@ -2289,11 +2309,21 @@ func serverMain() {
 				mi.TextCount++
 				charLen := len([]rune(m.Content))
 				mi.TotalChars += charLen
-				if charLen <= 5 { mi.ShortCount++ }
-				if charLen >= 50 { mi.LongCount++ }
-				if strings.ContainsAny(m.Content, "？?") { mi.QMarkCount++ }
-				if strings.ContainsAny(m.Content, "！!") { mi.ExclCount++ }
-				if strings.ContainsAny(m.Content, "😂🤣😄😁😆😅😊😉😎🥰😍") || strings.Contains(m.Content, "[") { mi.EmojiCount++ }
+				if charLen <= 5 {
+					mi.ShortCount++
+				}
+				if charLen >= 50 {
+					mi.LongCount++
+				}
+				if strings.ContainsAny(m.Content, "？?") {
+					mi.QMarkCount++
+				}
+				if strings.ContainsAny(m.Content, "！!") {
+					mi.ExclCount++
+				}
+				if strings.ContainsAny(m.Content, "😂🤣😄😁😆😅😊😉😎🥰😍") || strings.Contains(m.Content, "[") {
+					mi.EmojiCount++
+				}
 				// 保留样本（均匀抽样：前中后各取一些）
 				if len(mi.Samples) < 30 {
 					mi.Samples = append(mi.Samples, m.Content)
@@ -2305,18 +2335,28 @@ func serverMain() {
 		members := make([]*memberInfo, 0, len(memberMap))
 		if len(body.Members) > 0 {
 			allowed := make(map[string]bool)
-			for _, name := range body.Members { allowed[name] = true }
+			for _, name := range body.Members {
+				allowed[name] = true
+			}
 			for _, mi := range memberMap {
-				if allowed[mi.Name] { members = append(members, mi) }
+				if allowed[mi.Name] {
+					members = append(members, mi)
+				}
 			}
 		} else {
-			for _, mi := range memberMap { members = append(members, mi) }
+			for _, mi := range memberMap {
+				members = append(members, mi)
+			}
 		}
 		sort.Slice(members, func(i, j int) bool { return members[i].Count > members[j].Count })
-		if len(members) > 10 { members = members[:10] }
+		if len(members) > 10 {
+			members = members[:10]
+		}
 
 		totalCount := 0
-		for _, mi := range members { totalCount += mi.Count }
+		for _, mi := range members {
+			totalCount += mi.Count
+		}
 
 		// 3. 构造系统 prompt（含风格特征画像）
 		var sb strings.Builder
@@ -2355,42 +2395,66 @@ func serverMain() {
 			var traits []string
 			if mi.TextCount > 0 {
 				avgLen := mi.TotalChars / mi.TextCount
-				if avgLen <= 8 { traits = append(traits, "惜字如金，回复简短") }
-				if avgLen >= 30 { traits = append(traits, "话多，经常长篇大论") }
-				if avgLen > 8 && avgLen < 30 { traits = append(traits, fmt.Sprintf("消息平均%d字", avgLen)) }
+				if avgLen <= 8 {
+					traits = append(traits, "惜字如金，回复简短")
+				}
+				if avgLen >= 30 {
+					traits = append(traits, "话多，经常长篇大论")
+				}
+				if avgLen > 8 && avgLen < 30 {
+					traits = append(traits, fmt.Sprintf("消息平均%d字", avgLen))
+				}
 			}
 			if mi.TextCount > 0 {
 				emojiPct := float64(mi.EmojiCount) / float64(mi.TextCount) * 100
-				if emojiPct > 30 { traits = append(traits, "爱用表情") }
-				if emojiPct < 5 { traits = append(traits, "很少用表情") }
+				if emojiPct > 30 {
+					traits = append(traits, "爱用表情")
+				}
+				if emojiPct < 5 {
+					traits = append(traits, "很少用表情")
+				}
 			}
 			if mi.TextCount > 0 {
 				qPct := float64(mi.QMarkCount) / float64(mi.TextCount) * 100
-				if qPct > 20 { traits = append(traits, "爱提问") }
+				if qPct > 20 {
+					traits = append(traits, "爱提问")
+				}
 			}
 			if mi.TextCount > 0 {
 				exclPct := float64(mi.ExclCount) / float64(mi.TextCount) * 100
-				if exclPct > 25 { traits = append(traits, "语气强烈，常用感叹号") }
+				if exclPct > 25 {
+					traits = append(traits, "语气强烈，常用感叹号")
+				}
 			}
 			if mi.TextCount > 0 {
 				shortPct := float64(mi.ShortCount) / float64(mi.TextCount) * 100
-				if shortPct > 40 { traits = append(traits, "经常几个字就回复") }
+				if shortPct > 40 {
+					traits = append(traits, "经常几个字就回复")
+				}
 			}
-			if len(traits) == 0 { traits = append(traits, "风格中等") }
+			if len(traits) == 0 {
+				traits = append(traits, "风格中等")
+			}
 			sb.WriteString(strings.Join(traits, "、") + "\n")
 
 			// 样本消息
 			sb.WriteString("说话样本：\n")
 			sampleCount := len(mi.Samples)
-			if sampleCount > 10 { sampleCount = 10 }
+			if sampleCount > 10 {
+				sampleCount = 10
+			}
 			for _, s := range mi.Samples[:sampleCount] {
-				if len(s) > 100 { s = s[:100] + "…" }
+				if len(s) > 100 {
+					s = s[:100] + "…"
+				}
 				sb.WriteString(fmt.Sprintf("- 「%s」\n", s))
 			}
 		}
 		sb.WriteString("\n【最近的群聊记录】\n")
 		recentStart := len(msgs) - 50
-		if recentStart < 0 { recentStart = 0 }
+		if recentStart < 0 {
+			recentStart = 0
+		}
 		for _, m := range msgs[recentStart:] {
 			if m.Content != "" {
 				sb.WriteString(fmt.Sprintf("%s：%s\n", m.Speaker, m.Content))
@@ -2441,9 +2505,14 @@ func serverMain() {
 			cumulative := 0
 			for _, mi := range members {
 				cumulative += mi.Count
-				if r < cumulative { chosen = mi; break }
+				if r < cumulative {
+					chosen = mi
+					break
+				}
 			}
-			if chosen == nil { chosen = members[0] }
+			if chosen == nil {
+				chosen = members[0]
+			}
 			speakerOrder = append(speakerOrder, chosen.Name)
 		}
 
@@ -2468,23 +2537,31 @@ func serverMain() {
 		// 流式输出，实时解析每行 "成员名：消息内容" 并逐条推送
 		var lineBuf strings.Builder
 		memberSet := make(map[string]bool)
-		for _, mi := range members { memberSet[mi.Name] = true }
+		for _, mi := range members {
+			memberSet[mi.Name] = true
+		}
 
 		streamLLMCoreWithProfile(func(chunk StreamChunk) {
-			if chunk.Delta == "" { return }
+			if chunk.Delta == "" {
+				return
+			}
 			lineBuf.WriteString(chunk.Delta)
 
 			// 逐行解析
 			for {
 				text := lineBuf.String()
 				nlIdx := strings.Index(text, "\n")
-				if nlIdx < 0 { break }
+				if nlIdx < 0 {
+					break
+				}
 
 				line := strings.TrimSpace(text[:nlIdx])
 				lineBuf.Reset()
 				lineBuf.WriteString(text[nlIdx+1:])
 
-				if line == "" { continue }
+				if line == "" {
+					continue
+				}
 
 				// 尝试解析 "成员名：内容" 或 "成员名:内容"
 				var speaker, content string
@@ -2500,7 +2577,9 @@ func serverMain() {
 						break
 					}
 				}
-				if speaker == "" || content == "" { continue }
+				if speaker == "" || content == "" {
+					continue
+				}
 
 				sendSim(SimMessage{Speaker: speaker, Content: content})
 			}
@@ -2786,7 +2865,7 @@ func serverMain() {
 				return
 			}
 			cfg := defaultEmbeddingConfig(prefs)
-			totalChunks := (len(msgs) + memExtractStride - 1) / memExtractStride
+			totalChunks := len(computeSegments(msgs))
 
 			// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
 			startChunk := 0
@@ -3116,16 +3195,24 @@ func serverMain() {
 
 		// 第一轮：放入所有命中消息
 		for _, ir := range allIndexed {
-			if !ir.hit { continue }
-			if totalChars+len(ir.line) > maxContextChars { break }
+			if !ir.hit {
+				continue
+			}
+			if totalChars+len(ir.line) > maxContextChars {
+				break
+			}
 			selected[ir.idx] = true
 			totalChars += len(ir.line)
 		}
 
 		// 第二轮：用窗口上下文消息填充剩余预算
 		for _, ir := range allIndexed {
-			if selected[ir.idx] { continue }
-			if totalChars+len(ir.line) > maxContextChars { break }
+			if selected[ir.idx] {
+				continue
+			}
+			if totalChars+len(ir.line) > maxContextChars {
+				break
+			}
 			selected[ir.idx] = true
 			totalChars += len(ir.line)
 		}
@@ -3134,7 +3221,9 @@ func serverMain() {
 		var ctxLines []string
 		snipets := make([]RagSnipet, 0, len(selected))
 		for _, ir := range allIndexed {
-			if !selected[ir.idx] { continue }
+			if !selected[ir.idx] {
+				continue
+			}
 			ctxLines = append(ctxLines, ir.line)
 			snipets = append(snipets, RagSnipet{
 				Datetime: ir.r.Datetime,
@@ -3584,10 +3673,18 @@ func serverMain() {
 			}
 			monthSamples := make(map[string][]sampledMsg)
 			for _, m := range msgs {
-				if m.Type != 1 || m.Content == "" { continue } // 只要文本
+				if m.Type != 1 || m.Content == "" {
+					continue
+				} // 只要文本
 				month := ""
-				if m.Date != "" { month = m.Date[:7] } else { continue }
-				if len(monthSamples[month]) >= 3 { continue }
+				if m.Date != "" {
+					month = m.Date[:7]
+				} else {
+					continue
+				}
+				if len(monthSamples[month]) >= 3 {
+					continue
+				}
 				content := m.Content
 				if len([]rune(content)) > 80 {
 					content = string([]rune(content)[:80]) + "…"
@@ -3608,8 +3705,12 @@ func serverMain() {
 			var monthly []monthSummary
 			if detail != nil {
 				months := make(map[string]bool)
-				for m := range detail.TheirMonthlyTrend { months[m] = true }
-				for m := range detail.MyMonthlyTrend { months[m] = true }
+				for m := range detail.TheirMonthlyTrend {
+					months[m] = true
+				}
+				for m := range detail.MyMonthlyTrend {
+					months[m] = true
+				}
 				for m := range months {
 					their := detail.TheirMonthlyTrend[m]
 					mine := detail.MyMonthlyTrend[m]
@@ -3623,8 +3724,12 @@ func serverMain() {
 
 			// 5. 计算额外特征
 			displayName := stats.Remark
-			if displayName == "" { displayName = stats.Nickname }
-			if displayName == "" { displayName = stats.Username }
+			if displayName == "" {
+				displayName = stats.Nickname
+			}
+			if displayName == "" {
+				displayName = stats.Username
+			}
 			daysKnown := 0
 			if stats.FirstMessage != "" && stats.FirstMessage != "-" {
 				if t, err := time.Parse("2006-01-02", stats.FirstMessage); err == nil {
@@ -3644,33 +3749,48 @@ func serverMain() {
 			tokenEstimate := len(monthly)*50 + 500 // 粗略估算
 
 			c.JSON(http.StatusOK, gin.H{
-				"display_name":    displayName,
-				"username":        uname,
-				"first_message":   stats.FirstMessage,
-				"last_message":    stats.LastMessage,
-				"first_msg":       stats.FirstMsg,
-				"days_known":      daysKnown,
-				"total_messages":  stats.TotalMessages,
-				"their_messages":  stats.TheirMessages,
-				"my_messages":     stats.MyMessages,
-				"their_chars":     stats.TheirChars,
-				"my_chars":        stats.MyChars,
-				"avg_msg_len":     stats.AvgMsgLen,
-				"peak_monthly":    stats.PeakMonthly,
-				"peak_period":     stats.PeakPeriod,
-				"recent_monthly":  stats.RecentMonthly,
-				"recall_count":    stats.RecallCount,
-				"money_count":     stats.MoneyCount,
-				"emoji_count":     stats.EmojiCnt,
-				"shared_groups":   stats.SharedGroupsCount,
-				"type_cnt":        stats.TypeCnt,
-				"initiation_pct":  initiationPct,
-				"late_night_pct":  lateNightPct,
-				"late_night_count": func() int64 { if detail != nil { return detail.LateNightCount }; return 0 }(),
-				"total_sessions":  func() int64 { if detail != nil { return detail.TotalSessions }; return 0 }(),
-				"hourly_dist":     func() [24]int { if detail != nil { return detail.HourlyDist }; return [24]int{} }(),
-				"monthly":         monthly,
-				"token_estimate":  tokenEstimate,
+				"display_name":   displayName,
+				"username":       uname,
+				"first_message":  stats.FirstMessage,
+				"last_message":   stats.LastMessage,
+				"first_msg":      stats.FirstMsg,
+				"days_known":     daysKnown,
+				"total_messages": stats.TotalMessages,
+				"their_messages": stats.TheirMessages,
+				"my_messages":    stats.MyMessages,
+				"their_chars":    stats.TheirChars,
+				"my_chars":       stats.MyChars,
+				"avg_msg_len":    stats.AvgMsgLen,
+				"peak_monthly":   stats.PeakMonthly,
+				"peak_period":    stats.PeakPeriod,
+				"recent_monthly": stats.RecentMonthly,
+				"recall_count":   stats.RecallCount,
+				"money_count":    stats.MoneyCount,
+				"emoji_count":    stats.EmojiCnt,
+				"shared_groups":  stats.SharedGroupsCount,
+				"type_cnt":       stats.TypeCnt,
+				"initiation_pct": initiationPct,
+				"late_night_pct": lateNightPct,
+				"late_night_count": func() int64 {
+					if detail != nil {
+						return detail.LateNightCount
+					}
+					return 0
+				}(),
+				"total_sessions": func() int64 {
+					if detail != nil {
+						return detail.TotalSessions
+					}
+					return 0
+				}(),
+				"hourly_dist": func() [24]int {
+					if detail != nil {
+						return detail.HourlyDist
+					}
+					return [24]int{}
+				}(),
+				"monthly":        monthly,
+				"token_estimate": tokenEstimate,
 			})
 		})
 
@@ -3878,18 +3998,22 @@ func serverMain() {
 			// 清理 markdown fence
 			raw = strings.TrimSpace(raw)
 			if strings.HasPrefix(raw, "```") {
-				if idx := strings.Index(raw, "\n"); idx >= 0 { raw = raw[idx+1:] }
-				if idx := strings.LastIndex(raw, "```"); idx >= 0 { raw = raw[:idx] }
+				if idx := strings.Index(raw, "\n"); idx >= 0 {
+					raw = raw[idx+1:]
+				}
+				if idx := strings.LastIndex(raw, "```"); idx >= 0 {
+					raw = raw[:idx]
+				}
 				raw = strings.TrimSpace(raw)
 			}
 
 			var parsed struct {
-				Mode         string `json:"mode"`
-				DB           string `json:"db"`
-				SQL          string `json:"sql"`
-				ContactHint  string `json:"contact_hint"`
-				MessageSQL   string `json:"message_sql"`
-				Explain      string `json:"explain"`
+				Mode        string `json:"mode"`
+				DB          string `json:"db"`
+				SQL         string `json:"sql"`
+				ContactHint string `json:"contact_hint"`
+				MessageSQL  string `json:"message_sql"`
+				Explain     string `json:"explain"`
 			}
 			if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 				c.JSON(http.StatusOK, gin.H{"generated_sql": raw, "error": "LLM 返回格式异常"})
@@ -3920,15 +4044,21 @@ func serverMain() {
 					return
 				}
 				username := ""
-				if s, ok := contactResult.Rows[0][0].(string); ok { username = s }
+				if s, ok := contactResult.Rows[0][0].(string); ok {
+					username = s
+				}
 				if username == "" {
 					c.JSON(http.StatusOK, gin.H{"error": "联系人 username 为空"})
 					return
 				}
 				contactName := ""
-				if s, ok := contactResult.Rows[0][1].(string); ok && s != "" { contactName = s }
+				if s, ok := contactResult.Rows[0][1].(string); ok && s != "" {
+					contactName = s
+				}
 				if contactName == "" {
-					if s, ok := contactResult.Rows[0][2].(string); ok { contactName = s }
+					if s, ok := contactResult.Rows[0][2].(string); ok {
+						contactName = s
+					}
 				}
 
 				// Step 2: 计算表名 + 找到 DB + 执行
@@ -3950,9 +4080,13 @@ func serverMain() {
 					dbRows, _ := mdb.Query("PRAGMA database_list")
 					if dbRows != nil {
 						for dbRows.Next() {
-							var seq int; var name, file string
+							var seq int
+							var name, file string
 							dbRows.Scan(&seq, &name, &file)
-							if seq == 0 { usedDB = filepath.Base(file); break }
+							if seq == 0 {
+								usedDB = filepath.Base(file)
+								break
+							}
 						}
 						dbRows.Close()
 					}
@@ -4421,9 +4555,9 @@ func serverMain() {
 		needsDataDir := merged.DataDir == "" && len(merged.DataDirProfiles) == 0
 		log.Printf("[IMPORT] backup=%s needs_data_dir=%v", bak, needsDataDir)
 		c.JSON(http.StatusOK, gin.H{
-			"status":          "ok",
-			"backup":          bak,
-			"needs_data_dir":  needsDataDir, // 前端可据此提示用户重新选数据目录
+			"status":         "ok",
+			"backup":         bak,
+			"needs_data_dir": needsDataDir, // 前端可据此提示用户重新选数据目录
 		})
 	})
 
