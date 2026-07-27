@@ -125,7 +125,109 @@ func GetMemFacts(key string) ([]MemFact, error) {
 // ─── LLM 提炼 ─────────────────────────────────────────────────────────────────
 
 const memExtractChunkSize = 80 // 每批送给 LLM 的消息条数
-const memExtractStride = 64   // 步进（重叠 16 条，衔接上下文）
+const memExtractStride = 64    // 步进（重叠 16 条，衔接上下文）
+
+// ─── 上下文摘要链 ─────────────────────────────────────────────────────────────
+
+// memContextSummary 是上一段分析传递给下一段的结构化上下文摘要。
+// 用于跨批次消解"他/她/那个事"等指代，避免张冠李戴。
+type memContextSummary struct {
+	Entities     []memEntity `json:"entities"`              // 人物表
+	ActiveTopics []string    `json:"active_topics"`         // 当前话题
+	Unresolved   []string    `json:"unresolved_references"` // 未消解指代
+}
+
+// memEntity 是上下文摘要中的人物条目。
+type memEntity struct {
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases"`
+}
+
+// memExtractResult 是 LLM 单批提取的完整结果：事实列表 + 上下文摘要。
+type memExtractResult struct {
+	Facts          []string          `json:"facts"`
+	ContextSummary memContextSummary `json:"context_summary"`
+}
+
+// formatPriorSummary 把上一段的上下文摘要格式化为 prompt 可读文本。
+func formatPriorSummary(s memContextSummary) string {
+	if len(s.Entities) == 0 && len(s.ActiveTopics) == 0 && len(s.Unresolved) == 0 {
+		return "（本段是第一段，无前文上下文）"
+	}
+	var sb strings.Builder
+	if len(s.Entities) > 0 {
+		sb.WriteString("已知人物：")
+		for i, e := range s.Entities {
+			if i > 0 {
+				sb.WriteString("、")
+			}
+			sb.WriteString(e.Name)
+			if len(e.Aliases) > 0 {
+				sb.WriteString("（又称：")
+				sb.WriteString(strings.Join(e.Aliases, "、"))
+				sb.WriteString("）")
+			}
+		}
+		sb.WriteString("\n")
+	}
+	if len(s.ActiveTopics) > 0 {
+		sb.WriteString("当前话题：")
+		sb.WriteString(strings.Join(s.ActiveTopics, "；"))
+		sb.WriteString("\n")
+	}
+	if len(s.Unresolved) > 0 {
+		sb.WriteString("未消解指代：")
+		sb.WriteString(strings.Join(s.Unresolved, "；"))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// capContextSummary 限制摘要体积，防止随批次无限膨胀。
+func capContextSummary(s memContextSummary) memContextSummary {
+	if len(s.Entities) > 15 {
+		s.Entities = s.Entities[:15]
+	}
+	if len(s.ActiveTopics) > 8 {
+		s.ActiveTopics = s.ActiveTopics[:8]
+	}
+	if len(s.Unresolved) > 5 {
+		s.Unresolved = s.Unresolved[:5]
+	}
+	return s
+}
+
+// parseExtractResult 解析 LLM 返回的提取结果，兼容新旧两种格式：
+//   - 新格式：{"facts": [...], "context_summary": {...}}
+//   - 旧格式：["fact1", "fact2"]
+func parseExtractResult(reply string) (memExtractResult, error) {
+	reply = strings.TrimSpace(reply)
+	var result memExtractResult
+
+	// 优先尝试对象格式（新格式）
+	if objStart := strings.Index(reply, "{"); objStart >= 0 {
+		objEnd := strings.LastIndex(reply, "}")
+		if objEnd > objStart {
+			if err := json.Unmarshal([]byte(reply[objStart:objEnd+1]), &result); err == nil {
+				return result, nil
+			}
+		}
+	}
+
+	// 回退到数组格式（旧格式）
+	if arrStart := strings.Index(reply, "["); arrStart >= 0 {
+		arrEnd := strings.LastIndex(reply, "]")
+		if arrEnd > arrStart {
+			var facts []string
+			if err := json.Unmarshal([]byte(reply[arrStart:arrEnd+1]), &facts); err == nil {
+				result.Facts = facts
+				return result, nil
+			}
+		}
+	}
+
+	return result, fmt.Errorf("解析JSON失败：未找到有效JSON (原文：%s)", truncate(reply, 120))
+}
 
 // extractAndStoreFacts 将消息分批送给 LLM 提炼事实，再对事实做 embedding 存库。
 //
@@ -191,6 +293,10 @@ func extractAndStoreFacts(
 	const dedupThreshold = 0.88
 	var storedEmbs [][]float32
 
+	// 上下文摘要链：每批分析后生成结构化摘要，传递给下一批
+	// 用于跨批次消解"他/她/那个事"等指代，避免张冠李戴
+	var runningSummary memContextSummary
+
 	for chunkIdx := startChunk; chunkIdx < totalChunks; chunkIdx++ {
 		// 检查是否被暂停
 		if abortCh != nil {
@@ -207,10 +313,15 @@ func extractAndStoreFacts(
 		}
 		chunk := msgs[i:end]
 
-		facts, err := extractFactsFromChunk(chunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx)
+		result, err := extractFactsFromChunk(chunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx, runningSummary)
 		if err != nil {
 			lastErr = err
-		} else if len(facts) > 0 {
+		} else {
+			// 更新上下文摘要，供下一段使用
+			runningSummary = result.ContextSummary
+		}
+		facts := result.Facts
+		if len(facts) > 0 {
 			// 取本批消息的时间范围作为 metadata，拼在 fact 前面（不进 embedding）
 			chunkStart := chunk[0].DateTime
 			chunkEnd := chunk[len(chunk)-1].DateTime
@@ -290,6 +401,7 @@ func extractAndStoreFacts(
 // - 若用户配置了 MemLLMBaseURL 或 MemLLMModel，则使用专用配置。
 //   - 填写了 MemLLMAPIKey → 使用云端模型（OpenAI 兼容，如 OpenRouter / DeepSeek 等）
 //   - 未填写 MemLLMAPIKey → 使用本地 Ollama（隐私保护，数据不出本机）
+//
 // - 若两者均为空，则直接复用主 LLM 配置（与 AI 分析使用同一模型）。
 func memLLMPrefs(prefs Preferences) Preferences {
 	if prefs.MemLLMBaseURL == "" && prefs.MemLLMModel == "" {
@@ -317,8 +429,8 @@ func memLLMPrefs(prefs Preferences) Preferences {
 	return p
 }
 
-// extractFactsFromChunk 调用 LLM 从一批消息中提炼事实列表。
-func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, prefs Preferences, backgroundCtx string) ([]string, error) {
+// extractFactsFromChunk 调用 LLM 从一批消息中提炼事实列表，并生成上下文摘要供下一段使用。
+func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, prefs Preferences, backgroundCtx string, priorSummary memContextSummary) (memExtractResult, error) {
 	var sb strings.Builder
 	for _, m := range chunk {
 		sb.WriteString(m.DateTime)
@@ -334,67 +446,88 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 		bgSection = "\n已知背景信息（用于理解聊天中的人物）：\n" + backgroundCtx + "\n"
 	}
 
+	priorSection := "\n前文上下文（来自上一段分析的摘要，用于消解\"他/她/那个\"等指代）：\n" + formatPriorSummary(priorSummary) + "\n"
+
+	accuracyRule := "【最重要原则】宁愿少记也不要错记。记忆一旦出错会误导后续所有判断，因此：\n" +
+		"  - 如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条\n" +
+		"  - 不要根据片段猜测、脑补或推断\n" +
+		"  - 宁可遗漏一条可能有价值的信息，也不要记录一条可能错误的信息\n"
+
+	outputFormat := "输出格式（JSON对象，不加任何解释）：\n" +
+		"{\n" +
+		"  \"facts\": [\"事实1\", \"事实2\"],\n" +
+		"  \"context_summary\": {\n" +
+		"    \"entities\": [{\"name\": \"本名\", \"aliases\": [\"外号\", \"简称\"]}],\n" +
+		"    \"active_topics\": [\"本段结束时仍在讨论的话题\"],\n" +
+		"    \"unresolved_references\": [\"本段结束时仍未消解的指代，供下一段参考\"]\n" +
+		"  }\n" +
+		"}\n" +
+		"如果没有有价值的事实，facts 输出 []，但仍需输出 context_summary。\n"
+
 	var prompt string
 	if isGroup {
-		prompt = "从以下群聊记录中提取关键事实，以JSON数组格式输出。\n" +
-			"规则：\n" +
+		prompt = "你是一个记忆提炼专家。从以下群聊记录中提取关键事实，并生成供下一段分析使用的上下文摘要。\n" +
+			"\n" + accuracyRule +
+			priorSection +
+			bgSection +
+			"\n规则：\n" +
 			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n" +
 			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n" +
 			"3. 忽略寒暄、日常问候、无意义闲聊\n" +
 			"4. 用消息中出现的发言者名字来描述事实\n" +
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n" +
 			"6. 同一主题的零散信息合并成一条完整陈述\n" +
-			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n" +
-			"8. 不要重复提取已知背景信息中已经存在的事实\n" +
-			"9. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n" +
-			"10. 只输出JSON数组，不加任何解释，例如：[\"XX喜欢户外运动，经常周末和朋友去爬香山\", \"YY在北京做程序员，主要写后端\"]\n" +
-			"11. 如果没有有价值的事实，输出：[]\n" +
-			bgSection +
+			"7. 不要重复提取已知背景信息中已经存在的事实\n" +
+			"8. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n" +
+			"9. 参考前文上下文摘要来理解\"他/她/那个事\"等指代；如果仍无法确定所指对象，跳过该条事实\n" +
+			"\n" + outputFormat +
 			"\n聊天记录：\n" + sb.String() + "\n输出："
 	} else {
-		prompt = fmt.Sprintf("从以下聊天记录中提取关键事实，以JSON数组格式输出。\n"+
-			"规则：\n"+
+		prompt = fmt.Sprintf("你是一个记忆提炼专家。从以下聊天记录中提取关键事实，并生成供下一段分析使用的上下文摘要。\n"+
+			"\n%s"+
+			"%s"+
+			"%s"+
+			"\n规则：\n"+
 			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n"+
 			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n"+
 			"3. 忽略寒暄、日常问候、无意义闲聊\n"+
 			"4. 用【%s】指代聊天对象\n"+
 			"5. 如果聊天中出现了外号或简称，输出时需还原为此人的本名。例如聊天中出现'jyy称95和mmxs在一起'，应输出'蒋钰瑶称邱瀚轩和瞿茂林在一起'\n"+
 			"6. 同一主题的零散信息合并成一条完整陈述\n"+
-			"7. 宁愿少记也不要错记：如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条事实\n"+
-			"8. 不要重复提取已知背景信息中已经存在的事实\n"+
-			"9. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n"+
-			"10. 只输出JSON数组，不加任何解释，例如：[\"%s喜欢户外运动，经常周末和朋友去爬香山\", \"%s在北京做程序员，主要写后端\"]\n"+
-			"11. 如果没有有价值的事实，输出：[]\n"+
-			"%s"+
+			"7. 不要重复提取已知背景信息中已经存在的事实\n"+
+			"8. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n"+
+			"9. 参考前文上下文摘要来理解\"他/她/那个事\"等指代；如果仍无法确定所指对象，跳过该条事实\n"+
+			"\n%s"+
 			"\n聊天记录：\n%s\n输出：",
-			displayName, displayName, displayName, bgSection, sb.String())
+			accuracyRule, priorSection, bgSection,
+			displayName,
+			outputFormat,
+			sb.String())
 	}
 
 	reply, err := CompleteLLM([]LLMMessage{{Role: "user", Content: prompt}}, prefs)
 	if err != nil {
-		return nil, err
+		return memExtractResult{}, err
 	}
 
-	reply = strings.TrimSpace(reply)
-	// 有些模型会在 JSON 前后加文字，尝试提取 [...] 部分
-	if start := strings.Index(reply, "["); start >= 0 {
-		if end := strings.LastIndex(reply, "]"); end > start {
-			reply = reply[start : end+1]
-		}
+	result, err := parseExtractResult(reply)
+	if err != nil {
+		return memExtractResult{}, err
 	}
 
-	var facts []string
-	if err := json.Unmarshal([]byte(reply), &facts); err != nil {
-		return nil, fmt.Errorf("解析JSON失败：%w (原文：%s)", err, truncate(reply, 120))
-	}
-
-	out := facts[:0]
-	for _, f := range facts {
+	// 清理事实文本
+	cleanedFacts := make([]string, 0, len(result.Facts))
+	for _, f := range result.Facts {
 		if f = strings.TrimSpace(f); f != "" {
-			out = append(out, f)
+			cleanedFacts = append(cleanedFacts, f)
 		}
 	}
-	return out, nil
+	result.Facts = cleanedFacts
+
+	// 限制摘要体积
+	result.ContextSummary = capContextSummary(result.ContextSummary)
+
+	return result, nil
 }
 
 // ─── 检索 ─────────────────────────────────────────────────────────────────────
