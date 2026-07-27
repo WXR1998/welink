@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Trash2, ChevronDown, AlertCircle, Info, AlertTriangle, Search } from 'lucide-react';
+import { Trash2, ChevronDown, AlertCircle, Info, AlertTriangle, Search, Cloud, Server } from 'lucide-react';
 import {
   type ApiLogEntry,
   type LogLevel,
@@ -12,6 +12,38 @@ import {
   clearEntries,
   subscribe,
 } from '../../utils/apiLogger';
+
+// 后端 LLM API 调用日志条目
+interface LLMApiLogEntry {
+  id: number;
+  timestamp: string;
+  method: string;
+  url: string;
+  provider: string;
+  model: string;
+  request_body: string;
+  status: number;
+  response_body: string;
+  duration_ms: number;
+  error: string;
+}
+
+// 合并后的统一日志条目
+interface UnifiedLogEntry {
+  id: string;
+  source: 'frontend' | 'backend';
+  timestamp: string;
+  level: LogLevel;
+  method: string;
+  url: string;
+  status: number | null;
+  statusText: string;
+  durationMs: number;
+  requestSnippet: string;
+  responseSnippet: string;
+  error: string;
+  nonJsonResponse: boolean;
+}
 
 const LEVEL_CONFIG: Record<LogLevel, { icon: React.ReactNode; color: string; bg: string }> = {
   error: { icon: <AlertCircle size={14} />, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-500/10' },
@@ -34,22 +66,73 @@ function formatUrl(url: string): string {
 }
 
 export const ApiLogsPage: React.FC = () => {
-  const [entries, setEntries] = useState<ApiLogEntry[]>([]);
+  const [frontendEntries, setFrontendEntries] = useState<ApiLogEntry[]>([]);
+  const [backendEntries, setBackendEntries] = useState<LLMApiLogEntry[]>([]);
   const [filter, setFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
   const [search, setSearch] = useState('');
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // 拉取后端 LLM API 日志
+  const fetchBackendLogs = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/ai/llm-logs');
+      if (resp.ok) {
+        const data = await resp.json();
+        setBackendEntries(data.logs || []);
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
-    setEntries(getEntries());
-    const unsub = subscribe(() => setEntries([...getEntries()]));
-    return unsub;
-  }, []);
+    setFrontendEntries(getEntries());
+    const unsub = subscribe(() => setFrontendEntries([...getEntries()]));
+    // 定时拉取后端日志（每 3 秒）
+    fetchBackendLogs();
+    const interval = setInterval(fetchBackendLogs, 3000);
+    return () => { unsub(); clearInterval(interval); };
+  }, [fetchBackendLogs]);
 
-  const handleClear = useCallback(() => {
+  const handleClear = useCallback(async () => {
     clearEntries();
+    setBackendEntries([]);
+    try { await fetch('/api/ai/llm-logs', { method: 'DELETE' }); } catch { /* ignore */ }
   }, []);
 
-  const filtered = entries.filter(e => {
+  // 合并前后端日志，按时间排序（最新在前）
+  const allEntries: UnifiedLogEntry[] = [
+    ...frontendEntries.map(e => ({
+      id: `fe-${e.id}`,
+      source: 'frontend' as const,
+      timestamp: e.timestamp,
+      level: e.level,
+      method: e.method,
+      url: e.url,
+      status: e.status,
+      statusText: e.statusText,
+      durationMs: e.durationMs,
+      requestSnippet: e.requestSnippet,
+      responseSnippet: e.responseSnippet,
+      error: e.error,
+      nonJsonResponse: e.nonJsonResponse,
+    })),
+    ...backendEntries.map(e => ({
+      id: `be-${e.id}`,
+      source: 'backend' as const,
+      timestamp: e.timestamp,
+      level: (e.error !== '' || e.status >= 400) ? 'error' as LogLevel : 'info' as LogLevel,
+      method: e.method,
+      url: e.url,
+      status: e.status,
+      statusText: '',
+      durationMs: e.duration_ms,
+      requestSnippet: e.request_body,
+      responseSnippet: e.response_body,
+      error: e.error,
+      nonJsonResponse: false,
+    })),
+  ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  const filtered = allEntries.filter(e => {
     if (filter !== 'all' && e.level !== filter) return false;
     if (search) {
       const s = search.toLowerCase();
@@ -61,9 +144,9 @@ export const ApiLogsPage: React.FC = () => {
     return true;
   });
 
-  const errorCount = entries.filter(e => e.level === 'error').length;
-  const warnCount = entries.filter(e => e.level === 'warn').length;
-  const infoCount = entries.filter(e => e.level === 'info').length;
+  const errorCount = allEntries.filter(e => e.level === 'error').length;
+  const warnCount = allEntries.filter(e => e.level === 'warn').length;
+  const infoCount = allEntries.filter(e => e.level === 'info').length;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -72,7 +155,7 @@ export const ApiLogsPage: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">API 日志</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            共 {entries.length} 条 · 错误 {errorCount} · 警告 {warnCount} · 信息 {infoCount}
+            共 {allEntries.length} 条（前端 {frontendEntries.length} · 后端 {backendEntries.length}）· 错误 {errorCount} · 信息 {infoCount}
           </p>
         </div>
         <button
@@ -123,6 +206,9 @@ export const ApiLogsPage: React.FC = () => {
         {filtered.map(entry => {
           const config = LEVEL_CONFIG[entry.level];
           const isExpanded = expandedId === entry.id;
+          const sourceIcon = entry.source === 'backend'
+            ? <Server size={12} className="text-purple-500 flex-shrink-0" />
+            : <Cloud size={12} className="text-blue-400 flex-shrink-0" />;
           return (
             <div
               key={entry.id}
@@ -135,6 +221,7 @@ export const ApiLogsPage: React.FC = () => {
                 className="w-full flex items-center gap-2 px-3 py-2 text-left"
               >
                 <span className={`flex-shrink-0 ${config.color}`}>{config.icon}</span>
+                {sourceIcon}
                 <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">
                   {formatTime(entry.timestamp)}
                 </span>

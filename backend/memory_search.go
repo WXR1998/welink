@@ -746,3 +746,18 @@ func filterSourcesByTime(sources []FactSource, timeFrom, timeTo string) []FactSo
 	}
 	return out
 }
+
+// registerLLMLogRoutes 注册 /api/ai/llm-logs 端点，用于查看后端 LLM API 调用日志。
+func registerLLMLogRoutes(api *gin.RouterGroup) {
+	api.GET("/ai/llm-logs", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"logs": getLLMApiLogs()})
+	})
+
+	api.DELETE("/ai/llm-logs", func(c *gin.Context) {
+		llmApiLogMu.Lock()
+		llmApiLogs = nil
+		llmApiLogSeq = 0
+		llmApiLogMu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+}

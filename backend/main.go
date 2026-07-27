@@ -4436,6 +4436,9 @@ func serverMain() {
 	// 记忆优先两级检索端点（/api/ai/memory-search）
 	registerMemorySearchRoutes(api, getSvc)
 
+	// LLM API 调用日志端点（/api/ai/llm-logs）
+	registerLLMLogRoutes(api)
+
 	// Token 使用统计端点
 	registerTokenStatsRoutes(api)
 

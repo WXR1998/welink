@@ -626,16 +626,23 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
+	llmStart := time.Now()
 	resp, err := httpClientLLMStream.Do(req)
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
+
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
 
 	scanner := bufio.NewScanner(resp.Body)
 	// 用于检测 <think>...</think> 标签（MiniMax / DeepSeek-R1 等思考模型）
@@ -940,18 +947,25 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
+	llmStart := time.Now()
 	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
 		return httpClientLLMSync.Do(req)
 	})
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
+
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
 
 	var result struct {
 		Choices []struct {
@@ -1008,16 +1022,23 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 	req.Header.Set("x-api-key", cfg.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
+	llmStart := time.Now()
 	resp, err := httpClientLLMSync.Do(req)
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
+
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, DurationMs: durMs})
 
 	var result struct {
 		Content []struct {
