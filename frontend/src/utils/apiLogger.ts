@@ -25,10 +25,13 @@ export interface ApiLogEntry {
 
 const MAX_ENTRIES = 500;
 const SNIPPET_LENGTH = 2000;
+const STORAGE_KEY = 'welink:api-logs';
+const FLUSH_DELAY = 1000; // 1 秒批量写 localStorage
 
 let entries: ApiLogEntry[] = [];
 let nextId = 1;
 let listeners: Set<() => void> = new Set();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function notify() {
   listeners.forEach(fn => fn());
@@ -45,7 +48,36 @@ export function getEntries(): ApiLogEntry[] {
 
 export function clearEntries() {
   entries = [];
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch { /* ignore */ }
   notify();
+}
+
+function persist() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        entries: entries.slice(0, MAX_ENTRIES),
+        nextId,
+      }));
+    } catch {
+      // localStorage 满了或不可用，静默忽略
+    }
+  }, FLUSH_DELAY);
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw) as { entries: ApiLogEntry[]; nextId: number };
+    entries = data.entries || [];
+    nextId = data.nextId || 1;
+  } catch {
+    // 数据损坏，忽略
+  }
 }
 
 function truncate(s: string, max: number): string {
@@ -59,6 +91,7 @@ function addEntry(entry: Omit<ApiLogEntry, 'id'>) {
   if (entries.length > MAX_ENTRIES) {
     entries = entries.slice(0, MAX_ENTRIES);
   }
+  persist();
   notify();
 }
 
@@ -71,6 +104,7 @@ function addEntry(entry: Omit<ApiLogEntry, 'id'>) {
  *   - 当 fetch 本身抛错（网络断开等），记录 error 级别日志
  */
 export function initApiLogger() {
+  loadFromStorage();
   const originalFetch = window.fetch;
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input
