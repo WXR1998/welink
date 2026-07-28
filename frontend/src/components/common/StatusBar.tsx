@@ -308,11 +308,19 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
 // without prop drilling from MemoryLibraryPage.
 let _memTotal = 0;
 let _memPinned = 0;
+let _memFlash = false;
+let _memFlashTimer: ReturnType<typeof setTimeout> | null = null;
 const _memListeners = new Set<() => void>();
 
 export function setMemoryCount(total: number, pinned: number) {
+  const grew = total > _memTotal;
   _memTotal = total;
   _memPinned = pinned;
+  if (grew) {
+    _memFlash = true;
+    if (_memFlashTimer) clearTimeout(_memFlashTimer);
+    _memFlashTimer = setTimeout(() => { _memFlash = false; _memListeners.forEach(fn => fn()); }, 600);
+  }
   _memListeners.forEach(fn => fn());
 }
 
@@ -325,7 +333,7 @@ const MemoryCountDisplay: React.FC = () => {
   }, []);
   return (
     <>
-      <span className="tabular-nums">{_memTotal}</span>
+      <span className={`tabular-nums transition-colors ${_memFlash ? 'text-[#07c160]' : ''}`}>{_memTotal}</span>
       <span className="text-gray-400">条记忆</span>
       {_memPinned > 0 && (
         <>
