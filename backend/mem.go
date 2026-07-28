@@ -543,7 +543,11 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 	if backgroundCtx != "" {
 		now := time.Now()
 		monthStr := fmt.Sprintf("%d年%d月", now.Year(), int(now.Month()))
-		bgSection = "\n已知背景信息（反映 " + monthStr + " 的当前状态，仅用于理解人物关系，不代表历史状态）：\n" + backgroundCtx + "\n"
+		bgSection = "\n已知背景信息（反映 " + monthStr + " 的当前状态，仅用于理解聊天中的人物关系，不代表历史状态）：\n" +
+			"以下规则必须严格遵守：\n" +
+			"  - 背景信息仅反映当前时间点的人物关系和状态，如果本段聊天记录发生在更早的时间，背景信息中的关系可能并不成立，绝对不能出现时间上错位的问题\n" +
+			"  - 如果本段聊天记录中没有有用的信息，不要把背景信息的内容写进输出的 facts\n" +
+			backgroundCtx + "\n"
 	}
 
 	priorSection := "\n前文上下文（来自上一段分析的摘要，用于消解\"他/她/那个\"等指代）：\n" + formatPriorSummary(priorSummary) + "\n"
