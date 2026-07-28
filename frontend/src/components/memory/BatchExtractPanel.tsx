@@ -32,7 +32,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
   const [enqueuing, setEnqueuing] = useState(false);
   const [tasks, setTasks] = useState<BatchTask[]>([]);
   const [contactQuery, setContactQuery] = useState('');
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 640);
 
   const nameMap = React.useMemo(() => {
     const m = new Map<string, { name: string; avatar?: string }>();

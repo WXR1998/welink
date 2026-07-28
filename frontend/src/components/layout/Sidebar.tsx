@@ -179,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, 
       {/* 手机底部导航栏 —— 4 个主要 tab + 更多按钮 */}
       <nav
         data-tour="sidebar"
-        className="sm:hidden fixed bottom-0 left-0 right-0 z-50 dk-card bg-white dk-border border-t flex safe-area-bottom"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 dark:bg-[#1d1d1f] dark:border-white/10 flex w-full safe-area-bottom"
       >
         {MOBILE_PRIMARY.map(({ tab, icon, label }) => (
           <button

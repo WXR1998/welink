@@ -585,6 +585,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (saved === 'large' || saved === 'medium' || saved === 'small') return saved;
     return 'large';
   });
+  const [filterCollapsed, setFilterCollapsed] = useState(() => window.innerWidth < 1024);
   const [newMemoryHint, setNewMemoryHint] = useState(false);
   const [lastSeenTotal, setLastSeenTotal] = useState(0);
 
@@ -1137,6 +1138,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         {/* 左栏：联系人筛选 */}
         <aside className="lg:w-64 shrink-0 bg-white dark:bg-[#1d1d1f] rounded-2xl border border-gray-100 dark:border-white/10 p-3 h-fit">
           <button
+            onClick={() => setFilterCollapsed(c => !c)}
+            className="w-full flex items-center justify-between mb-1"
+          >
+            <span className="text-sm font-bold dk-text">联系人筛选</span>
+            <span className="text-xs text-gray-400">{totalAll} 条</span>
+          </button>
+          {!filterCollapsed && (
+            <>
+          <button
             onClick={() => setActiveContact('')}
             className={`w-full text-left px-3 py-2 rounded-xl text-sm font-medium flex items-center justify-between transition-colors ${
               activeContact === '' ? 'bg-[#07c160]/10 text-[#07c160]' : 'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300'
@@ -1174,6 +1184,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               );
             })}
           </div>
+            </>
+          )}
         </aside>
 
         {/* 右栏：搜索 + 事实列表 */}
@@ -1307,7 +1319,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                         {simplifyFactDateOnly(f.fact)}
                       </span>
                     )}
-                    <span className="text-[10px] text-gray-400 shrink-0">
+                    <span className="hidden sm:block text-[10px] text-gray-400 shrink-0">
                       <RelativeTime ts={f.updated_at || f.created_at} />
                     </span>
                     {!isEditing && (
