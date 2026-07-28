@@ -508,18 +508,12 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(async () => {
       setHoverFactId(fact.id);
-      // Build combined title from all facts sharing the same time range prefix
+      // 初始标题：用当前 fact 的时间范围 + 内容
       const prefix = extractTimeRangePrefix(fact.fact);
-      if (prefix) {
-        const sameRangeFacts = facts.filter(f => extractTimeRangePrefix(f.fact) === prefix);
-        const factContents = sameRangeFacts.map(f => f.fact.substring(prefix.length).trim());
-        // Format: time range on first line, then each fact as a bullet item
-        const timeRange = prefix.trim();
-        const bullets = factContents.map(c => '- ' + c).join('\n');
-        setHoverFactText(timeRange + '\n' + bullets);
-      } else {
-        setHoverFactText(fact.fact);
-      }
+      const timeRange = prefix ? prefix.trim() : '';
+      const ownContent = prefix ? fact.fact.substring(prefix.length).trim() : fact.fact;
+      setHoverFactText(timeRange + '\n- ' + ownContent);
+
       setHoverLoading(true);
       setHoverMsgs([]);
 
@@ -556,10 +550,20 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       setHoverPos({ top, left });
       setHoverVisible(true);
       try {
-        const r = await axios.get<{ messages: { datetime: string; sender: string; content: string }[] }>(
+        const r = await axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
           `/api/memory/${fact.id}/source`,
         );
         setHoverMsgs(r.data.messages || []);
+        // 用后端返回的同段事实构建完整标题（不受搜索结果 limit 限制）
+        if (r.data.related_facts && r.data.related_facts.length > 0) {
+          const rfPrefix = extractTimeRangePrefix(r.data.related_facts[0]);
+          const rfTimeRange = rfPrefix ? rfPrefix.trim() : '';
+          const contents = r.data.related_facts.map(f => {
+            const p = extractTimeRangePrefix(f);
+            return p ? f.substring(p.length).trim() : f;
+          });
+          setHoverFactText(rfTimeRange + '\n' + contents.map(c => '- ' + c).join('\n'));
+        }
       } catch { /* ignore */ }
       finally { setHoverLoading(false); }
     }, 300);

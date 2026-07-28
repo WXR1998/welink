@@ -331,6 +331,24 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
 			return
 		}
+
+		// 查找同一段聊天记录（相同 source_from / source_to）的所有事实，
+		// 用于截图标题展示完整记忆集（不受搜索结果 limit 限制）。
+		relatedRows, relErr := db.Query(
+			"SELECT fact FROM mem_facts WHERE contact_key = ? AND source_from = ? AND source_to = ? AND version = ? ORDER BY id",
+			contactKey, sourceFrom, sourceTo, memFactVersion)
+		var relatedFacts []string
+		if relErr == nil {
+			for relatedRows.Next() {
+				var f string
+				relatedRows.Scan(&f)
+				relatedFacts = append(relatedFacts, f)
+			}
+			relatedRows.Close()
+		}
+		if relatedFacts == nil {
+			relatedFacts = []string{}
+		}
 		// source_from / source_to 是 vec_messages 按 seq 排序后的索引
 		if sourceFrom < 0 || sourceTo < sourceFrom {
 			c.JSON(http.StatusOK, gin.H{"messages": []interface{}{}})
@@ -359,7 +377,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		if msgs == nil {
 			msgs = []SrcMsg{}
 		}
-		c.JSON(http.StatusOK, gin.H{"messages": msgs, "range": gin.H{"from": sourceFrom, "to": sourceTo}})
+		c.JSON(http.StatusOK, gin.H{"messages": msgs, "range": gin.H{"from": sourceFrom, "to": sourceTo}, "related_facts": relatedFacts})
 	})
 }
 
