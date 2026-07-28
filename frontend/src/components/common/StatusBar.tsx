@@ -193,7 +193,7 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-[6000] h-9 bg-white/95 dark:bg-[#1d1d1f]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/10 flex items-center px-4 gap-4 text-xs"
+      className="hidden sm:flex fixed bottom-0 left-0 right-0 z-[6000] h-9 bg-white/95 dark:bg-[#1d1d1f]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/10 items-center px-4 gap-4 text-xs"
     >
       {/* Left: running tasks */}
       <div className="flex items-center gap-2 min-w-0 flex-1">

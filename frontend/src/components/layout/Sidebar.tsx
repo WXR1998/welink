@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { Bot, BarChart2, Database, Sun, Moon, MessagesSquare, MessageCircle, BookOpen, Github, Search, Hourglass, Link2, X, Settings, ChevronLeft, ChevronRight, Sparkles, Download, Brain, FlaskConical, CalendarClock, ScrollText } from 'lucide-react';
+import { Bot, BarChart2, Database, Sun, Moon, MessagesSquare, MessageCircle, BookOpen, Github, Search, Hourglass, Link2, X, Settings, ChevronLeft, ChevronRight, Sparkles, Download, Brain, FlaskConical, CalendarClock, ScrollText, Grid } from 'lucide-react';
 import type { TabType } from '../../types';
 
 interface SidebarProps {
@@ -38,8 +38,18 @@ const openExternal = (url: string) => {
   }
 };
 
+// 手机底部导航：主 tab + “更多”按钮
+const MOBILE_PRIMARY: { tab: TabType; icon: React.ReactNode; label: string }[] = [
+  { tab: 'dashboard', icon: <Bot size={20} strokeWidth={2} />,             label: 'AI 首页' },
+  { tab: 'groups',    icon: <MessagesSquare size={20} strokeWidth={2} />, label: '群聊' },
+  { tab: 'search',    icon: <Search size={20} strokeWidth={2} />,         label: '搜索' },
+  { tab: 'memory',    icon: <Brain size={20} strokeWidth={2} />,           label: '记忆库' },
+  { tab: 'apilogs',   icon: <ScrollText size={20} strokeWidth={2} />,      label: '日志' },
+];
+
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, onToggleDark, badges }) => {
   const [swaggerOpen, setSwaggerOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [expanded, setExpanded] = useState(() => {
     return localStorage.getItem('welink_sidebar_expanded') !== 'false';
   });
@@ -166,14 +176,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, 
         </div>
       </aside>
 
-      {/* 手机底部导航栏（不受折叠影响） */}
-      <nav data-tour="sidebar" className="sm:hidden fixed bottom-0 left-0 right-0 z-50 dk-card bg-white dk-border border-t flex safe-area-inset-bottom">
-        {navItems.map(({ tab, icon, label }) => (
+      {/* 手机底部导航栏 —— 4 个主要 tab + 更多按钮 */}
+      <nav
+        data-tour="sidebar"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-50 dk-card bg-white dk-border border-t flex safe-area-bottom"
+      >
+        {MOBILE_PRIMARY.map(({ tab, icon, label }) => (
           <button
             key={tab}
             data-tour={`nav-${tab}`}
             onClick={() => onTabChange(tab)}
-            className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-0.5 transition-colors min-w-0 ${
+            className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors min-w-0 ${
               activeTab === tab ? 'text-[#07c160]' : 'text-gray-400'
             }`}
           >
@@ -184,7 +197,67 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, 
             <span className="text-[10px] font-semibold truncate w-full text-center px-0.5">{label}</span>
           </button>
         ))}
+
+        {/* 更多按钮 —— 点击弹出剩余 tab 面板 */}
+        <button
+          onClick={() => setMoreOpen(v => !v)}
+          className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors min-w-0 ${
+            moreOpen ? 'text-[#07c160]' : 'text-gray-400'
+          }`}
+        >
+          <Grid size={20} strokeWidth={2} />
+          <span className="text-[10px] font-semibold">更多</span>
+        </button>
       </nav>
+
+      {/* 更多面板 —— 半屏高度，网格展示剩余 tab */}
+      {moreOpen && (
+        <div className="sm:hidden fixed inset-0 z-[60] flex flex-col justify-end" onClick={() => setMoreOpen(false)}>
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+          <div
+            className="relative dk-card bg-white dk-border border-t rounded-t-2xl safe-area-bottom max-h-[60vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-center pt-2.5 pb-1">
+              <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+            </div>
+            <div className="px-3 pb-3">
+              <div className="flex items-center justify-between mb-3 px-1">
+                <span className="text-sm font-bold text-gray-700 dark:text-gray-200">全部功能</span>
+                <button
+                  onClick={() => setMoreOpen(false)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/10"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {navItems.map(({ tab, icon, label }) => {
+                  const isPrimary = MOBILE_PRIMARY.some(p => p.tab === tab);
+                  if (isPrimary) return null;
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => { onTabChange(tab); setMoreOpen(false); }}
+                      className={`flex flex-col items-center justify-center gap-1.5 py-3 px-1 rounded-xl transition-colors ${
+                        activeTab === tab
+                          ? 'bg-[#e7f8f0] text-[#07c160] dark:bg-[#07c160]/20'
+                          : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="flex-shrink-0 relative">
+                        {icon}
+                        <NavBadge count={badges?.[tab]} />
+                      </span>
+                      <span className="text-[10px] font-semibold text-center leading-tight">{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

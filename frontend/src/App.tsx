@@ -519,12 +519,12 @@ function AppInner() {
   return (
     <SelfInfoProvider value={appInfo?.self_info ?? null}>
     <PrivacyModeContext.Provider value={{ privacyMode, setPrivacyMode }}>
-    <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden">
+    <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden overflow-x-hidden">
       {/* Sidebar */}
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ tasks: taskUnread }} />
 
       {/* Main Content */}
-      <main className={`flex-1 overflow-y-auto dk-page ${activeTab === 'dashboard' ? 'pb-16 sm:pb-0' : 'p-4 sm:p-10 pb-20 sm:pb-10'}`}>
+      <main className={`flex-1 overflow-y-auto dk-page overscroll-contain ${activeTab === 'dashboard' ? 'pb-20 sm:pb-0' : 'p-4 sm:p-10 pb-24 sm:pb-10'}`}>
         <Suspense fallback={<ChunkLoading />}>
         {activeTab === 'dashboard' ? (
           <AIHomePage
