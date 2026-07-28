@@ -140,6 +140,7 @@ async function renderChatToBlob(
   msgs: { datetime: string; sender: string; content: string }[],
   avatarLookup: (sender: string) => string | undefined,
   title: string,
+  header?: { name: string; avatarUrl?: string },
 ): Promise<Blob> {
   await ensureFontLoaded();
   const font = '"PingFang", "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -160,6 +161,8 @@ async function renderChatToBlob(
   const titleFont = `bold 14px ${font}`;
   const contentFont = `13px ${font}`;
   const tsFont = `11px ${font}`;
+  const HEADER_H = header ? 52 : 0;
+  const HEADER_AVATAR = 36;
 
   // ── 1. Pre-calc title height ───────────────────────────────────────────
   // Title format: first line = time range (centered), then bullet items (left-aligned)
@@ -196,7 +199,7 @@ async function renderChatToBlob(
     msgH: number;
   };
   const layouts: LayoutMsg[] = [];
-  let totalH = padX + titleH;
+  let totalH = HEADER_H + padX + titleH;
 
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
@@ -231,11 +234,52 @@ async function renderChatToBlob(
   ctx.fillStyle = '#ededed';
   ctx.fillRect(0, 0, canvasW, totalH);
 
+  // ── 3.5. Draw header (group avatar + name) ─────────────────────────────
+  let headerAvatarEl: HTMLImageElement | null = null;
+  if (header?.avatarUrl) {
+    try { headerAvatarEl = await loadImage(header.avatarUrl); } catch { /* ignore */ }
+  }
+  if (header) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasW, HEADER_H);
+
+    // Avatar (circular)
+    const avX = padX;
+    const avY = (HEADER_H - HEADER_AVATAR) / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(avX + HEADER_AVATAR / 2, avY + HEADER_AVATAR / 2, HEADER_AVATAR / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    if (headerAvatarEl) { ctx.clip(); ctx.drawImage(headerAvatarEl, avX, avY, HEADER_AVATAR, HEADER_AVATAR); }
+    else {
+      ctx.fillStyle = colorForName(header.name); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold 14px ${font}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(header.name.charAt(0), avX + HEADER_AVATAR / 2, avY + HEADER_AVATAR / 2);
+    }
+    ctx.restore();
+
+    // Name
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = `bold 15px ${font}`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(header.name, padX + HEADER_AVATAR + 10, HEADER_H / 2);
+
+    // Separator
+    ctx.strokeStyle = '#e5e5e5';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, HEADER_H);
+    ctx.lineTo(canvasW, HEADER_H);
+    ctx.stroke();
+  }
+
   // ── 4. Draw title ──────────────────────────────────────────────────────
   ctx.fillStyle = '#f7f7f7';
-  ctx.fillRect(0, 0, canvasW, titleH);
+  ctx.fillRect(0, HEADER_H, canvasW, titleH);
   ctx.textBaseline = 'top';
-  let titleY = titlePadTop;
+  let titleY = HEADER_H + titlePadTop;
   // First line: time range, centered, bold
   ctx.fillStyle = '#1a1a1a';
   ctx.font = titleFont;
@@ -255,8 +299,8 @@ async function renderChatToBlob(
   ctx.strokeStyle = '#dcdcdc';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, titleH);
-  ctx.lineTo(canvasW, titleH);
+  ctx.moveTo(0, HEADER_H + titleH);
+  ctx.lineTo(canvasW, HEADER_H + titleH);
   ctx.stroke();
 
   // ── 5. Pre-load avatars ────────────────────────────────────────────────
@@ -273,7 +317,7 @@ async function renderChatToBlob(
   }
 
   // ── 6. Draw messages ───────────────────────────────────────────────────
-  let y = padX + titleH;
+  let y = HEADER_H + padX + titleH;
   ctx.textBaseline = 'top';
 
   for (let i = 0; i < msgs.length; i++) {
@@ -427,6 +471,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverCopied, setHoverCopied] = useState(false);
   const [hoverShotLoading, setHoverShotLoading] = useState(false);
   const [hoverFactText, setHoverFactText] = useState('');
+  const [hoverContactInfo, setHoverContactInfo] = useState<{ name: string; avatar?: string } | null>(null);
   const [hoverVisible, setHoverVisible] = useState(false);
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -509,6 +554,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(async () => {
       setHoverFactId(fact.id);
+      const contactInfo = lookup(fact.contact_key);
+      setHoverContactInfo(contactInfo ? { name: contactInfo.name, avatar: contactInfo.avatar } : null);
       // 初始标题：用当前 fact 的时间范围 + 内容
       const prefix = extractTimeRangePrefix(fact.fact);
       const timeRange = prefix ? prefix.trim() : '';
@@ -595,7 +642,12 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (hoverMsgs.length === 0) return;
     setHoverShotLoading(true);
     try {
-      const blob = await renderChatToBlob(hoverMsgs, (sender) => senderAvatarMap.get(sender), hoverFactText);
+      const blob = await renderChatToBlob(
+        hoverMsgs,
+        (sender) => senderAvatarMap.get(sender),
+        hoverFactText,
+        hoverContactInfo || undefined,
+      );
 
       let copied = false;
 
