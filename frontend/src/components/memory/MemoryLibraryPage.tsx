@@ -136,11 +136,75 @@ async function ensureFontLoaded(): Promise<void> {
   return _fontLoadPromise;
 }
 
+// ── 人名高亮辅助 ──────────────────────────────────────────────────────────────
+
+interface TextSegment {
+  text: string;
+  isName: boolean;
+}
+
+/** 把名称集合组织成首字符索引，加速查找 */
+function buildNameIndex(names: Set<string>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const name of names) {
+    if (name.length < 2) continue;
+    const first = name[0];
+    if (!index.has(first)) index.set(first, []);
+    index.get(first)!.push(name);
+  }
+  for (const list of index.values()) {
+    list.sort((a, b) => b.length - a.length);
+  }
+  return index;
+}
+
+/** 将文本拆分为普通段 + 人名段，人名段用青色渲染 */
+function highlightNames(text: string, nameIndex: Map<string, string[]>): TextSegment[] {
+  if (nameIndex.size === 0) return [{ text, isName: false }];
+  const segments: TextSegment[] = [];
+  let pos = 0;
+  while (pos < text.length) {
+    const ch = text[pos];
+    const candidates = nameIndex.get(ch);
+    let matched: string | null = null;
+    if (candidates) {
+      for (const name of candidates) {
+        if (text.startsWith(name, pos)) {
+          matched = name;
+          break;
+        }
+      }
+    }
+    if (matched) {
+      segments.push({ text: matched, isName: true });
+      pos += matched.length;
+    } else {
+      let end = pos + 1;
+      while (end < text.length) {
+        const c2 = text[end];
+        const cands2 = nameIndex.get(c2);
+        if (cands2) {
+          let hit = false;
+          for (const name of cands2) {
+            if (text.startsWith(name, end)) { hit = true; break; }
+          }
+          if (hit) break;
+        }
+        end++;
+      }
+      segments.push({ text: text.slice(pos, end), isName: false });
+      pos = end;
+    }
+  }
+  return segments;
+}
+
 async function renderChatToBlob(
   msgs: { datetime: string; sender: string; content: string }[],
   avatarLookup: (sender: string) => string | undefined,
   title: string,
   header?: { name: string; avatarUrl?: string },
+  nameSet?: Set<string>,
 ): Promise<Blob> {
   await ensureFontLoaded();
   const font = '"PingFang", "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -163,6 +227,7 @@ async function renderChatToBlob(
   const tsFont = `11px ${font}`;
   const HEADER_H = header ? 52 : 0;
   const HEADER_AVATAR = 36;
+  const nameIndex = nameSet ? buildNameIndex(nameSet) : new Map<string, string[]>();
 
   // ── 1. Pre-calc title height ───────────────────────────────────────────
   // Title format: first line = time range (centered), then bullet items (left-aligned)
@@ -286,12 +351,17 @@ async function renderChatToBlob(
   ctx.textAlign = 'center';
   ctx.fillText(titleFirstLine, canvasW / 2, titleY);
   titleY += titleLineH;
-  // Rest: bullet items, left-aligned
-  ctx.fillStyle = '#333';
+  // Rest: bullet items, left-aligned (with name highlighting)
   ctx.font = contentFont;
   ctx.textAlign = 'left';
   for (const line of titleRestLines) {
-    ctx.fillText(line, padX, titleY);
+    const segs = highlightNames(line, nameIndex);
+    let segX = padX;
+    for (const seg of segs) {
+      ctx.fillStyle = seg.isName ? '#0891b2' : '#333';
+      ctx.fillText(seg.text, segX, titleY);
+      segX += tmpCtx.measureText(seg.text).width;
+    }
     titleY += titleLineH;
   }
 
@@ -500,6 +570,17 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   }, [contacts, groups]);
   const lookup = (key: string) => contactMap.get(stripKey(key));
 
+  // 所有人名集合（用于截图时高亮人名）
+  const allNames = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of contacts) {
+      if (c.remark) s.add(c.remark);
+      if (c.nickname) s.add(c.nickname);
+    }
+    s.add('我');
+    return s;
+  }, [contacts]);
+
   // sender name → avatar URL 映射（群聊里 sender 是显示名）
   const senderAvatarMap = useMemo(() => {
     const m = new Map<string, string | undefined>();
@@ -647,6 +728,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         (sender) => senderAvatarMap.get(sender),
         hoverFactText,
         hoverContactInfo || undefined,
+        allNames,
       );
 
       let copied = false;
