@@ -849,6 +849,31 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     setSelectedIds(new Set());
   };
 
+  const selectToHere = (targetIdx: number) => {
+    if (selectedIds.size === 0) {
+      // Nothing selected yet: just select this one
+      toggleSelect(facts[targetIdx].id);
+      return;
+    }
+    // Find the closest selected index to the target
+    let anchorIdx = -1;
+    let anchorDist = Infinity;
+    for (let i = 0; i < facts.length; i++) {
+      if (selectedIds.has(facts[i].id)) {
+        const d = Math.abs(i - targetIdx);
+        if (d < anchorDist) { anchorDist = d; anchorIdx = i; }
+      }
+    }
+    if (anchorIdx < 0) return;
+    const lo = Math.min(anchorIdx, targetIdx);
+    const hi = Math.max(anchorIdx, targetIdx);
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (let i = lo; i <= hi; i++) next.add(facts[i].id);
+      return next;
+    });
+  };
+
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
     if (!confirm(`确定删除选中的 ${selectedIds.size} 条记忆？`)) return;
@@ -1155,6 +1180,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                           </p>
                         )}
                       </div>
+                      {selectMode ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); selectToHere(facts.findIndex(ff => ff.id === f.id)); }}
+                          disabled={selectedIds.size === 0}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-30 shrink-0"
+                        >
+                          选择到此处
+                        </button>
+                      ) : null}
                       {!isEditing && (
                         <div className="flex gap-1 shrink-0">
                           <button
