@@ -892,7 +892,9 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (selectedIds.size === 0) return;
     if (!confirm(`确定删除选中的 ${selectedIds.size} 条记忆？`)) return;
     const ids = Array.from(selectedIds);
-    await Promise.all(ids.map(id => axios.delete(`/api/memory/${id}`)));
+    for (const id of ids) {
+      try { await axios.delete(`/api/memory/${id}`); } catch { /* continue */ }
+    }
     const idSet = new Set(ids);
     setFacts(list => list.filter(f => !idSet.has(f.id)));
     setTotal(t => Math.max(0, t - ids.length));
