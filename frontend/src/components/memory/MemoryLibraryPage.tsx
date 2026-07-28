@@ -82,6 +82,18 @@ function formatTimestamp(dt: string): string {
   return dt.length >= 16 ? dt.slice(0, 16) : dt;
 }
 
+// Extract the time range prefix from a fact text.
+// Fact format: "[2020-01-01 12:34 ~ 2020-01-01 12:40] fact content"
+// Returns "[2020-01-01 12:34 ~ 2020-01-01 12:40] " (including trailing space),
+// or empty string if the fact has no time range prefix.
+function extractTimeRangePrefix(fact: string): string {
+  const bracketEnd = fact.indexOf('] ');
+  if (bracketEnd > 0) {
+    return fact.substring(0, bracketEnd + 2);
+  }
+  return '';
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -149,28 +161,28 @@ async function renderChatToBlob(
   const tsFont = `11px ${font}`;
 
   // ── 1. Pre-calc title height ───────────────────────────────────────────
-  // Title format: first line = time range, second line+ = fact content
-  // All lines are centered (left-right)
+  // Title format: first line = time range (centered), then bullet items (left-aligned)
   const tmpCanvas = document.createElement('canvas');
   const tmpCtx = tmpCanvas.getContext('2d')!;
   tmpCtx.font = titleFont;
   const maxTitleW = canvasW - padX * 2;
 
-  // Split title into time range (first line) and content (rest)
-  let titleFirstLine = title;
-  let titleRestLines: string[] = [];
-  const bracketEnd = title.indexOf('] ');
-  if (bracketEnd > 0) {
-    titleFirstLine = title.substring(0, bracketEnd + 1); // include ']'
-    const rest = title.substring(bracketEnd + 2).trim();
-    if (rest) titleRestLines = wrapText(tmpCtx, rest, maxTitleW);
+  // Split title into time range (first line) and bullet items (rest)
+  const titleLines = title.split('\n');
+  const titleFirstLine = titleLines[0] || '';
+  const titleRestRaw = titleLines.slice(1);
+  // Wrap each bullet item individually
+  const titleRestLines: string[] = [];
+  tmpCtx.font = contentFont;
+  for (const rawLine of titleRestRaw) {
+    const wrapped = wrapText(tmpCtx, rawLine, maxTitleW - padX);
+    titleRestLines.push(...wrapped);
   }
 
-  const allTitleLines = [titleFirstLine, ...titleRestLines];
   const titleLineH = 20;
   const titlePadTop = 12;
   const titlePadBot = 12;
-  const titleH = titlePadTop + allTitleLines.length * titleLineH + titlePadBot;
+  const titleH = titlePadTop + (1 + titleRestLines.length) * titleLineH + titlePadBot;
 
   // ── 2. Pre-calc message layouts ────────────────────────────────────────
   tmpCtx.font = contentFont;
@@ -206,7 +218,7 @@ async function renderChatToBlob(
 
   // ── 3. Create canvas ───────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.max(2, window.devicePixelRatio || 1);
   canvas.width = canvasW * dpr;
   canvas.height = totalH * dpr;
   canvas.style.width = canvasW + 'px';
@@ -218,16 +230,23 @@ async function renderChatToBlob(
   ctx.fillStyle = '#ededed';
   ctx.fillRect(0, 0, canvasW, totalH);
 
-  // ── 4. Draw title (centered, multi-line) ───────────────────────────────
+  // ── 4. Draw title ──────────────────────────────────────────────────────
   ctx.fillStyle = '#f7f7f7';
   ctx.fillRect(0, 0, canvasW, titleH);
+  ctx.textBaseline = 'top';
+  let titleY = titlePadTop;
+  // First line: time range, centered, bold
   ctx.fillStyle = '#1a1a1a';
   ctx.font = titleFont;
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  let titleY = titlePadTop;
-  for (const line of allTitleLines) {
-    ctx.fillText(line, canvasW / 2, titleY);
+  ctx.fillText(titleFirstLine, canvasW / 2, titleY);
+  titleY += titleLineH;
+  // Rest: bullet items, left-aligned
+  ctx.fillStyle = '#333';
+  ctx.font = contentFont;
+  ctx.textAlign = 'left';
+  for (const line of titleRestLines) {
+    ctx.fillText(line, padX, titleY);
     titleY += titleLineH;
   }
 
@@ -489,7 +508,18 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(async () => {
       setHoverFactId(fact.id);
-      setHoverFactText(fact.fact);
+      // Build combined title from all facts sharing the same time range prefix
+      const prefix = extractTimeRangePrefix(fact.fact);
+      if (prefix) {
+        const sameRangeFacts = facts.filter(f => extractTimeRangePrefix(f.fact) === prefix);
+        const factContents = sameRangeFacts.map(f => f.fact.substring(prefix.length).trim());
+        // Format: time range on first line, then each fact as a bullet item
+        const timeRange = prefix.trim();
+        const bullets = factContents.map(c => '- ' + c).join('\n');
+        setHoverFactText(timeRange + '\n' + bullets);
+      } else {
+        setHoverFactText(fact.fact);
+      }
       setHoverLoading(true);
       setHoverMsgs([]);
 
