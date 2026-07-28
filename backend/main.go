@@ -319,6 +319,8 @@ func serverMain() {
 
 	// 启动定时任务调度器（每分钟扫到期任务，串行跑；app 重开时补跑错过的）
 	StartTaskScheduler(getSvc)
+	batchSvc = getSvc
+	go ResumeBatchTasks()
 
 	// 4. 初始化 Gin 路由
 	r := gin.Default()
@@ -3091,6 +3093,70 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"aborted": aborted})
 	})
 
+	// ── 批量记忆提炼 ──────────────────────────────────────────────────────
+
+	// POST /api/ai/mem/batch  body: {tasks: [{contact_key, username, is_group}]}
+	api.POST("/ai/mem/batch", func(c *gin.Context) {
+		var body struct {
+			Tasks []BatchTask `json:"tasks"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || len(body.Tasks) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误或任务列表为空"})
+			return
+		}
+		if err := EnqueueBatchTasks(body.Tasks); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"enqueued": len(body.Tasks)})
+	})
+
+	// GET /api/ai/mem/batch — 列出所有批量任务
+	api.GET("/ai/mem/batch", func(c *gin.Context) {
+		tasks, err := ListBatchTasks()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
+	})
+
+	// DELETE /api/ai/mem/batch/:id — 删除单个批量任务
+	api.DELETE("/ai/mem/batch/:id", func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "id 非法"})
+			return
+		}
+		if err := DeleteBatchTask(id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// DELETE /api/ai/mem/batch — 清除所有已完成/出错的批量任务
+	api.DELETE("/ai/mem/batch", func(c *gin.Context) {
+		if err := ClearBatchTasks(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// POST /api/ai/mem/batch/clear-all — 清空所有批量任务（包括 pending）
+	api.POST("/ai/mem/batch/clear-all", func(c *gin.Context) {
+		aiDBMu.Lock()
+		db := aiDB
+		aiDBMu.Unlock()
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
+			return
+		}
+		db.Exec("DELETE FROM batch_tasks")
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	// POST /api/ai/rag  body: {key, messages, search_query?}
 	api.POST("/ai/rag", func(c *gin.Context) {
 		var body struct {
@@ -3647,6 +3713,19 @@ func serverMain() {
 				return
 			}
 			c.JSON(http.StatusOK, getSvc().GetCommonGroups(uname))
+		})
+
+		// POST /api/contacts/common-groups-for-many
+		// body: {usernames: ["wxid1", "wxid2"]} → 返回这些联系人共同所在的群
+		prot.POST("/contacts/common-groups-for-many", func(c *gin.Context) {
+			var body struct {
+				Usernames []string `json:"usernames"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil || len(body.Usernames) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误或 usernames 为空"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"groups": getSvc().GetCommonGroupsForContacts(body.Usernames)})
 		})
 
 		// 获取联系人深度分析（小时/周/日历/深夜/红包/主动率）

@@ -4,6 +4,7 @@ import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
 import { JobProgressPanel } from './JobProgressPanel';
+import { BatchExtractPanel } from './BatchExtractPanel';
 import { RelativeTime } from '../common/RelativeTime';
 
 interface MemFact {
@@ -748,6 +749,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       </header>
 
       <JobProgressPanel contacts={contacts} groups={groups} />
+      <BatchExtractPanel contacts={contacts} groups={groups} />
 
       <div className="flex gap-4 flex-col lg:flex-row">
         {/* 左栏：联系人筛选 */}
