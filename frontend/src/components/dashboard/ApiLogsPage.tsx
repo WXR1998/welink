@@ -76,7 +76,8 @@ function formatContent(content: string): string {
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       const parsed = JSON.parse(trimmed);
-      return JSON.stringify(parsed, null, 2);
+      // Pretty-print, then convert escaped \n in string values to real newlines
+      return JSON.stringify(parsed, null, 2).replace(/\\n/g, '\n');
     } catch {
       // 不是合法 JSON，原样返回
     }
