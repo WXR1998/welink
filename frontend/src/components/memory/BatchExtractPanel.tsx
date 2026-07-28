@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Plus, X, Check, Play, Trash2, Layers, Square } from 'lucide-react';
+import { Loader2, Plus, X, Check, Play, Trash2, Layers, Square, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -32,6 +32,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
   const [enqueuing, setEnqueuing] = useState(false);
   const [tasks, setTasks] = useState<BatchTask[]>([]);
   const [contactQuery, setContactQuery] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
 
   const nameMap = React.useMemo(() => {
     const m = new Map<string, { name: string; avatar?: string }>();
@@ -152,7 +153,11 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
   return (
     <div className="mb-4 rounded-2xl bg-white dark:bg-[#1d1d1f] border border-gray-100 dark:border-white/10 p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2"
+        >
+          {collapsed ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronUp size={14} className="text-gray-400" />}
           <Layers size={14} className="text-[#07c160]" />
           <span className="text-sm font-bold dk-text">批量提炼</span>
           {tasks.length > 0 && (
@@ -160,7 +165,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
               {pendingCount} 待处理 · {doneCount} 完成 · {errorCount} 失败
             </span>
           )}
-        </div>
+        </button>
         <div className="flex items-center gap-2">
           {mode === 'idle' && (
             <button
@@ -193,6 +198,8 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
         </div>
       </div>
 
+      {!collapsed && (
+        <>
       {/* Task list */}
       {tasks.length > 0 && (
         <div className="space-y-1 mb-3">
@@ -351,6 +358,8 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

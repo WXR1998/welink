@@ -6,6 +6,7 @@ import { avatarSrc } from '../../utils/avatar';
 import { JobProgressPanel } from './JobProgressPanel';
 import { BatchExtractPanel } from './BatchExtractPanel';
 import { RelativeTime } from '../common/RelativeTime';
+import { setMemoryCount } from '../common/StatusBar';
 
 interface MemFact {
   id: number;
@@ -628,6 +629,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     return () => clearTimeout(t);
   }, [fetchFacts]);
 
+  // 定时刷新：每 15s 拉取最新记忆和统计，确保提炼中的记忆能实时更新
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void fetchFacts();
+      void fetchContactStats();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [fetchFacts, fetchContactStats]);
+
   // hover 预览：hover 某条记忆时，debounce 300ms 后显示来源聊天记录
   const showPreview = (fact: MemFact, rect: DOMRect) => {
     if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
@@ -797,6 +807,11 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
 
   const totalAll = contactStats.reduce((s, c) => s + c.count, 0);
   const pinnedAll = contactStats.reduce((s, c) => s + c.pinned_count, 0);
+
+  // Sync memory count to global StatusBar
+  useEffect(() => {
+    setMemoryCount(totalAll, pinnedAll);
+  }, [totalAll, pinnedAll]);
 
   // 搜索框同时按"人名"过滤左栏：输入命中联系人名字/备注时，左栏只剩匹配项
   // （fact 内容过滤依然走后端 ?q=；两者并存，搜 "生日 alice" 这种也能工作）

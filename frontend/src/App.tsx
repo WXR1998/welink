@@ -27,7 +27,7 @@ import { SetupRequiredPage } from './components/common/SetupRequiredPage';
 import { CommandPalette } from './components/common/CommandPalette';
 import { ReleaseNotesModal } from './components/common/ReleaseNotesModal';
 import { SpotlightTour, type TourStep } from './components/common/SpotlightTour';
-import { TokenStatsWidget } from './components/common/TokenStatsWidget';
+import { StatusBar } from './components/common/StatusBar';
 import { useDarkMode } from './hooks/useDarkMode';
 
 // ─── 懒加载的 tab 页与大 modal ───────────────────────────────────────────────
@@ -665,7 +665,7 @@ function AppInner() {
         )}
       </Suspense>
 
-      <TokenStatsWidget />
+      <StatusBar />
     </div>
     </PrivacyModeContext.Provider>
     </SelfInfoProvider>
