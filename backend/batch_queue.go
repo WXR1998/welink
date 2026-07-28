@@ -385,7 +385,12 @@ func processBatchTask(task *BatchTask, abortCh <-chan struct{}) error {
 	progressCb := func(done, total int) {
 		updateBatchTaskProgress(task.ID, done, total)
 	}
-	if err := runMemExtractionSyncWithProgress(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db, progressCb, nil, abortCh); err != nil {
+	chunkDoneCb := func(chunkIdx int) {
+		// 每批完成后写检查点，服务重启后可续传
+		db.Exec(`UPDATE vec_index_status SET extract_offset = ?, extract_version = ? WHERE contact_key = ?`,
+			chunkIdx, memFactVersion, task.ContactKey)
+	}
+	if err := runMemExtractionSyncWithProgress(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db, progressCb, chunkDoneCb, abortCh); err != nil {
 		return fmt.Errorf("记忆提炼失败: %w", err)
 	}
 
@@ -498,12 +503,35 @@ func runMemExtractionSyncWithProgress(key, username string, isGroup bool, svc *s
 		return fmt.Errorf("语义向量索引为空")
 	}
 
+	// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
+	startChunk := 0
+	var prevOffset int = -1
+	var prevVersion int
+	db.QueryRow("SELECT extract_offset, extract_version FROM vec_index_status WHERE contact_key = ?", key).Scan(&prevOffset, &prevVersion)
+	// 版本不匹配时忽略旧检查点
+	if prevVersion != memFactVersion {
+		prevOffset = -1
+	}
+	if prevOffset >= 0 {
+		// 上次中断于 prevOffset 批（已完成），从下一批续传
+		startChunk = prevOffset + 1
+	} else {
+		// 全新开始：清空旧事实
+		if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion); err != nil {
+			return fmt.Errorf("清理旧记忆失败: %w", err)
+		}
+	}
+
 	embConfigs := embeddingConfigs(prefs)
 	_, err = extractAndStoreFacts(key, msgs, prefs, db, embConfigs,
 		isGroup, username,
-		0,
+		startChunk,
 		onProgress, onChunkDone, abortCh,
 	)
+	if err == nil {
+		// 全部完成，清除检查点
+		db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
+	}
 	return err
 }
 
