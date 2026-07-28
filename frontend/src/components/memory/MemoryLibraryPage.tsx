@@ -816,14 +816,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
 
       setHoverPos({ top, left });
       setHoverVisible(true);
+      // 匹配索引后台静默预取，不阻塞 hover loading
+      setMatchedIndices([]);
+      axios.get<{ matched_indices: number[] }>(`/api/memory/${fact.id}/matched`)
+        .then(r => setMatchedIndices(r.data.matched_indices || []))
+        .catch(() => {});
       try {
-        // 并行拉取来源消息 + 匹配索引
-        const [srcRes, matchedRes] = await Promise.all([
-          axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
-            `/api/memory/${fact.id}/source`,
-          ),
-          axios.get<{ matched_indices: number[] }>(`/api/memory/${fact.id}/matched`).catch(() => null),
-        ]);
+        const srcRes = await axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
+          `/api/memory/${fact.id}/source`,
+        );
         setHoverMsgs(srcRes.data.messages || []);
         // 用后端返回的同段事实构建完整标题（不受搜索结果 limit 限制）
         if (srcRes.data.related_facts && srcRes.data.related_facts.length > 0) {
@@ -835,8 +836,6 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
           });
           setHoverFactText(rfTimeRange + '\n' + contents.map(c => '- ' + c).join('\n'));
         }
-        // 预取的匹配索引，截图时直接用
-        setMatchedIndices(matchedRes?.data?.matched_indices || []);
       } catch { /* ignore */ }
       finally { setHoverLoading(false); }
     }, 300);
