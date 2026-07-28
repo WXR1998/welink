@@ -1474,7 +1474,7 @@ const Pagination: React.FC<PaginationProps> = ({ page, totalPages, onPageChange 
         ‹
       </button>
       {pages.map((p, idx) =>
-        p === '...' ? (
+        typeof p === 'string' ? (
           <span key={`ellipsis-${idx}`} className="px-1 text-sm text-gray-400">…</span>
         ) : (
           <button
