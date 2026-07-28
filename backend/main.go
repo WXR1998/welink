@@ -3157,6 +3157,15 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// POST /api/ai/mem/batch/stop-all — 停止所有任务并清空队列
+	api.POST("/ai/mem/batch/stop-all", func(c *gin.Context) {
+		if err := StopAllBatchTasks(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	// POST /api/ai/rag  body: {key, messages, search_query?}
 	api.POST("/ai/rag", func(c *gin.Context) {
 		var body struct {

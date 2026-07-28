@@ -27,14 +27,15 @@ const (
 
 // BatchTask 持久化的批量任务
 type BatchTask struct {
-	ID         int64  `json:"id"`
-	ContactKey string `json:"contact_key"`
-	Username   string `json:"username"`
-	IsGroup    bool   `json:"is_group"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
-	UpdatedAt  int64  `json:"updated_at"`
+	ID          int64  `json:"id"`
+	ContactKey  string `json:"contact_key"`
+	Username    string `json:"username"`
+	IsGroup     bool   `json:"is_group"`
+	Status      string `json:"status"`
+	CurrentStep string `json:"current_step,omitempty"`
+	Error       string `json:"error,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 var (
@@ -46,20 +47,26 @@ var (
 // initBatchTaskTable 创建 batch_tasks 表（在 aiDBMu 持有期间调用）
 func initBatchTaskTable() error {
 	_, err := aiDB.Exec(`CREATE TABLE IF NOT EXISTS batch_tasks (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		contact_key TEXT    NOT NULL,
-		username    TEXT    NOT NULL,
-		is_group    INTEGER NOT NULL DEFAULT 0,
-		status      TEXT    NOT NULL DEFAULT 'pending',
-		error       TEXT    NOT NULL DEFAULT '',
-		created_at  INTEGER NOT NULL DEFAULT 0,
-		updated_at  INTEGER NOT NULL DEFAULT 0
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		contact_key  TEXT    NOT NULL,
+		username     TEXT    NOT NULL,
+		is_group     INTEGER NOT NULL DEFAULT 0,
+		status       TEXT    NOT NULL DEFAULT 'pending',
+		current_step TEXT    NOT NULL DEFAULT '',
+		error        TEXT    NOT NULL DEFAULT '',
+		created_at   INTEGER NOT NULL DEFAULT 0,
+		updated_at   INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return fmt.Errorf("batch_tasks: %w", err)
 	}
 	_, err = aiDB.Exec(`CREATE INDEX IF NOT EXISTS idx_batch_status ON batch_tasks(status)`)
-	return err
+	if err != nil {
+		return err
+	}
+	// 迁移：添加 current_step 列（重复执行安全）
+	_, _ = aiDB.Exec(`ALTER TABLE batch_tasks ADD COLUMN current_step TEXT NOT NULL DEFAULT ''`)
+	return nil
 }
 
 // ListBatchTasks 返回所有任务（按创建时间倒序）
@@ -71,7 +78,7 @@ func ListBatchTasks() ([]BatchTask, error) {
 		return nil, fmt.Errorf("AI DB 未就绪")
 	}
 	rows, err := db.Query(
-		`SELECT id, contact_key, username, is_group, status, error, created_at, updated_at
+		`SELECT id, contact_key, username, is_group, status, current_step, error, created_at, updated_at
 		 FROM batch_tasks ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -81,7 +88,7 @@ func ListBatchTasks() ([]BatchTask, error) {
 	for rows.Next() {
 		var t BatchTask
 		var isGroup int
-		rows.Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt)
+		rows.Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.CurrentStep, &t.Error, &t.CreatedAt, &t.UpdatedAt)
 		t.IsGroup = isGroup != 0
 		tasks = append(tasks, t)
 	}
@@ -202,10 +209,10 @@ func claimNextBatchTask() (*BatchTask, error) {
 	var t BatchTask
 	var isGroup int
 	err = tx.QueryRow(
-		`SELECT id, contact_key, username, is_group, status, error, created_at, updated_at
+		`SELECT id, contact_key, username, is_group, status, current_step, error, created_at, updated_at
 		 FROM batch_tasks WHERE status = ? ORDER BY created_at ASC LIMIT 1`,
 		BatchTaskPending,
-	).Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.CurrentStep, &t.Error, &t.CreatedAt, &t.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		tx.Rollback()
@@ -248,6 +255,48 @@ func updateBatchTaskStatus(id int64, status, errMsg string) {
 	}
 }
 
+// updateBatchTaskStep 更新任务当前步骤
+func updateBatchTaskStep(id int64, step string) {
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil {
+		return
+	}
+	now := time.Now().Unix()
+	_, err := db.Exec(
+		`UPDATE batch_tasks SET current_step = ?, updated_at = ? WHERE id = ?`,
+		step, now, id,
+	)
+	if err != nil {
+		log.Printf("[BATCH] 更新步骤失败: %v", err)
+	}
+}
+
+// StopAllBatchTasks 停止所有任务并清空队列
+func StopAllBatchTasks() error {
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil {
+		return fmt.Errorf("AI DB 未就绪")
+	}
+	// 停止 worker
+	batchQueueMu.Lock()
+	batchWorkerRunning = false
+	batchQueueMu.Unlock()
+	// 中止所有正在运行的 vec jobs
+	vecJobsMu.Lock()
+	for _, j := range vecJobs {
+		j.safeAbort()
+	}
+	vecJobs = make(map[string]*vecBuildJob)
+	vecJobsMu.Unlock()
+	// 清空所有批量任务
+	_, err := db.Exec("DELETE FROM batch_tasks")
+	return err
+}
+
 // ── Pipeline ─────────────────────────────────────────────────────────────────
 
 // processBatchTask 处理单个任务：FTS → 向量索引 → 记忆提炼
@@ -271,6 +320,7 @@ func processBatchTask(task *BatchTask) error {
 		return fmt.Errorf("检查 FTS 状态失败: %w", err)
 	}
 	if !ftsStatus.Built {
+		updateBatchTaskStep(task.ID, "fts")
 		log.Printf("[BATCH] 构建 FTS 索引: %s", task.ContactKey)
 		if err := buildFTSIndexSync(task.ContactKey, task.Username, task.IsGroup, svc); err != nil {
 			return fmt.Errorf("FTS 索引构建失败: %w", err)
@@ -283,6 +333,7 @@ func processBatchTask(task *BatchTask) error {
 		return fmt.Errorf("检查向量索引状态失败: %w", err)
 	}
 	if !vecStatus.Built {
+		updateBatchTaskStep(task.ID, "vec_index")
 		log.Printf("[BATCH] 构建向量索引: %s", task.ContactKey)
 		if err := buildVecIndexSync(task.ContactKey, task.Username, task.IsGroup, svc, prefs); err != nil {
 			return fmt.Errorf("向量索引构建失败: %w", err)
@@ -290,6 +341,7 @@ func processBatchTask(task *BatchTask) error {
 	}
 
 	// ── 3. 运行记忆提炼 ──
+	updateBatchTaskStep(task.ID, "mem_extraction")
 	log.Printf("[BATCH] 记忆提炼: %s", task.ContactKey)
 	if err := runMemExtractionSync(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db); err != nil {
 		return fmt.Errorf("记忆提炼失败: %w", err)

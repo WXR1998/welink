@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Plus, X, Check, Play, Trash2, Layers } from 'lucide-react';
+import { Loader2, Plus, X, Check, Play, Trash2, Layers, Square } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -10,6 +10,7 @@ interface BatchTask {
   username: string;
   is_group: boolean;
   status: string;
+  current_step?: string;
   error?: string;
   created_at: number;
   updated_at: number;
@@ -38,8 +39,14 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
         avatar: avatarSrc(c.small_head_url),
       });
     }
+    for (const g of groups) {
+      m.set(g.username, {
+        name: g.name || g.username,
+        avatar: avatarSrc(g.small_head_url),
+      });
+    }
     return m;
-  }, [contacts]);
+  }, [contacts, groups]);
 
   const filteredContacts = React.useMemo(() => {
     return contacts.filter(c => {
@@ -48,12 +55,24 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
     });
   }, [contacts, contactQuery]);
 
+  const [stopping, setStopping] = useState(false);
+
   const fetchTasks = useCallback(async () => {
     try {
       const r = await axios.get<{ tasks: BatchTask[] }>('/api/ai/mem/batch');
       setTasks(r.data.tasks || []);
     } catch { /* ignore */ }
   }, []);
+
+  const handleStopAll = async () => {
+    if (!confirm('确定停止所有任务并清空队列？')) return;
+    setStopping(true);
+    try {
+      await axios.post('/api/ai/mem/batch/stop-all');
+      await fetchTasks();
+    } catch { /* ignore */ }
+    finally { setStopping(false); }
+  };
 
   useEffect(() => {
     fetchTasks();
@@ -150,6 +169,16 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
               添加批量任务
             </button>
           )}
+          {tasks.some(t => t.status === 'pending' || t.status === 'running') && (
+            <button
+              onClick={handleStopAll}
+              disabled={stopping}
+              className="flex items-center gap-1 px-2 py-1.5 text-xs font-bold border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+            >
+              <Square size={11} />
+              全部停止
+            </button>
+          )}
           {tasks.some(t => t.status === 'done' || t.status === 'error') && (
             <button
               onClick={handleClearFinished}
@@ -167,22 +196,43 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
         <div className="space-y-1 mb-3">
           {tasks.map(t => {
             const name = nameMap.get(t.username)?.name || t.username;
-            const statusConfig: Record<string, { label: string; color: string }> = {
-              pending: { label: '排队中', color: 'text-gray-400' },
-              running: { label: '处理中', color: 'text-[#07c160]' },
-              done: { label: '完成', color: 'text-blue-500' },
-              error: { label: '失败', color: 'text-red-500' },
+            const stepLabels: Record<string, string> = {
+              fts: '构建索引',
+              vec_index: '向量编码',
+              mem_extraction: '记忆提炼',
+            };
+            const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+              pending: { label: '排队中', color: 'text-gray-400', bg: 'bg-gray-300' },
+              running: { label: '处理中', color: 'text-[#07c160]', bg: 'bg-[#07c160]' },
+              done: { label: '完成', color: 'text-blue-500', bg: 'bg-blue-500' },
+              error: { label: '失败', color: 'text-red-500', bg: 'bg-red-400' },
             };
             const sc = statusConfig[t.status] || statusConfig.pending;
+            const stepLabel = t.current_step ? stepLabels[t.current_step] || t.current_step : '';
+            const stepPct: Record<string, number> = { fts: 20, vec_index: 50, mem_extraction: 80 };
+            const pct = t.status === 'done' ? 100 : (t.current_step ? stepPct[t.current_step] || 0 : 0);
             return (
-              <div key={t.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 group">
-                <span className="text-xs text-gray-600 dark:text-gray-300 truncate flex-1">{name}</span>
-                {t.status === 'running' && <Loader2 size={10} className="animate-spin text-[#07c160]" />}
-                <span className={`text-[10px] font-bold ${sc.color}`}>{sc.label}</span>
-                {t.error && <span className="text-[10px] text-red-400 truncate max-w-32" title={t.error}>{t.error}</span>}
-                <button onClick={() => handleDeleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-opacity">
-                  <X size={11} />
-                </button>
+              <div key={t.id} className="px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 group">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600 dark:text-gray-300 truncate flex-1">{name}</span>
+                  {t.status === 'running' && <Loader2 size={10} className="animate-spin text-[#07c160]" />}
+                  <span className={`text-[10px] font-bold ${sc.color}`}>{sc.label}</span>
+                  {t.error && <span className="text-[10px] text-red-400 truncate max-w-32" title={t.error}>{t.error}</span>}
+                  <button onClick={() => handleDeleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-opacity">
+                    <X size={11} />
+                  </button>
+                </div>
+                {(t.status === 'running' || t.status === 'pending') && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="flex-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${sc.bg}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    {stepLabel && <span className="text-[9px] text-gray-400 whitespace-nowrap">{stepLabel}</span>}
+                  </div>
+                )}
               </div>
             );
           })}
