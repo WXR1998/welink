@@ -978,22 +978,24 @@ func serverMain() {
 			return
 		}
 		var incoming struct {
-			LLMProfiles        []LLMProfile `json:"llm_profiles"`
-			LLMProvider        string       `json:"llm_provider"`
-			LLMAPIKey          string       `json:"llm_api_key"`
-			LLMBaseURL         string       `json:"llm_base_url"`
-			LLMModel           string       `json:"llm_model"`
-			GeminiClientID     string       `json:"gemini_client_id"`
-			GeminiClientSecret string       `json:"gemini_client_secret"`
-			AIAnalysisDBPath   string       `json:"ai_analysis_db_path"`
-			EmbeddingProvider  string       `json:"embedding_provider"`
-			EmbeddingAPIKey    string       `json:"embedding_api_key"`
-			EmbeddingBaseURL   string       `json:"embedding_base_url"`
-			EmbeddingModel     string       `json:"embedding_model"`
-			EmbeddingDims      int          `json:"embedding_dims"`
-			MemLLMBaseURL      string       `json:"mem_llm_base_url"`
-			MemLLMModel        string       `json:"mem_llm_model"`
-			MemLLMAPIKey       string       `json:"mem_llm_api_key"`
+			LLMProfiles        []LLMProfile      `json:"llm_profiles"`
+			LLMProvider        string            `json:"llm_provider"`
+			LLMAPIKey          string            `json:"llm_api_key"`
+			LLMBaseURL         string            `json:"llm_base_url"`
+			LLMModel           string            `json:"llm_model"`
+			GeminiClientID     string            `json:"gemini_client_id"`
+			GeminiClientSecret string            `json:"gemini_client_secret"`
+			AIAnalysisDBPath   string            `json:"ai_analysis_db_path"`
+			EmbeddingProvider  string            `json:"embedding_provider"`
+			EmbeddingAPIKey    string            `json:"embedding_api_key"`
+			EmbeddingBaseURL   string            `json:"embedding_base_url"`
+			EmbeddingModel     string            `json:"embedding_model"`
+			EmbeddingDims      int               `json:"embedding_dims"`
+			EmbeddingProfiles  []EmbeddingProfile `json:"embedding_profiles"`
+			MemLLMBaseURL      string            `json:"mem_llm_base_url"`
+			MemLLMModel        string            `json:"mem_llm_model"`
+			MemLLMAPIKey       string            `json:"mem_llm_api_key"`
+			MemLLMProfiles     []MemLLMProfile   `json:"mem_llm_profiles"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1054,6 +1056,30 @@ func serverMain() {
 		}
 		existing.GeminiClientID = incoming.GeminiClientID
 		existing.AIAnalysisDBPath = incoming.AIAnalysisDBPath
+		// 多 Embedding 提供商：保护未修改的 API Key
+		for i, ep := range incoming.EmbeddingProfiles {
+			if keepOld(ep.APIKey) {
+				for _, old := range existing.EmbeddingProfiles {
+					if old.ID == ep.ID && old.Provider == ep.Provider {
+						incoming.EmbeddingProfiles[i].APIKey = old.APIKey
+						break
+					}
+				}
+			}
+		}
+		existing.EmbeddingProfiles = incoming.EmbeddingProfiles
+		// 多记忆提炼 LLM 提供商：保护未修改的 API Key
+		for i, mp := range incoming.MemLLMProfiles {
+			if keepOld(mp.APIKey) {
+				for _, old := range existing.MemLLMProfiles {
+					if old.ID == mp.ID && old.Provider == mp.Provider {
+						incoming.MemLLMProfiles[i].APIKey = old.APIKey
+						break
+					}
+				}
+			}
+		}
+		existing.MemLLMProfiles = incoming.MemLLMProfiles
 		existing.EmbeddingProvider = incoming.EmbeddingProvider
 		if !keepOld(incoming.EmbeddingAPIKey) {
 			existing.EmbeddingAPIKey = incoming.EmbeddingAPIKey
@@ -2729,13 +2755,18 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		cfg := defaultEmbeddingConfig(prefs)
-		_, err := GetEmbeddingsBatch([]string{"测试"}, cfg)
+		configs := embeddingConfigs(prefs)
+		if len(configs) == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置 embedding 提供商"})
+			return
+		}
+		// 测试第一个（优先级最高的）提供商
+		_, err := GetEmbeddingsBatch([]string{"测试"}, configs[0])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.Provider, "model": cfg.Model})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model})
 	})
 
 	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
@@ -2761,13 +2792,17 @@ func serverMain() {
 	// POST /api/ai/mem/test — 验证记忆提炼本地模型配置是否可用
 	api.POST("/ai/mem/test", func(c *gin.Context) {
 		prefs := loadPreferences()
-		memPrefs := memLLMPrefs(prefs)
-		model, err := testLLMConn(memPrefs)
+		configs := memLLMConfigs(prefs)
+		if len(configs) == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置记忆提炼模型"})
+			return
+		}
+		model, err := testLLMConn(configs[0])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": memPrefs.LLMProvider, "model": model})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].LLMProvider, "model": model})
 	})
 
 	// GET /api/ai/mem/status?key=...
@@ -2823,6 +2858,7 @@ func serverMain() {
 		job.Error = ""
 		job.FactCount = 0
 		job.abort = abortCh
+		job.abortClosed = false
 		job.mu.Unlock()
 
 		prefs := loadPreferences()
@@ -2866,39 +2902,44 @@ func serverMain() {
 				setErr("语义向量索引为空，请先构建索引")
 				return
 			}
-			cfg := defaultEmbeddingConfig(prefs)
+			embConfigs := embeddingConfigs(prefs)
 			totalChunks := len(computeSegments(msgs))
 
 			if rebuild {
 				// rebuild 模式：清除 v2 记忆 + 重置检查点，强制重新提取
-				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = 2", key); err != nil {
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion); err != nil {
 					setErr("清理旧记忆失败：" + err.Error())
 					return
 				}
-				db.Exec(`UPDATE vec_index_status SET extract_offset = -1 WHERE contact_key = ?`, key)
+				db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
 			}
 
 			// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
 			startChunk := 0
 			var prevOffset int = -1
-			db.QueryRow("SELECT extract_offset FROM vec_index_status WHERE contact_key = ?", key).Scan(&prevOffset)
-			if prevOffset >= 0 && prevOffset < totalChunks {
+			var prevVersion int
+			db.QueryRow("SELECT extract_offset, extract_version FROM vec_index_status WHERE contact_key = ?", key).Scan(&prevOffset, &prevVersion)
+			// 版本不匹配时忽略旧检查点（v1 stride=64 与 v2 动态分段不兼容）
+			if prevVersion != memFactVersion {
+				prevOffset = -1
+			}
+			if prevOffset >= 0 && prevOffset+1 < totalChunks {
 				// 上次中断于 prevOffset 批（已完成），从下一批续传
 				startChunk = prevOffset + 1
 			} else {
 				// 全新开始：清空旧事实，reset 检查点
-				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = 2", key); err != nil {
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion); err != nil {
 					setErr("清理旧记忆失败：" + err.Error())
 					return
 				}
 			}
 			// 记录本次起始偏移，表示提炼进行中
-			db.Exec(`UPDATE vec_index_status SET extract_offset = ? WHERE contact_key = ?`,
-				startChunk-1, key) // 上一批已完成的索引（-1 表示尚未完成任何批次）
+			db.Exec(`UPDATE vec_index_status SET extract_offset = ?, extract_version = ? WHERE contact_key = ?`,
+				startChunk-1, memFactVersion, key) // 上一批已完成的索引（-1 表示尚未完成任何批次）
 
 			// 统计已有事实数（续传时保留）
 			var prevFactCount int
-			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ? AND version = 2", key).Scan(&prevFactCount)
+			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion).Scan(&prevFactCount)
 
 			job.mu.Lock()
 			job.Total = totalChunks
@@ -2936,7 +2977,7 @@ func serverMain() {
 				}
 			}
 
-			newFacts, extractErr := extractAndStoreFacts(key, msgs, prefs, db, cfg,
+			newFacts, extractErr := extractAndStoreFacts(key, msgs, prefs, db, embConfigs,
 				isGroup, displayName,
 				startChunk,
 				func(done, total int) {
@@ -2947,8 +2988,8 @@ func serverMain() {
 				},
 				func(chunkIdx int) {
 					// 每批完成后写检查点，服务重启后可续传
-					db.Exec(`UPDATE vec_index_status SET extract_offset = ? WHERE contact_key = ?`,
-						chunkIdx, key)
+					db.Exec(`UPDATE vec_index_status SET extract_offset = ?, extract_version = ? WHERE contact_key = ?`,
+						chunkIdx, memFactVersion, key)
 				},
 				abortCh,
 			)
@@ -2964,17 +3005,26 @@ func serverMain() {
 				return
 			}
 
+			if extractErr != nil {
+				// 提炼出错（如 embedding 服务不可用）：标记错误，清除检查点
+				fmt.Printf("[MEM-BUILD] ⚠️ 提炼失败 key=%s: %v\n", key, extractErr)
+				db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
+				job.mu.Lock()
+				job.Step = "error"
+				job.Done = true
+				job.Error = "提炼失败：" + extractErr.Error()
+				job.mu.Unlock()
+				return
+			}
+
 			// 全部完成，清除检查点
-			db.Exec(`UPDATE vec_index_status SET extract_offset = -1 WHERE contact_key = ?`, key)
+			db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
 
 			factCount := prevFactCount + newFacts
 			job.mu.Lock()
 			job.Step = "done"
 			job.Done = true
 			job.FactCount = factCount
-			if newFacts == 0 && extractErr != nil {
-				job.Error = "提炼失败：" + extractErr.Error()
-			}
 			job.mu.Unlock()
 		}()
 		c.JSON(http.StatusOK, gin.H{"started": true})
@@ -3002,7 +3052,7 @@ func serverMain() {
 			c.JSON(http.StatusOK, gin.H{"paused": false, "reason": "not running"})
 			return
 		}
-		close(abortCh)
+		job.safeAbort()
 		c.JSON(http.StatusOK, gin.H{"paused": true})
 	})
 
@@ -3028,10 +3078,16 @@ func serverMain() {
 			running := job.Step != "" && !job.Done && !job.Paused
 			job.mu.Unlock()
 			if running && abortCh != nil {
-				close(abortCh)
+				job.safeAbort()
 				aborted++
 			}
 		}
+		// 清空所有 job，让任务从列表中消失
+		vecJobsMu.Lock()
+		for k := range vecJobs {
+			delete(vecJobs, k)
+		}
+		vecJobsMu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"aborted": aborted})
 	})
 

@@ -4,6 +4,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Bot, Send, RotateCcw, Loader2, AlertTriangle, Info, Copy, Check, CalendarDays, SlidersHorizontal, Square, Database, Search, Share2, ChevronDown, ChevronRight, BrainCircuit, Trash2 } from 'lucide-react';
+import { useToast } from '../../components/common/Toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
@@ -384,6 +385,7 @@ const AssistantMessage: React.FC<{
 export const LLMAnalysisTab: React.FC<LLMAnalysisProps> = ({
   username, displayName, isGroup, avatarUrl, initialQuery, quickMode, onOpenSettings,
 }) => {
+  const toast = useToast();
   const key = `${isGroup ? 'group' : 'contact'}:${username}`;
   const { messages, loading, chunkProgress } = useAnalysisState(key);
 
@@ -693,6 +695,7 @@ export const LLMAnalysisTab: React.FC<LLMAnalysisProps> = ({
           setMemPaused(false);
           setMemExtractProgress(null);
           clearInterval(memPollRef.current!);
+          toast.error(`记忆提炼失败：${p.error}`, { persistent: true });
           return;
         }
         if (p.current != null && p.total) {

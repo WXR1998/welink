@@ -313,7 +313,7 @@ func computeSegments(msgs []rawMsg) []memSegment {
 var ErrAborted = fmt.Errorf("mem: 提炼已暂停")
 
 func extractAndStoreFacts(
-	key string, msgs []rawMsg, prefs Preferences, db *sql.DB, embCfg EmbeddingConfig,
+	key string, msgs []rawMsg, prefs Preferences, db *sql.DB, embConfigs []EmbeddingConfig,
 	isGroup bool, displayName string,
 	startChunk int,
 	onProgress func(done, total int),
@@ -350,13 +350,15 @@ func extractAndStoreFacts(
 		for i, f := range pinnedFacts {
 			pinnedTexts[i] = f.Fact
 		}
-		pinnedVecs, err := GetEmbeddingsBatch(pinnedTexts, embCfg)
-		if err == nil {
-			pinnedEmbs = make([][]float32, 0, len(pinnedVecs))
-			for _, v := range pinnedVecs {
-				if v != nil {
-					pinnedEmbs = append(pinnedEmbs, v)
-				}
+		pinnedVecs, err := GetEmbeddingsBatchWithFallback(pinnedTexts, embConfigs)
+		if err != nil {
+			fmt.Printf("[MEM-EXTRACT] ⚠️ 置顶记忆 embedding 失败，中止提炼: %v\n", err)
+			return 0, fmt.Errorf("embedding 服务不可用: %w", err)
+		}
+		pinnedEmbs = make([][]float32, 0, len(pinnedVecs))
+		for _, v := range pinnedVecs {
+			if v != nil {
+				pinnedEmbs = append(pinnedEmbs, v)
 			}
 		}
 	}
@@ -402,9 +404,10 @@ func extractAndStoreFacts(
 			chunkStart := chunk[0].DateTime
 			chunkEnd := chunk[len(chunk)-1].DateTime
 			timeRange := "[" + chunkStart + " ~ " + chunkEnd + "] "
-			embeddings, err := GetEmbeddingsBatch(facts, embCfg)
+			embeddings, err := GetEmbeddingsBatchWithFallback(facts, embConfigs)
 			if err != nil {
-				lastErr = err
+				fmt.Printf("[MEM-EXTRACT] ⚠️ 事实 embedding 失败，中止提炼: %v\n", err)
+				return total, fmt.Errorf("embedding 服务不可用: %w", err)
 			} else {
 				// 跨 batch 去重：和本轮已存的事实比对，sim > 0.88 视为重复
 				var dedupFacts []string
@@ -581,7 +584,7 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			sb.String())
 	}
 
-	reply, err := CompleteLLM([]LLMMessage{{Role: "user", Content: prompt}}, prefs)
+	reply, err := completeMemLLMWithFallback([]LLMMessage{{Role: "user", Content: prompt}}, memLLMConfigs(prefs))
 	if err != nil {
 		return memExtractResult{}, err
 	}
@@ -722,4 +725,45 @@ func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string
 		}
 	}
 	return out, nil
+}
+
+// memLLMConfigs 从 Preferences 构造 []Preferences（多提供商 fallback）。
+// 优先使用 MemLLMProfiles；为空时回退到单字段配置。
+func memLLMConfigs(prefs Preferences) []Preferences {
+	if len(prefs.MemLLMProfiles) > 0 {
+		configs := make([]Preferences, 0, len(prefs.MemLLMProfiles))
+		for _, p := range prefs.MemLLMProfiles {
+			cfg := prefs
+			cfg.LLMProvider = p.Provider
+			cfg.LLMAPIKey = p.APIKey
+			cfg.LLMBaseURL = p.BaseURL
+			cfg.LLMModel = p.Model
+			configs = append(configs, cfg)
+		}
+		return configs
+	}
+	return []Preferences{memLLMPrefs(prefs)}
+}
+
+// completeMemLLMWithFallback 按多提供商顺序尝试记忆提炼 LLM 调用，带粘性回退。
+// 只有所有提供商都失败才返回错误。
+func completeMemLLMWithFallback(msgs []LLMMessage, prefsList []Preferences) (string, error) {
+	if len(prefsList) == 0 {
+		return "", fmt.Errorf("未配置记忆提炼模型")
+	}
+	numProviders := len(prefsList)
+	activeIdx := memLLMFallback.getActiveIndex(numProviders)
+
+	var lastErr error
+	for i := 0; i < numProviders; i++ {
+		idx := (activeIdx + i) % numProviders
+		result, err := CompleteLLM(msgs, prefsList[idx])
+		if err == nil {
+			memLLMFallback.recordSuccess()
+			return result, nil
+		}
+		lastErr = err
+		memLLMFallback.recordFailure(idx, numProviders)
+	}
+	return "", fmt.Errorf("所有记忆提炼 LLM 提供商均失败，最后错误: %w", lastErr)
 }

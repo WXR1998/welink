@@ -89,6 +89,27 @@ type ImageProfile struct {
 	Model    string `json:"model,omitempty"`
 }
 
+// EmbeddingProfile 是单个 Embedding 提供商配置，支持多提供商 fallback。
+type EmbeddingProfile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"` // ollama/openai/jina/custom
+	APIKey   string `json:"api_key,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Dims     int    `json:"dims,omitempty"`
+}
+
+// MemLLMProfile 是单个记忆提炼 LLM 提供商配置，支持多提供商 fallback。
+type MemLLMProfile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
 // LLMProfile 单个 LLM 配置项，支持多 provider 并行配置与一键切换。
 type LLMProfile struct {
 	ID       string `json:"id"`
@@ -105,6 +126,9 @@ type LLMProfile struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// 上下文窗口大小（token 数），用于自动压缩对话历史。0 = 使用默认值 128000。
 	ContextWindow int `json:"context_window,omitempty"`
+	// 上下文压缩阈值（token 数）。对话 token 数超过此值时触发压缩。
+	// 0 = 使用 context_window - 4000（留 4K 给输出）。
+	CompressThreshold int `json:"compress_threshold,omitempty"`
 }
 
 // Preferences 是唯一的持久化结构体，合并了用户偏好和 App 配置。
@@ -188,6 +212,9 @@ type Preferences struct {
 	EmbeddingBaseURL  string `json:"embedding_base_url,omitempty"`
 	EmbeddingModel    string `json:"embedding_model,omitempty"`
 	EmbeddingDims     int    `json:"embedding_dims,omitempty"` // 0 = 由模型默认值决定
+	// 多 Embedding 提供商（fallback）：数组顺序即为优先级。
+	// 为空时回退到上面的单字段配置。
+	EmbeddingProfiles []EmbeddingProfile `json:"embedding_profiles,omitempty"`
 
 	// 文生图配置（年报封面 / 高光插画 / AI 头像等场景）
 	// 默认 disabled — 生图比文本贵 10-50 倍，必须用户主动开启 + 主动点按钮触发
@@ -207,6 +234,9 @@ type Preferences struct {
 	MemLLMBaseURL string `json:"mem_llm_base_url,omitempty"` // 默认 http://localhost:11434/v1
 	MemLLMModel   string `json:"mem_llm_model,omitempty"`    // 默认 qwen2.5:7b
 	MemLLMAPIKey  string `json:"mem_llm_api_key,omitempty"`  // 留空=本地 Ollama(无需key)；填写=使用云端模型
+	// 多记忆提炼 LLM 提供商（fallback）：数组顺序即为优先级。
+	// 为空时回退到上面的单字段配置。
+	MemLLMProfiles []MemLLMProfile `json:"mem_llm_profiles,omitempty"`
 
 	// 自定义纪念日
 	CustomAnniversaries []CustomAnniversary `json:"custom_anniversaries,omitempty"`
@@ -367,6 +397,12 @@ func sanitizeForExport(p Preferences, stripSecrets bool) Preferences {
 	for i := range p.ImageProfiles {
 		p.ImageProfiles[i].APIKey = ""
 	}
+	for i := range p.EmbeddingProfiles {
+		p.EmbeddingProfiles[i].APIKey = ""
+	}
+	for i := range p.MemLLMProfiles {
+		p.MemLLMProfiles[i].APIKey = ""
+	}
 
 	// 云笔记
 	p.NotionToken = ""
@@ -423,6 +459,12 @@ func collectSecrets(p Preferences) []string {
 		candidates = append(candidates, prof.APIKey)
 	}
 	for _, prof := range p.ImageProfiles {
+		candidates = append(candidates, prof.APIKey)
+	}
+	for _, prof := range p.EmbeddingProfiles {
+		candidates = append(candidates, prof.APIKey)
+	}
+	for _, prof := range p.MemLLMProfiles {
 		candidates = append(candidates, prof.APIKey)
 	}
 	out := make([]string, 0, len(candidates))
@@ -551,6 +593,22 @@ func sanitizeForResponse(p Preferences) Preferences {
 			sanitized[i].APIKey = redact(sanitized[i].APIKey)
 		}
 		out.LLMProfiles = sanitized
+	}
+	if len(out.EmbeddingProfiles) > 0 {
+		sanitized := make([]EmbeddingProfile, len(out.EmbeddingProfiles))
+		copy(sanitized, out.EmbeddingProfiles)
+		for i := range sanitized {
+			sanitized[i].APIKey = redact(sanitized[i].APIKey)
+		}
+		out.EmbeddingProfiles = sanitized
+	}
+	if len(out.MemLLMProfiles) > 0 {
+		sanitized := make([]MemLLMProfile, len(out.MemLLMProfiles))
+		copy(sanitized, out.MemLLMProfiles)
+		for i := range sanitized {
+			sanitized[i].APIKey = redact(sanitized[i].APIKey)
+		}
+		out.MemLLMProfiles = sanitized
 	}
 	if len(out.ImageProfiles) > 0 {
 		sanitized := make([]ImageProfile, len(out.ImageProfiles))

@@ -136,9 +136,6 @@ func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error
 }
 
 func openAIEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error) {
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("未配置 Embedding API Key")
-	}
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("未配置 Embedding Base URL")
 	}
@@ -151,9 +148,11 @@ func openAIEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, er
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
 
-	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
+	resp, err := withRetry(2, func(attempt int) (*http.Response, error) {
 		return httpClientFast.Do(req)
 	})
 	if err != nil {
@@ -197,7 +196,7 @@ func ollamaEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, er
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
+	resp, err := withRetry(2, func(attempt int) (*http.Response, error) {
 		return httpClientFast.Do(req)
 	})
 	if err != nil {
@@ -262,4 +261,87 @@ func decodeVec(b []byte) []float32 {
 		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
 	}
 	return v
+}
+
+// embeddingConfigs 从 Preferences 构造 []EmbeddingConfig（多提供商 fallback）。
+// 优先使用 EmbeddingProfiles；为空时回退到单字段配置。
+func embeddingConfigs(prefs Preferences) []EmbeddingConfig {
+	if len(prefs.EmbeddingProfiles) > 0 {
+		configs := make([]EmbeddingConfig, 0, len(prefs.EmbeddingProfiles))
+		for _, p := range prefs.EmbeddingProfiles {
+			cfg := EmbeddingConfig{
+				Provider: p.Provider,
+				APIKey:   p.APIKey,
+				BaseURL:  p.BaseURL,
+				Model:    p.Model,
+				Dims:     p.Dims,
+			}
+			applyEmbeddingDefaults(&cfg)
+			configs = append(configs, cfg)
+		}
+		return configs
+	}
+	return []EmbeddingConfig{defaultEmbeddingConfig(prefs)}
+}
+
+// applyEmbeddingDefaults 为已知 provider 填充默认 baseURL 和 model。
+func applyEmbeddingDefaults(cfg *EmbeddingConfig) {
+	if cfg.Provider == "" {
+		cfg.Provider = "ollama"
+	}
+	switch cfg.Provider {
+	case "ollama":
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = "http://localhost:11434"
+		}
+		if cfg.Model == "" {
+			cfg.Model = "nomic-embed-text"
+		}
+		if cfg.Dims == 0 {
+			cfg.Dims = 768
+		}
+	case "openai":
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = "https://api.openai.com/v1"
+		}
+		if cfg.Model == "" {
+			cfg.Model = "text-embedding-3-small"
+		}
+		if cfg.Dims == 0 {
+			cfg.Dims = 1536
+		}
+	case "jina":
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = "https://api.jina.ai/v1"
+		}
+		if cfg.Model == "" {
+			cfg.Model = "jina-embeddings-v3"
+		}
+		if cfg.Dims == 0 {
+			cfg.Dims = 1024
+		}
+	}
+}
+
+// GetEmbeddingsBatchWithFallback 按多提供商顺序尝试，带粘性回退。
+// 只有所有提供商都失败才返回错误。
+func GetEmbeddingsBatchWithFallback(texts []string, configs []EmbeddingConfig) ([][]float32, error) {
+	if len(configs) == 0 {
+		return nil, fmt.Errorf("未配置 embedding 提供商")
+	}
+	numProviders := len(configs)
+	activeIdx := embeddingFallback.getActiveIndex(numProviders)
+
+	var lastErr error
+	for i := 0; i < numProviders; i++ {
+		idx := (activeIdx + i) % numProviders
+		result, err := GetEmbeddingsBatch(texts, configs[idx])
+		if err == nil {
+			embeddingFallback.recordSuccess()
+			return result, nil
+		}
+		lastErr = err
+		embeddingFallback.recordFailure(idx, numProviders)
+	}
+	return nil, fmt.Errorf("所有 embedding 提供商均失败，最后错误: %w", lastErr)
 }

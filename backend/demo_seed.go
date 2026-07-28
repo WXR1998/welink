@@ -274,7 +274,7 @@ func seedDemoMemFacts(db *sql.DB) error {
 			if i == 0 {
 				pinned = 1 // 每人第一条置顶
 			}
-			if _, err := stmt.Exec(key, f, 0, 0, encodeVec(hashedMockEmbedding(f, embDim)), pinned, 2, now, now); err != nil {
+			if _, err := stmt.Exec(key, f, 0, 0, encodeVec(hashedMockEmbedding(f, embDim)), pinned, memFactVersion, now, now); err != nil {
 				tx.Rollback()
 				return err
 			}

@@ -443,7 +443,7 @@ func GetGroupKeysWithFacts() []string {
 	if db == nil {
 		return nil
 	}
-	rows, err := db.Query(`SELECT DISTINCT contact_key FROM mem_facts WHERE contact_key LIKE 'group:%'`)
+	rows, err := db.Query(`SELECT DISTINCT contact_key FROM mem_facts WHERE contact_key LIKE 'group:%' AND version = ?`, memFactVersion)
 	if err != nil {
 		return nil
 	}

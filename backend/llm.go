@@ -67,13 +67,14 @@ type CompleteResponse struct {
 // ─── Provider 配置 ─────────────────────────────────────────────────────────────
 
 type llmConfig struct {
-	provider        string
-	apiKey          string
-	baseURL         string
-	model           string
-	noThink         bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
-	reasoningEffort string // off / low / medium / high；空字符串 = off
-	contextWindow   int    // 上下文窗口 token 数，0 = 默认 128000
+	provider          string
+	apiKey            string
+	baseURL           string
+	model             string
+	noThink           bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
+	reasoningEffort   string // off / low / medium / high；空字符串 = off
+	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
+	compressThreshold int    // 上下文压缩阈值，0 = contextWindow - 4000
 }
 
 // reasoningBudgetTokens 把档位映射到 Claude thinking.budget_tokens
@@ -302,7 +303,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	if profileID != "" {
 		for _, p := range prefs.LLMProfiles {
 			if p.ID == profileID {
-				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow}
+				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold}
 				goto applyGemini
 			}
 		}
@@ -416,8 +417,11 @@ func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamC
 	if maxTokens <= 0 {
 		maxTokens = defaultContextWindow
 	}
-	// 留 4K 给输出
-	compressThreshold := maxTokens - 4000
+	// 压缩阈值：用户可配置；未配置时默认 contextWindow - 4000（留 4K 给输出）
+	compressThreshold := cfg.compressThreshold
+	if compressThreshold <= 0 {
+		compressThreshold = maxTokens - 4000
+	}
 	if compressThreshold < 1000 {
 		compressThreshold = 1000
 	}
@@ -953,7 +957,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
 	llmStart := time.Now()
-	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
+	resp, err := withRetry(3, func(attempt int) (*http.Response, error) {
 		return httpClientLLMSync.Do(req)
 	})
 	durMs := time.Since(llmStart).Milliseconds()

@@ -20,13 +20,19 @@ interface ToastItem {
   kind: ToastKind;
   message: string;
   action?: { label: string; onClick: () => void };
+  persistent?: boolean; // true = 不自动消失，必须手动关闭
   createdAt: number;
 }
 
+interface ToastOpts {
+  action?: { label: string; onClick: () => void };
+  persistent?: boolean;
+}
+
 interface ToastCtx {
-  success: (msg: string, opts?: { action?: { label: string; onClick: () => void } }) => void;
-  error:   (msg: string, opts?: { action?: { label: string; onClick: () => void } }) => void;
-  info:    (msg: string, opts?: { action?: { label: string; onClick: () => void } }) => void;
+  success: (msg: string, opts?: ToastOpts) => void;
+  error:   (msg: string, opts?: ToastOpts) => void;
+  info:    (msg: string, opts?: ToastOpts) => void;
 }
 
 const Ctx = createContext<ToastCtx | null>(null);
@@ -40,17 +46,20 @@ export function useToast(): ToastCtx {
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<ToastItem[]>([]);
 
-  const push = useCallback((kind: ToastKind, message: string, opts?: { action?: { label: string; onClick: () => void } }) => {
+  const push = useCallback((kind: ToastKind, message: string, opts?: { action?: { label: string; onClick: () => void }; persistent?: boolean }) => {
     const id = Date.now() + Math.random();
-    setItems(list => [...list, { id, kind, message, action: opts?.action, createdAt: Date.now() }]);
-    const ttl = kind === 'error' ? 6000 : 4000;
-    setTimeout(() => setItems(list => list.filter(t => t.id !== id)), ttl);
+    const persistent = opts?.persistent ?? false;
+    setItems(list => [...list, { id, kind, message, action: opts?.action, persistent, createdAt: Date.now() }]);
+    if (!persistent) {
+      const ttl = kind === 'error' ? 6000 : 4000;
+      setTimeout(() => setItems(list => list.filter(t => t.id !== id)), ttl);
+    }
   }, []);
 
   const api = useMemo<ToastCtx>(() => ({
-    success: (m, o) => push('success', m, o),
+    success: (m, o) => push('success', m, { action: o?.action }),
     error:   (m, o) => push('error', m, o),
-    info:    (m, o) => push('info', m, o),
+    info:    (m, o) => push('info', m, { action: o?.action }),
   }), [push]);
 
   return (

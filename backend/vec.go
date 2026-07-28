@@ -38,13 +38,15 @@ func initVecTables() error {
 		built_at       INTEGER NOT NULL DEFAULT 0,
 		model          TEXT    NOT NULL DEFAULT '',
 		dims           INTEGER NOT NULL DEFAULT 0,
-		extract_offset INTEGER NOT NULL DEFAULT -1
+		extract_offset  INTEGER NOT NULL DEFAULT -1,
+		extract_version INTEGER NOT NULL DEFAULT 1
 	)`)
 	if err != nil {
 		return fmt.Errorf("vec: vec_index_status: %w", err)
 	}
 	// 迁移旧库：若列不存在则添加（重复执行安全，失败静默忽略）
 	_, _ = aiDB.Exec(`ALTER TABLE vec_index_status ADD COLUMN extract_offset INTEGER NOT NULL DEFAULT -1`)
+	_, _ = aiDB.Exec(`ALTER TABLE vec_index_status ADD COLUMN extract_version INTEGER NOT NULL DEFAULT 1`)
 	return nil
 }
 
@@ -111,6 +113,17 @@ type vecBuildJob struct {
 	Error     string `json:"error,omitempty"`
 	FactCount int    `json:"fact_count"`
 	abort     chan struct{} // 关闭此 channel 可中止正在运行的提炼
+	abortClosed bool       // 防止重复 close 导致 panic
+}
+
+// safeAbort 安全关闭 abort channel，防止重复 close 导致 panic。
+func (j *vecBuildJob) safeAbort() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.abort != nil && !j.abortClosed {
+		j.abortClosed = true
+		close(j.abort)
+	}
 }
 
 var (
