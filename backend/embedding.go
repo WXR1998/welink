@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -104,31 +105,54 @@ func GetEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, error
 	}
 
 	out := make([][]float32, len(texts))
+	// 收集所有分片，并行请求
+	type batchTask struct {
+		start int
+		texts []string
+	}
+	var tasks []batchTask
 	for i := 0; i < len(texts); i += batchSize {
 		end := i + batchSize
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batch := texts[i:end]
-
-		var (
-			vecs [][]float32
-			err  error
-		)
-		if cfg.Provider == "ollama" {
-			vecs, err = ollamaEmbeddingsBatch(batch, cfg)
-		} else {
-			vecs, err = openAIEmbeddingsBatch(batch, cfg)
-		}
-		if err != nil {
-			return nil, err
-		}
-		// 按原始顺序填充
-		for j, v := range vecs {
-			if v != nil && i+j < len(out) {
-				out[i+j] = v
+		tasks = append(tasks, batchTask{start: i, texts: texts[i:end]})
+	}
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	for _, t := range tasks {
+		wg.Add(1)
+		go func(t batchTask) {
+			defer wg.Done()
+			var (
+				vecs [][]float32
+				err  error
+			)
+			if cfg.Provider == "ollama" {
+				vecs, err = ollamaEmbeddingsBatch(t.texts, cfg)
+			} else {
+				vecs, err = openAIEmbeddingsBatch(t.texts, cfg)
 			}
-		}
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+			// 按原始顺序填充
+			for j, v := range vecs {
+				if v != nil && t.start+j < len(out) {
+					out[t.start+j] = v
+				}
+			}
+		}(t)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	dur := time.Since(start).Milliseconds()
 	recordTokenUsage(cfg.Model, "embedding", embTokens, 0, dur)
