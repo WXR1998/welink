@@ -547,8 +547,6 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 	if isGroup {
 		prompt = "你是一个记忆提炼专家。从以下群聊记录中提取关键事实，并生成供下一段分析使用的上下文摘要。\n" +
 			"\n" + accuracyRule +
-			priorSection +
-			bgSection +
 			"\n规则：\n" +
 			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n" +
 			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n" +
@@ -560,12 +558,12 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"8. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n" +
 			"9. 参考前文上下文摘要来理解\"他/她/那个事\"等指代；如果仍无法确定所指对象，跳过该条事实\n" +
 			"\n" + outputFormat +
+			priorSection +
+			bgSection +
 			"\n聊天记录：\n" + sb.String() + "\n输出："
 	} else {
 		prompt = fmt.Sprintf("你是一个记忆提炼专家。从以下聊天记录中提取关键事实，并生成供下一段分析使用的上下文摘要。\n"+
 			"\n%s"+
-			"%s"+
-			"%s"+
 			"\n规则：\n"+
 			"1. 每条事实是一句完整的中文陈述，尽量补充细节（程度、频率、时间、对象、原因）\n"+
 			"2. 只提取有价值的信息：喜好、经历、观点、习惯、工作、地点、人际关系等\n"+
@@ -577,10 +575,13 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"8. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n"+
 			"9. 参考前文上下文摘要来理解\"他/她/那个事\"等指代；如果仍无法确定所指对象，跳过该条事实\n"+
 			"\n%s"+
+			"%s"+
+			"%s"+
 			"\n聊天记录：\n%s\n输出：",
-			accuracyRule, priorSection, bgSection,
-			displayName,
+			accuracyRule,
 			outputFormat,
+			priorSection,
+			bgSection,
 			sb.String())
 	}
 
