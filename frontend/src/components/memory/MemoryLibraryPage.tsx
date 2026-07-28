@@ -110,6 +110,15 @@ function extractTimeRangePrefix(fact: string): string {
   return '';
 }
 
+function formatDateOnly(ts?: number): string {
+  if (!ts || ts <= 0) return '';
+  const d = new Date(ts * 1000);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -551,6 +560,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
+  const [displayMode, setDisplayMode] = useState<'large' | 'medium' | 'small'>('large');
   const [newMemoryHint, setNewMemoryHint] = useState(false);
   const [lastSeenTotal, setLastSeenTotal] = useState(0);
 
@@ -1157,6 +1167,21 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               <option value={100}>100/页</option>
               <option value={200}>200/页</option>
             </select>
+            <div className="flex items-center gap-0.5 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5">
+              {([['large','大'],['medium','中'],['small','小']] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  onClick={() => setDisplayMode(mode)}
+                  className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    displayMode === mode
+                      ? 'bg-white dark:bg-white/10 text-[#07c160] shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {newMemoryHint && page > 0 && (
@@ -1179,8 +1204,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 {q ? '没有匹配的记忆' : activeContact ? '这个联系人还没有提炼的记忆' : '还没有记忆。到联系人详情页开启「记忆提炼」功能即可'}
               </p>
             </div>
-          ) : (
-            <div className="space-y-2">
+          ) : displayMode === 'small' ? (
+            <div className="bg-white dark:bg-[#1d1d1f] rounded-2xl border border-gray-100 dark:border-white/10 overflow-hidden">
               {facts.map(f => {
                 const info = lookup(f.contact_key);
                 const isEditing = editingId === f.id;
@@ -1188,14 +1213,81 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 return (
                   <div
                     key={f.id}
-                    className={`bg-white dark:bg-[#1d1d1f] rounded-2xl border p-4 transition-colors ${
+                    className={`flex items-center gap-2 px-3 py-1 border-b border-gray-100 dark:border-white/5 transition-colors ${
+                      isSelected ? 'bg-[#07c160]/5' : 'hover:bg-gray-50 dark:hover:bg-white/5'
+                    } ${f.pinned ? 'border-l-2 border-l-amber-400' : ''}`}
+                    onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={() => hidePreview()}
+                    onClick={selectMode ? () => toggleSelect(f.id) : undefined}
+                  >
+                    {selectMode && (
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${
+                        isSelected ? 'bg-[#07c160] border-[#07c160]' : 'border-gray-300 dark:border-gray-600'
+                      }`}>
+                        {isSelected && <Check size={10} className="text-white" />}
+                      </div>
+                    )}
+                    {f.pinned && <Pin size={11} className="text-amber-500 shrink-0" />}
+                    <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 w-16 truncate" title={info?.name || stripKey(f.contact_key)}>
+                      {info?.name || stripKey(f.contact_key)}
+                    </span>
+                    {isEditing ? (
+                      <textarea
+                        value={editDraft}
+                        onChange={e => setEditDraft(e.target.value)}
+                        rows={2}
+                        autoFocus
+                        className="flex-1 px-2 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm dk-text outline-none focus:border-[#07c160]"
+                      />
+                    ) : (
+                      <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 truncate" title={f.fact}>
+                        {f.fact}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
+                      {formatDateOnly(f.updated_at || f.created_at)}
+                    </span>
+                    {!isEditing && (
+                      <div className="flex gap-0.5 shrink-0">
+                        <button
+                          onClick={() => togglePin(f)}
+                          title={f.pinned ? '取消置顶' : '置顶'}
+                          className={`p-1 rounded transition-colors ${
+                            f.pinned ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'
+                          }`}
+                        >
+                          {f.pinned ? <PinOff size={12} /> : <Pin size={12} />}
+                        </button>
+                        <button onClick={() => startEdit(f)} title="编辑" className="p-1 rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5">
+                          <Pencil size={12} />
+                        </button>
+                        <button onClick={() => deleteFact(f)} title="删除" className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={displayMode === 'medium' ? 'space-y-1.5' : 'space-y-2'}>
+              {facts.map(f => {
+                const info = lookup(f.contact_key);
+                const isEditing = editingId === f.id;
+                const isSelected = selectedIds.has(f.id);
+                const isMedium = displayMode === 'medium';
+                return (
+                  <div
+                    key={f.id}
+                    className={`bg-white dark:bg-[#1d1d1f] ${isMedium ? 'rounded-xl p-2.5' : 'rounded-2xl p-4'} border transition-colors ${
                       isSelected ? 'border-[#07c160] ring-1 ring-[#07c160]/30' : f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
                     }`}
                     onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
                     onMouseLeave={() => hidePreview()}
                     onClick={selectMode ? () => toggleSelect(f.id) : undefined}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className={`flex items-start ${isMedium ? 'gap-2' : 'gap-3'}`}>
                       {selectMode && (
                         <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 cursor-pointer ${
                           isSelected ? 'bg-[#07c160] border-[#07c160]' : 'border-gray-300 dark:border-gray-600'
@@ -1204,9 +1296,9 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                         </div>
                       )}
                       {info?.avatar ? (
-                        <img src={info.avatar} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0" title={info.name} />
+                        <img src={info.avatar} alt="" className={`${isMedium ? 'w-6 h-6 rounded-lg' : 'w-8 h-8 rounded-xl'} object-cover shrink-0`} title={info.name} />
                       ) : (
-                        <FallbackAvatar name={info?.name || stripKey(f.contact_key)} size={32} />
+                        <FallbackAvatar name={info?.name || stripKey(f.contact_key)} size={isMedium ? 24 : 32} rounded={isMedium ? 'rounded-lg' : 'rounded-xl'} />
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -1214,13 +1306,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                             {info?.name || stripKey(f.contact_key)}
                           </span>
                           {f.pinned && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 font-semibold">
-                              📌 置顶 · AI 对话自动引用
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 font-semibold ${isMedium ? '' : ''}`}>
+                              📌 置顶{isMedium ? '' : ' · AI 对话自动引用'}
                             </span>
                           )}
                           {f.updated_at ? (
-                            <span className="text-[10px] text-gray-400">
-                              更新于 <RelativeTime ts={f.updated_at} />
+                            <span className={`text-[10px] ${isMedium ? 'text-gray-400' : 'text-gray-400'}`}>
+                              {isMedium ? formatDateOnly(f.updated_at) : <>更新于 <RelativeTime ts={f.updated_at} /></>}
                             </span>
                           ) : null}
                         </div>
@@ -1243,7 +1335,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                             </div>
                           </>
                         ) : (
-                          <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed break-words">
+                          <p className={`text-sm text-gray-800 dark:text-gray-200 ${isMedium ? 'leading-snug' : 'leading-relaxed'} break-words`}>
                             {f.fact}
                           </p>
                         )}
