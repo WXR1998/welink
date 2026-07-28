@@ -629,13 +629,47 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     return () => clearTimeout(t);
   }, [fetchFacts]);
 
-  // 定时刷新：每 15s 拉取最新记忆和统计，确保提炼中的记忆能实时更新
+  // 定时刷新：仅在页面滚动条处于顶端时刷新，避免用户查看下方记忆时被刷走
+  const scrollAtTopRef = useRef(true);
   useEffect(() => {
+    // 找到最近的滚动容器（<main> 元素）
+    let scrollContainer: Element | null = null;
+    const findScrollParent = (el: Element | null): Element | null => {
+      let node = el;
+      while (node && node !== document.body) {
+        const style = window.getComputedStyle(node);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') return node;
+        node = node.parentElement;
+      }
+      return null;
+    };
+    // 延迟查找，确保 DOM 已渲染
+    const findTimer = setTimeout(() => {
+      scrollContainer = findScrollParent(document.querySelector('[data-mem-page]'));
+    }, 100);
+
+    const handleScroll = () => {
+      const el = scrollContainer || document.scrollingElement;
+      if (el) scrollAtTopRef.current = el.scrollTop < 50;
+    };
+    window.addEventListener('scroll', handleScroll, true);
+    // 也监听 main 容器的 scroll
+    const main = document.querySelector('main');
+    if (main) main.addEventListener('scroll', handleScroll);
+
     const timer = setInterval(() => {
-      void fetchFacts();
-      void fetchContactStats();
+      if (scrollAtTopRef.current) {
+        void fetchFacts();
+        void fetchContactStats();
+      }
     }, 15000);
-    return () => clearInterval(timer);
+
+    return () => {
+      clearTimeout(findTimer);
+      clearInterval(timer);
+      window.removeEventListener('scroll', handleScroll, true);
+      if (main) main.removeEventListener('scroll', handleScroll);
+    };
   }, [fetchFacts, fetchContactStats]);
 
   // hover 预览：hover 某条记忆时，debounce 300ms 后显示来源聊天记录
@@ -877,7 +911,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   }, [contacts, groups, addContactQuery]);
 
   return (
-    <div className="p-4 sm:p-10 pb-20">
+    <div data-mem-page className="p-4 sm:p-10 pb-20">
       <header className="mb-6 flex items-center gap-3 flex-wrap">
         <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#07c160] to-[#06ad56] flex items-center justify-center shadow-md">
           <Brain size={22} className="text-white" />

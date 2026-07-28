@@ -665,7 +665,7 @@ function AppInner() {
         )}
       </Suspense>
 
-      <StatusBar />
+      <StatusBar contacts={contacts} groups={allGroups} />
     </div>
     </PrivacyModeContext.Provider>
     </SelfInfoProvider>

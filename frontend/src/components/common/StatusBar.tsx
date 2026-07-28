@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Activity, Zap } from 'lucide-react';
 import api from '../../services/api';
+import type { ContactStats, GroupInfo } from '../../types';
+import { avatarSrc } from '../../utils/avatar';
 
 interface TokenUsage {
   model: string;
@@ -10,6 +12,12 @@ interface TokenUsage {
   total_tokens: number;
   call_count: number;
   is_embedding: boolean;
+}
+
+interface RecentSpeed {
+  kind: string;
+  speed: number;
+  count: number;
 }
 
 interface Job {
@@ -41,6 +49,13 @@ function toM(n: number): string {
   return String(n);
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  chat: 'AI 对话',
+  summary: '记忆总结',
+  embedding: 'Embedding',
+};
+const CATEGORY_ORDER = ['chat', 'summary', 'embedding'];
+
 const stepLabel: Record<string, string> = {
   embedding: '向量编码',
   extracting: '记忆提炼',
@@ -49,30 +64,63 @@ const stepLabel: Record<string, string> = {
   paused: '已暂停',
 };
 
-export const StatusBar: React.FC = () => {
+const batchStepLabel: Record<string, string> = {
+  fts: '构建索引',
+  vec_index: '向量编码',
+  mem_extraction: '记忆提炼',
+};
+
+interface Props {
+  contacts: ContactStats[];
+  groups: GroupInfo[];
+}
+
+export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
+  const [allTime, setAllTime] = useState<TokenUsage[]>([]);
+  const [daily, setDaily] = useState<TokenUsage[]>([]);
+  const [speeds, setSpeeds] = useState<RecentSpeed[]>([]);
   const [totalTokens, setTotalTokens] = useState(0);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
   const [flash, setFlash] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<'all' | 'daily'>('all');
   const prevCallCountRef = useRef(0);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
+
+  const nameMap = React.useMemo(() => {
+    const m = new Map<string, { name: string; avatar?: string }>();
+    for (const c of contacts) {
+      m.set(c.username, {
+        name: c.remark || c.nickname || c.username,
+        avatar: avatarSrc(c.small_head_url),
+      });
+    }
+    for (const g of groups) {
+      m.set(g.username, {
+        name: g.name || g.username,
+        avatar: avatarSrc(g.small_head_url),
+      });
+    }
+    return m;
+  }, [contacts, groups]);
 
   const pollAll = useCallback(async () => {
     const promises: Promise<void>[] = [];
 
-    // Token stats
     promises.push((async () => {
       try {
         const r = await api.get<unknown, {
           usage: TokenUsage[];
           daily: TokenUsage[];
-          recent_speeds: { kind: string; speed: number; count: number }[];
+          recent_speeds: RecentSpeed[];
         }>('/token-stats');
+        setAllTime(r.usage || []);
+        setDaily(r.daily || []);
+        setSpeeds(r.recent_speeds || []);
         const total = (r.usage || []).reduce((s, u) => s + u.total_tokens, 0);
-        const totalCalls = (r.usage || []).reduce((s, u) => s + u.call_count, 0);
         setTotalTokens(total);
-
-        // Flash on new LLM calls
+        const totalCalls = (r.usage || []).reduce((s, u) => s + u.call_count, 0);
         if (totalCalls > prevCallCountRef.current) {
           setFlash(true);
           if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -82,7 +130,6 @@ export const StatusBar: React.FC = () => {
       } catch { /* ignore */ }
     })());
 
-    // Vec jobs
     promises.push((async () => {
       try {
         const r = await api.get<unknown, { jobs: Job[] }>('/ai/vec/all-jobs');
@@ -90,7 +137,6 @@ export const StatusBar: React.FC = () => {
       } catch { /* ignore */ }
     })());
 
-    // Batch tasks
     promises.push((async () => {
       try {
         const r = await api.get<unknown, { tasks: BatchTask[] }>('/ai/mem/batch');
@@ -110,56 +156,81 @@ export const StatusBar: React.FC = () => {
     };
   }, [pollAll]);
 
-  // Collect running task descriptions
-  const runningTasks: string[] = [];
-
-  // Running vec jobs (embedding / extracting)
-  for (const job of jobs) {
-    if (job.done) continue;
-    if (job.paused) continue;
-    const label = stepLabel[job.step] || job.step;
-    if (job.step === 'embedding' || job.step === 'extracting') {
-      const progress = job.total > 0 ? ` ${job.current}/${job.total}` : '';
-      runningTasks.push(`${label}${progress}`);
-    }
+  // Token stats derived data
+  const usage = mode === 'all' ? allTime : daily;
+  const byKind = new Map<string, TokenUsage[]>();
+  for (const u of usage) {
+    const arr = byKind.get(u.kind) || [];
+    arr.push(u);
+    byKind.set(u.kind, arr);
   }
+  const speedMap = new Map(speeds.map(s => [s.kind, s]));
 
-  // Running batch tasks
-  for (const t of batchTasks) {
-    if (t.status !== 'running') continue;
-    const stepLabels: Record<string, string> = {
-      fts: '构建索引',
-      vec_index: '向量编码',
-      mem_extraction: '记忆提炼',
-    };
-    const label = stepLabels[t.current_step || ''] || t.current_step || '处理中';
-    const total = t.progress_total || 0;
-    const done = t.progress_done || 0;
-    const progress = total > 0 ? ` ${done}/${total}` : '';
-    runningTasks.push(`${label}${progress}`);
+  // Running task info
+  const runningBatchTask = batchTasks.find(t => t.status === 'running');
+  const pendingCount = batchTasks.filter(t => t.status === 'pending').length;
+  const runningCount = batchTasks.filter(t => t.status === 'running').length;
+  const queueLen = pendingCount + runningCount;
+
+  const runningVecJobs = jobs.filter(j => !j.done && !j.paused && (j.step === 'embedding' || j.step === 'extracting'));
+
+  // Resolve running batch task name + avatar
+  let runningName = '';
+  let runningAvatar: string | undefined;
+  let runningStepLabel = '';
+  let runningProgress = '';
+  if (runningBatchTask) {
+    const info = nameMap.get(runningBatchTask.username);
+    runningName = info?.name || runningBatchTask.username;
+    runningAvatar = info?.avatar;
+    runningStepLabel = batchStepLabel[runningBatchTask.current_step || ''] || runningBatchTask.current_step || '处理中';
+    const total = runningBatchTask.progress_total || 0;
+    const done = runningBatchTask.progress_done || 0;
+    if (total > 0) runningProgress = `${done}/${total}`;
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[6000] h-9 bg-white/95 dark:bg-[#1d1d1f]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/10 flex items-center px-4 gap-4 text-xs">
+    <div
+      className="fixed bottom-0 left-0 right-0 z-[6000] h-9 bg-white/95 dark:bg-[#1d1d1f]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/10 flex items-center px-4 gap-4 text-xs"
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+    >
       {/* Left: running tasks */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         <Activity size={12} className={`shrink-0 ${flash ? 'text-[#07c160]' : 'text-gray-400'}`} />
-        {runningTasks.length > 0 ? (
+        {runningBatchTask ? (
+          <>
+            {runningAvatar
+              ? <img src={runningAvatar} alt="" className="w-5 h-5 rounded object-cover shrink-0" />
+              : <div className="w-5 h-5 rounded bg-gray-200 dark:bg-white/10 shrink-0" />}
+            <span className="truncate text-gray-600 dark:text-gray-300 max-w-32">{runningName}</span>
+            <span className="text-gray-400">·</span>
+            <span className="text-gray-500">{runningStepLabel}</span>
+            {runningProgress && <span className="text-gray-400 tabular-nums">{runningProgress}</span>}
+          </>
+        ) : runningVecJobs.length > 0 ? (
           <span className="truncate text-gray-600 dark:text-gray-300">
-            {runningTasks.join(' · ')}
+            {runningVecJobs.map(j => {
+              const label = stepLabel[j.step] || j.step;
+              const progress = j.total > 0 ? ` ${j.current}/${j.total}` : '';
+              return `${label}${progress}`;
+            }).join(' · ')}
           </span>
         ) : (
           <span className="text-gray-400">空闲</span>
         )}
+        {queueLen > 1 && (
+          <span className="text-gray-400 shrink-0 ml-2">队列 {queueLen}</span>
+        )}
       </div>
 
-      {/* Middle: memory count placeholder (filled by parent via context) */}
+      {/* Middle: memory count */}
       <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400 shrink-0">
         <MemoryCountDisplay />
       </div>
 
-      {/* Right: token count with flash */}
-      <div className="flex items-center gap-1.5 shrink-0">
+      {/* Right: token count with hover panel */}
+      <div className="flex items-center gap-1.5 shrink-0 relative">
         <Zap
           size={12}
           className={flash ? 'text-[#07c160] transition-colors' : 'text-gray-400 transition-colors'}
@@ -168,6 +239,66 @@ export const StatusBar: React.FC = () => {
         <span className={`font-semibold tabular-nums ${flash ? 'text-[#07c160]' : 'text-gray-600 dark:text-gray-300'}`}>
           {toM(totalTokens)}
         </span>
+        {expanded && (
+          <div className="absolute bottom-full right-0 mb-1 w-[340px] bg-white dark:bg-[#1d1d1f] rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 p-3 space-y-3 max-h-[450px] overflow-y-auto">
+            {/* Mode toggle */}
+            <div className="flex gap-1 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5">
+              <button
+                className={`flex-1 text-[10px] font-semibold py-1 rounded-md transition-colors ${
+                  mode === 'all' ? 'bg-white dark:bg-white/10 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500 dark:text-gray-400'
+                }`}
+                onClick={() => setMode('all')}
+              >
+                全量
+              </button>
+              <button
+                className={`flex-1 text-[10px] font-semibold py-1 rounded-md transition-colors ${
+                  mode === 'daily' ? 'bg-white dark:bg-white/10 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500 dark:text-gray-400'
+                }`}
+                onClick={() => setMode('daily')}
+              >
+                今日
+              </button>
+            </div>
+            {CATEGORY_ORDER.map(kind => {
+              const items = (byKind.get(kind) || []).slice().sort((a, b) => a.model.localeCompare(b.model));
+              const sp = speedMap.get(kind);
+              const subtotal = items.reduce((s, u) => s + u.total_tokens, 0);
+              const hasData = items.length > 0;
+              if (!hasData && !sp) return null;
+              return (
+                <div key={kind}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{CATEGORY_LABELS[kind]}</span>
+                    <div className="flex items-center gap-2">
+                      {sp && sp.count > 0 && <span className="text-[10px] text-[#07c160] font-semibold">{sp.speed.toFixed(1)} t/s</span>}
+                      <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{toM(subtotal)}</span>
+                    </div>
+                  </div>
+                  {hasData && (
+                    <div className="space-y-1">
+                      {items.map(u => (
+                        <div key={u.model} className="flex items-center justify-between text-[11px]">
+                          <span className="text-gray-600 dark:text-gray-300 truncate max-w-[160px]" title={u.model}>{u.model}</span>
+                          <span className="text-gray-400 shrink-0">
+                            <span className="text-gray-500 dark:text-gray-400">{toM(u.prompt_tokens)}→{toM(u.output_tokens)}</span>
+                            {' '}
+                            <span className="font-semibold text-gray-700 dark:text-gray-200">{toM(u.total_tokens)}</span>
+                            {' '}
+                            <span className="text-gray-400">({u.call_count}次)</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {usage.length === 0 && speeds.length === 0 && (
+              <div className="text-xs text-gray-400 text-center py-2">暂无 token 使用记录</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
