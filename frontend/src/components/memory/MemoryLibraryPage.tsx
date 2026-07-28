@@ -119,6 +119,17 @@ function formatDateOnly(ts?: number): string {
   return `${y}-${m}-${day}`;
 }
 
+// 小视图：把 fact 前缀的时间范围 [2020-01-01 12:34 ~ 2020-01-01 12:40]
+// 简化为仅日期 [2020-01-01]，内容不变。
+function simplifyFactDateOnly(fact: string): string {
+  const prefix = extractTimeRangePrefix(fact);
+  if (!prefix) return fact;
+  const match = prefix.match(/\[(\d{4}-\d{2}-\d{2})/);
+  if (!match) return fact;
+  const content = fact.substring(prefix.length);
+  return `[${match[1]}] ${content}`;
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -560,7 +571,11 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  const [displayMode, setDisplayMode] = useState<'large' | 'medium' | 'small'>('large');
+  const [displayMode, setDisplayMode] = useState<'large' | 'medium' | 'small'>(() => {
+    const saved = localStorage.getItem('welink_memory_display');
+    if (saved === 'large' || saved === 'medium' || saved === 'small') return saved;
+    return 'large';
+  });
   const [newMemoryHint, setNewMemoryHint] = useState(false);
   const [lastSeenTotal, setLastSeenTotal] = useState(0);
 
@@ -1186,7 +1201,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               {([['large','大'],['medium','中'],['small','小']] as const).map(([mode, label]) => (
                 <button
                   key={mode}
-                  onClick={() => setDisplayMode(mode)}
+                  onClick={() => { setDisplayMode(mode); localStorage.setItem('welink_memory_display', mode); }}
                   className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors ${
                     displayMode === mode
                       ? 'bg-white dark:bg-white/10 text-[#07c160] shadow-sm'
@@ -1256,11 +1271,11 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                       />
                     ) : (
                       <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 truncate" title={f.fact}>
-                        {f.fact}
+                        {simplifyFactDateOnly(f.fact)}
                       </span>
                     )}
-                    <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-                      {formatDateOnly(f.updated_at || f.created_at)}
+                    <span className="text-[10px] text-gray-400 shrink-0">
+                      <RelativeTime ts={f.updated_at || f.created_at} />
                     </span>
                     {!isEditing && (
                       <div className="flex gap-0.5 shrink-0">
