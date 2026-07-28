@@ -549,6 +549,10 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [addErr, setAddErr] = useState<string | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [newMemoryHint, setNewMemoryHint] = useState(false);
+  const [lastSeenTotal, setLastSeenTotal] = useState(0);
 
   // hover 预览：hover 某条记忆时显示来源聊天记录
   const [hoverFactId, setHoverFactId] = useState<number | null>(null);
@@ -617,17 +621,37 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       if (activeContact) params.set('contact', activeContact);
       if (q.trim()) params.set('q', q.trim());
       if (pinnedOnly) params.set('pinned', '1');
-      params.set('limit', '200');
+      params.set('limit', String(pageSize));
+      params.set('offset', String(page * pageSize));
       const r = await axios.get<{ facts: MemFact[]; total: number }>(`/api/memory/list?${params}`);
       setFacts(r.data.facts || []);
-      setTotal(r.data.total || 0);
+      const newTotal = r.data.total || 0;
+      setTotal(newTotal);
+      setLastSeenTotal(newTotal);
     } catch {
       setFacts([]);
       setTotal(0);
     } finally {
       setLoading(false);
     }
-  }, [activeContact, q, pinnedOnly]);
+  }, [activeContact, q, pinnedOnly, page, pageSize]);
+
+  // 轻量检查：仅拉 total（limit=1），用于非第一页时检测是否有新记忆
+  const checkNewMemories = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (activeContact) params.set('contact', activeContact);
+      if (q.trim()) params.set('q', q.trim());
+      if (pinnedOnly) params.set('pinned', '1');
+      params.set('limit', '1');
+      params.set('offset', '0');
+      const r = await axios.get<{ facts: MemFact[]; total: number }>(`/api/memory/list?${params}`);
+      const newTotal = r.data.total || 0;
+      if (newTotal > lastSeenTotal) {
+        setNewMemoryHint(true);
+      }
+    } catch { /* ignore */ }
+  }, [activeContact, q, pinnedOnly, lastSeenTotal]);
 
   const fetchContactStats = useCallback(async () => {
     try {
@@ -644,6 +668,9 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     const t = setTimeout(() => { void fetchFacts(); }, 200);
     return () => clearTimeout(t);
   }, [fetchFacts]);
+
+  // 筛选条件变化时重置到第一页
+  useEffect(() => { setPage(0); }, [activeContact, pinnedOnly, q]);
 
   // 定时刷新：仅在页面滚动条处于顶端时刷新，避免用户查看下方记忆时被刷走
   const scrollAtTopRef = useRef(true);
@@ -675,7 +702,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
 
     const timer = setInterval(() => {
       if (scrollAtTopRef.current) {
-        void fetchFacts();
+        if (page === 0) {
+          // 第一页：直接刷新，新增记忆会出现在顶部
+          void fetchFacts();
+        } else {
+          // 非第一页：轻量检查 total 是否增长，若增长则显示提示
+          void checkNewMemories();
+        }
         void fetchContactStats();
       }
     }, 15000);
@@ -686,7 +719,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       window.removeEventListener('scroll', handleScroll, true);
       if (main) main.removeEventListener('scroll', handleScroll);
     };
-  }, [fetchFacts, fetchContactStats]);
+  }, [fetchFacts, fetchContactStats, checkNewMemories, page]);
 
   // hover 预览：hover 某条记忆时，debounce 300ms 后显示来源聊天记录
   const showPreview = (fact: MemFact, rect: DOMRect) => {
@@ -1114,7 +1147,26 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               只看置顶
             </label>
             <span className="text-xs text-gray-400">{total} 条</span>
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+              className="text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1 outline-none cursor-pointer"
+            >
+              <option value={20}>20/页</option>
+              <option value={50}>50/页</option>
+              <option value={100}>100/页</option>
+              <option value={200}>200/页</option>
+            </select>
           </div>
+
+          {newMemoryHint && page > 0 && (
+            <button
+              onClick={() => { setPage(0); setNewMemoryHint(false); }}
+              className="w-full mb-3 py-2 rounded-xl bg-[#07c160]/10 text-[#07c160] text-sm font-semibold hover:bg-[#07c160]/20 transition-colors"
+            >
+              ✨ 有新记忆，点击查看
+            </button>
+          )}
 
           {loading ? (
             <div className="py-12 text-center text-gray-400">
@@ -1239,6 +1291,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 );
               })}
             </div>
+          )}
+
+          {/* 分页器 */}
+          {total > pageSize && (
+            <Pagination
+              page={page}
+              totalPages={Math.ceil(total / pageSize)}
+              onPageChange={(p) => { setPage(p); setNewMemoryHint(false); }}
+            />
           )}
         </main>
       </div>
@@ -1374,6 +1435,68 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// ─── 分页器 ──────────────────────────────────────────────────────────────────
+interface PaginationProps {
+  page: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}
+
+const Pagination: React.FC<PaginationProps> = ({ page, totalPages, onPageChange }) => {
+  if (totalPages <= 1) return null;
+
+  // 生成页码数组，最多显示 5 个页码
+  const pages: (number | string)[] = [];
+  const start = Math.max(0, page - 2);
+  const end = Math.min(totalPages - 1, page + 2);
+
+  if (start > 0) {
+    pages.push(0);
+    if (start > 1) pages.push('...');
+  }
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < totalPages - 1) {
+    if (end < totalPages - 2) pages.push('...');
+    pages.push(totalPages - 1);
+  }
+
+  return (
+    <div className="flex items-center justify-center gap-1 mt-4 mb-2">
+      <button
+        onClick={() => onPageChange(Math.max(0, page - 1))}
+        disabled={page === 0}
+        className="px-2 py-1 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        ‹
+      </button>
+      {pages.map((p, idx) =>
+        p === '...' ? (
+          <span key={`ellipsis-${idx}`} className="px-1 text-sm text-gray-400">…</span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onPageChange(p)}
+            className={`min-w-[28px] px-2 py-1 rounded-lg text-sm font-medium transition-colors ${
+              p === page
+                ? 'bg-[#07c160] text-white'
+                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
+            }`}
+          >
+            {p + 1}
+          </button>
+        )
+      )}
+      <button
+        onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
+        disabled={page >= totalPages - 1}
+        className="px-2 py-1 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        ›
+      </button>
     </div>
   );
 };
