@@ -377,7 +377,8 @@ func buildFTSIndexSync(key, username string, isGroup bool, svc *service.ContactS
 
 // buildVecIndexSync 同步构建向量索引
 func buildVecIndexSync(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences) error {
-	return buildVecIndexCore(key, username, isGroup, svc, prefs, func(vecIndexProgress) {})
+	buildVecIndexCore(key, username, isGroup, svc, prefs, func(vecIndexProgress) {})
+	return nil
 }
 
 // runMemExtractionSync 同步运行记忆提炼
