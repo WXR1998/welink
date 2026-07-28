@@ -27,15 +27,17 @@ const (
 
 // BatchTask 持久化的批量任务
 type BatchTask struct {
-	ID          int64  `json:"id"`
-	ContactKey  string `json:"contact_key"`
-	Username    string `json:"username"`
-	IsGroup     bool   `json:"is_group"`
-	Status      string `json:"status"`
-	CurrentStep string `json:"current_step,omitempty"`
-	Error       string `json:"error,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
+	ID            int64  `json:"id"`
+	ContactKey    string `json:"contact_key"`
+	Username      string `json:"username"`
+	IsGroup       bool   `json:"is_group"`
+	Status        string `json:"status"`
+	CurrentStep   string `json:"current_step,omitempty"`
+	ProgressDone  int    `json:"progress_done,omitempty"`
+	ProgressTotal int    `json:"progress_total,omitempty"`
+	Error         string `json:"error,omitempty"`
+	CreatedAt     int64  `json:"created_at"`
+	UpdatedAt     int64  `json:"updated_at"`
 }
 
 var (
@@ -47,15 +49,17 @@ var (
 // initBatchTaskTable 创建 batch_tasks 表（在 aiDBMu 持有期间调用）
 func initBatchTaskTable() error {
 	_, err := aiDB.Exec(`CREATE TABLE IF NOT EXISTS batch_tasks (
-		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		contact_key  TEXT    NOT NULL,
-		username     TEXT    NOT NULL,
-		is_group     INTEGER NOT NULL DEFAULT 0,
-		status       TEXT    NOT NULL DEFAULT 'pending',
-		current_step TEXT    NOT NULL DEFAULT '',
-		error        TEXT    NOT NULL DEFAULT '',
-		created_at   INTEGER NOT NULL DEFAULT 0,
-		updated_at   INTEGER NOT NULL DEFAULT 0
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		contact_key    TEXT    NOT NULL,
+		username       TEXT    NOT NULL,
+		is_group       INTEGER NOT NULL DEFAULT 0,
+		status         TEXT    NOT NULL DEFAULT 'pending',
+		current_step   TEXT    NOT NULL DEFAULT '',
+		progress_done  INTEGER NOT NULL DEFAULT 0,
+		progress_total INTEGER NOT NULL DEFAULT 0,
+		error          TEXT    NOT NULL DEFAULT '',
+		created_at     INTEGER NOT NULL DEFAULT 0,
+		updated_at     INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return fmt.Errorf("batch_tasks: %w", err)
@@ -66,6 +70,8 @@ func initBatchTaskTable() error {
 	}
 	// 迁移：添加 current_step 列（重复执行安全）
 	_, _ = aiDB.Exec(`ALTER TABLE batch_tasks ADD COLUMN current_step TEXT NOT NULL DEFAULT ''`)
+	_, _ = aiDB.Exec(`ALTER TABLE batch_tasks ADD COLUMN progress_done INTEGER NOT NULL DEFAULT 0`)
+	_, _ = aiDB.Exec(`ALTER TABLE batch_tasks ADD COLUMN progress_total INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -78,7 +84,7 @@ func ListBatchTasks() ([]BatchTask, error) {
 		return nil, fmt.Errorf("AI DB 未就绪")
 	}
 	rows, err := db.Query(
-		`SELECT id, contact_key, username, is_group, status, current_step, error, created_at, updated_at
+		`SELECT id, contact_key, username, is_group, status, current_step, progress_done, progress_total, error, created_at, updated_at
 		 FROM batch_tasks ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -88,7 +94,7 @@ func ListBatchTasks() ([]BatchTask, error) {
 	for rows.Next() {
 		var t BatchTask
 		var isGroup int
-		rows.Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.CurrentStep, &t.Error, &t.CreatedAt, &t.UpdatedAt)
+		rows.Scan(&t.ID, &t.ContactKey, &t.Username, &isGroup, &t.Status, &t.CurrentStep, &t.ProgressDone, &t.ProgressTotal, &t.Error, &t.CreatedAt, &t.UpdatedAt)
 		t.IsGroup = isGroup != 0
 		tasks = append(tasks, t)
 	}
@@ -273,6 +279,24 @@ func updateBatchTaskStep(id int64, step string) {
 	}
 }
 
+// updateBatchTaskProgress 更新任务进度
+func updateBatchTaskProgress(id int64, done, total int) {
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil {
+		return
+	}
+	now := time.Now().Unix()
+	_, err := db.Exec(
+		`UPDATE batch_tasks SET progress_done = ?, progress_total = ?, updated_at = ? WHERE id = ?`,
+		done, total, now, id,
+	)
+	if err != nil {
+		log.Printf("[BATCH] 更新进度失败: %v", err)
+	}
+}
+
 // StopAllBatchTasks 停止所有任务并清空队列
 func StopAllBatchTasks() error {
 	aiDBMu.Lock()
@@ -321,6 +345,7 @@ func processBatchTask(task *BatchTask) error {
 	}
 	if !ftsStatus.Built {
 		updateBatchTaskStep(task.ID, "fts")
+		updateBatchTaskProgress(task.ID, 0, 0)
 		log.Printf("[BATCH] 构建 FTS 索引: %s", task.ContactKey)
 		if err := buildFTSIndexSync(task.ContactKey, task.Username, task.IsGroup, svc); err != nil {
 			return fmt.Errorf("FTS 索引构建失败: %w", err)
@@ -334,6 +359,7 @@ func processBatchTask(task *BatchTask) error {
 	}
 	if !vecStatus.Built {
 		updateBatchTaskStep(task.ID, "vec_index")
+		updateBatchTaskProgress(task.ID, 0, 0)
 		log.Printf("[BATCH] 构建向量索引: %s", task.ContactKey)
 		if err := buildVecIndexSync(task.ContactKey, task.Username, task.IsGroup, svc, prefs); err != nil {
 			return fmt.Errorf("向量索引构建失败: %w", err)
@@ -343,7 +369,10 @@ func processBatchTask(task *BatchTask) error {
 	// ── 3. 运行记忆提炼 ──
 	updateBatchTaskStep(task.ID, "mem_extraction")
 	log.Printf("[BATCH] 记忆提炼: %s", task.ContactKey)
-	if err := runMemExtractionSync(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db); err != nil {
+	progressCb := func(done, total int) {
+		updateBatchTaskProgress(task.ID, done, total)
+	}
+	if err := runMemExtractionSyncWithProgress(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db, progressCb, nil); err != nil {
 		return fmt.Errorf("记忆提炼失败: %w", err)
 	}
 
@@ -435,6 +464,10 @@ func buildVecIndexSync(key, username string, isGroup bool, svc *service.ContactS
 
 // runMemExtractionSync 同步运行记忆提炼
 func runMemExtractionSync(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, db *sql.DB) error {
+	return runMemExtractionSyncWithProgress(key, username, isGroup, svc, prefs, db, nil, nil)
+}
+
+func runMemExtractionSyncWithProgress(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, db *sql.DB, onProgress func(done, total int), onChunkDone func(chunkIdx int)) error {
 	rows, err := db.Query(
 		`SELECT datetime, sender, content FROM vec_messages WHERE contact_key = ? ORDER BY seq`, key)
 	if err != nil {
@@ -456,7 +489,7 @@ func runMemExtractionSync(key, username string, isGroup bool, svc *service.Conta
 	_, err = extractAndStoreFacts(key, msgs, prefs, db, embConfigs,
 		isGroup, username,
 		0,
-		nil, nil, nil,
+		onProgress, onChunkDone, nil,
 	)
 	return err
 }

@@ -11,6 +11,8 @@ interface BatchTask {
   is_group: boolean;
   status: string;
   current_step?: string;
+  progress_done?: number;
+  progress_total?: number;
   error?: string;
   created_at: number;
   updated_at: number;
@@ -209,8 +211,15 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
             };
             const sc = statusConfig[t.status] || statusConfig.pending;
             const stepLabel = t.current_step ? stepLabels[t.current_step] || t.current_step : '';
-            const stepPct: Record<string, number> = { fts: 20, vec_index: 50, mem_extraction: 80 };
-            const pct = t.status === 'done' ? 100 : (t.current_step ? stepPct[t.current_step] || 0 : 0);
+            const hasProgress = t.progress_total && t.progress_total > 0;
+            const pct = t.status === 'done'
+              ? 100
+              : hasProgress
+                ? Math.round(((t.progress_done || 0) / t.progress_total) * 100)
+                : 0;
+            const progressText = hasProgress
+              ? `${t.progress_done}/${t.progress_total}`
+              : '';
             return (
               <div key={t.id} className="px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 group">
                 <div className="flex items-center gap-2">
@@ -222,7 +231,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
                     <X size={11} />
                   </button>
                 </div>
-                {(t.status === 'running' || t.status === 'pending') && (
+                {t.status === 'running' && (
                   <div className="mt-1 flex items-center gap-2">
                     <div className="flex-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                       <div
@@ -230,7 +239,9 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                    {stepLabel && <span className="text-[9px] text-gray-400 whitespace-nowrap">{stepLabel}</span>}
+                    <span className="text-[9px] text-gray-400 whitespace-nowrap">
+                      {progressText || stepLabel}
+                    </span>
                   </div>
                 )}
               </div>
