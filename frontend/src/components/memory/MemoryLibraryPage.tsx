@@ -560,7 +560,10 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [activeContact, setActiveContact] = useState<string>(''); // '' = 全部
-  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [pinnedFilter, setPinnedFilter] = useState<'all' | 'pinned' | 'exclude'>(() => {
+    const saved = localStorage.getItem('welink_memory_pinned_filter');
+    return saved === 'pinned' || saved === 'all' ? saved : 'exclude';
+  });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
   // 手动添加
@@ -657,7 +660,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       const params = new URLSearchParams();
       if (activeContact) params.set('contact', activeContact);
       if (q.trim()) params.set('q', q.trim());
-      if (pinnedOnly) params.set('pinned', '1');
+      if (pinnedFilter === 'pinned') params.set('pinned', '1');
+      else if (pinnedFilter === 'exclude') params.set('pinned', 'exclude');
       params.set('limit', String(pageSize));
       params.set('offset', String(page * pageSize));
       params.set('sort', sortKey);
@@ -673,7 +677,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     } finally {
       setLoading(false);
     }
-  }, [activeContact, q, pinnedOnly, page, pageSize, sortKey, sortOrder]);
+  }, [activeContact, q, pinnedFilter, page, pageSize, sortKey, sortOrder]);
 
   // 轻量检查：仅拉 total（limit=1），用于非第一页时检测是否有新记忆
   const checkNewMemories = useCallback(async () => {
@@ -681,7 +685,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       const params = new URLSearchParams();
       if (activeContact) params.set('contact', activeContact);
       if (q.trim()) params.set('q', q.trim());
-      if (pinnedOnly) params.set('pinned', '1');
+      if (pinnedFilter === 'pinned') params.set('pinned', '1');
+      else if (pinnedFilter === 'exclude') params.set('pinned', 'exclude');
       params.set('limit', '1');
       params.set('offset', '0');
       params.set('sort', sortKey);
@@ -692,7 +697,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         setNewMemoryHint(true);
       }
     } catch { /* ignore */ }
-  }, [activeContact, q, pinnedOnly, lastSeenTotal, sortKey, sortOrder]);
+  }, [activeContact, q, pinnedFilter, lastSeenTotal, sortKey, sortOrder]);
 
   const fetchContactStats = useCallback(async () => {
     try {
@@ -711,7 +716,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   }, [fetchFacts]);
 
   // 筛选条件变化时重置到第一页
-  useEffect(() => { setPage(0); }, [activeContact, pinnedOnly, q]);
+  useEffect(() => { setPage(0); }, [activeContact, pinnedFilter, q]);
 
   // 定时刷新：仅在页面滚动条处于顶端时刷新，避免用户查看下方记忆时被刷走
   const scrollAtTopRef = useRef(true);
@@ -1188,15 +1193,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                 </button>
               )}
             </div>
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={pinnedOnly}
-                onChange={e => setPinnedOnly(e.target.checked)}
-                className="accent-[#07c160]"
-              />
-              只看置顶
-            </label>
+            <select
+              value={pinnedFilter}
+              onChange={e => { setPinnedFilter(e.target.value as typeof pinnedFilter); localStorage.setItem('welink_memory_pinned_filter', e.target.value); setPage(0); }}
+              className="text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1 outline-none cursor-pointer"
+            >
+              <option value="exclude">不看置顶</option>
+              <option value="all">全部</option>
+              <option value="pinned">只看置顶</option>
+            </select>
             <span className="text-xs text-gray-400">{total} 条</span>
             <select
               value={pageSize}

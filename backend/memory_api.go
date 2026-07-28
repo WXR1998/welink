@@ -18,7 +18,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 	api.GET("/memory/list", func(c *gin.Context) {
 		contact := c.Query("contact")        // 为空则全量
 		q := strings.TrimSpace(c.Query("q")) // 关键词（fact LIKE）
-		pinnedOnly := c.Query("pinned") == "1"
+		pinnedFilter := c.Query("pinned") // "1"=只看置顶, "exclude"=不看置顶, 空=全看
 		limit, _ := strconv.Atoi(c.Query("limit"))
 		if limit <= 0 || limit > 500 {
 			limit = 100
@@ -40,8 +40,10 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			whereParts = append(whereParts, "contact_key = ?")
 			args = append(args, contact)
 		}
-		if pinnedOnly {
+		if pinnedFilter == "1" {
 			whereParts = append(whereParts, "pinned = 1")
+		} else if pinnedFilter == "exclude" {
+			whereParts = append(whereParts, "pinned = 0")
 		}
 		if q != "" {
 			// LIKE 转义：用户搜 "100%" / "_abc" 时不应被当作通配符匹配，
