@@ -519,7 +519,7 @@ function AppInner() {
   return (
     <SelfInfoProvider value={appInfo?.self_info ?? null}>
     <PrivacyModeContext.Provider value={{ privacyMode, setPrivacyMode }}>
-    <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden overflow-x-hidden">
+    <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden overflow-x-clip">
       {/* Sidebar */}
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ tasks: taskUnread }} />
 

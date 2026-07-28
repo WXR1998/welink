@@ -134,18 +134,18 @@ html.dark .prose code {
 
 /* 禁止水平溢出滚动 — iOS Safari 关键修复 */
 html {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
 }
 body {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
   position: relative;
   width: 100%;
 }
 
 #root {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
 }
 
