@@ -244,6 +244,18 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
             <div className="border-t border-gray-100 dark:border-white/10 pt-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold dk-text">选择群聊（{foundGroups.length} 个共同群）</span>
+                <button
+                  onClick={() => {
+                    if (selectedGroups.size === foundGroups.length) {
+                      setSelectedGroups(new Set());
+                    } else {
+                      setSelectedGroups(new Set(foundGroups.map(g => g.username)));
+                    }
+                  }}
+                  className="text-[10px] text-[#07c160] hover:underline"
+                >
+                  {selectedGroups.size === foundGroups.length && foundGroups.length > 0 ? '取消全选' : '全选'}
+                </button>
               </div>
               <div className="max-h-48 overflow-y-auto space-y-0.5 mb-3">
                 {foundGroups.map(g => {
