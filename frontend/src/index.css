@@ -144,6 +144,11 @@ body {
   width: 100%;
 }
 
+#root {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
 /* iOS Safari: 禁止双击缩放 & 高亮延迟 */
 * {
   -webkit-tap-highlight-color: transparent;

@@ -1323,7 +1323,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                       <RelativeTime ts={f.updated_at || f.created_at} />
                     </span>
                     {!isEditing && (
-                      <div className="flex gap-0.5 shrink-0">
+                      <div className="hidden sm:flex gap-0.5 shrink-0">
                         <button
                           onClick={() => togglePin(f)}
                           title={f.pinned ? '取消置顶' : '置顶'}

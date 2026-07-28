@@ -524,7 +524,7 @@ function AppInner() {
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ tasks: taskUnread }} />
 
       {/* Main Content */}
-      <main className={`flex-1 overflow-y-auto dk-page overscroll-contain ${activeTab === 'dashboard' ? 'pb-20 sm:pb-0' : 'p-4 sm:p-10 pb-24 sm:pb-10'}`}>
+      <main className={`flex-1 min-w-0 overflow-y-auto dk-page overscroll-contain ${activeTab === 'dashboard' ? 'pb-20 sm:pb-0' : 'p-4 sm:p-10 pb-24 sm:pb-10'}`}>
         <Suspense fallback={<ChunkLoading />}>
         {activeTab === 'dashboard' ? (
           <AIHomePage
