@@ -211,14 +211,16 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
             };
             const sc = statusConfig[t.status] || statusConfig.pending;
             const stepLabel = t.current_step ? stepLabels[t.current_step] || t.current_step : '';
-            const hasProgress = t.progress_total && t.progress_total > 0;
+            const total = t.progress_total || 0;
+            const done = t.progress_done || 0;
+            const hasProgress = total > 0;
             const pct = t.status === 'done'
               ? 100
               : hasProgress
-                ? Math.round(((t.progress_done || 0) / t.progress_total) * 100)
+                ? Math.round((done / total) * 100)
                 : 0;
             const progressText = hasProgress
-              ? `${t.progress_done}/${t.progress_total}`
+              ? `${done}/${total}`
               : '';
             return (
               <div key={t.id} className="px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 group">
