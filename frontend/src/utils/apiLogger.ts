@@ -37,6 +37,23 @@ let listeners: Set<() => void> = new Set();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
+// 轮询端点：这些请求不记入日志，避免刷屏
+const SKIP_PATTERNS = [
+  '/ai/llm-logs',        // 自身轮询
+  '/token-stats',        // Token 统计轮询
+  '/tasks/feed',         // 任务 feed 轮询
+  '/ai/vec/all-jobs',    // 所有构建任务轮询
+  '/ai/vec/build-progress', // 向量构建进度轮询
+  '/ai/mem/status',      // 记忆提取状态轮询
+  '/ai/conversations',   // 对话历史轮询
+  '/ai/vec/index-status', // 向量索引状态轮询
+  '/ai/rag',             // RAG 对话轮询
+];
+
+function shouldSkip(url: string): boolean {
+  return SKIP_PATTERNS.some(p => url.includes(p));
+}
+
 function notify() {
   listeners.forEach(fn => fn());
 }
@@ -132,8 +149,8 @@ export function initApiLogger() {
       : input instanceof URL ? input.toString()
       : input.url;
 
-    // 跳过自身轮询端点，避免递归 + OOM
-    if (url.includes('/ai/llm-logs')) {
+    // 跳过轮询端点，避免刷屏 + OOM
+    if (shouldSkip(url)) {
       return originalFetch(input as RequestInfo, init);
     }
 

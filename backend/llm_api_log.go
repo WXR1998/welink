@@ -31,7 +31,7 @@ type LLMApiLogEntry struct {
 
 const (
 	maxLLMApiLogs = 200
-	snippetLen    = 2000
+	snippetLen    = 200000
 )
 
 var (

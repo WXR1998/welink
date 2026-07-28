@@ -67,10 +67,52 @@ function formatUrl(url: string): string {
   return url.replace(/^\/api/, '') || url;
 }
 
+// 默认只显示前 500 字符，避免大请求体占用过多内存
+const DISPLAY_TRUNCATE = 500;
+
+// 尝试将内容格式化为美观的 JSON；非 JSON 则原样返回
+function formatContent(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      // 不是合法 JSON，原样返回
+    }
+  }
+  // 将字面量 \n（反斜杠+n）转换为真正的换行符
+  return content.replace(/\\n/g, '\n');
+}
+
+// 可折叠的代码片段块：默认截断，点击"查看全部"展开
+const SnippetBlock: React.FC<{ label: string; content: string; bg?: string }> = ({ label, content, bg }) => {
+  const [showAll, setShowAll] = useState(false);
+  const formatted = formatContent(content);
+  const isLong = formatted.length > DISPLAY_TRUNCATE;
+  const display = (isLong && !showAll) ? formatted.slice(0, DISPLAY_TRUNCATE) + '…[truncated]' : formatted;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-gray-400 font-bold">{label}</span>
+        {isLong && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="text-[10px] text-[#07c160] hover:underline"
+          >
+            {showAll ? '收起' : '查看全部'}
+          </button>
+        )}
+      </div>
+      <pre className={`text-xs text-gray-600 dark:text-gray-300 ${bg ?? 'bg-gray-50 dark:bg-white/5'} rounded p-2 overflow-x-auto whitespace-pre-wrap break-all`}>{display}</pre>
+    </div>
+  );
+};
+
 export const ApiLogsPage: React.FC = () => {
   const [frontendEntries, setFrontendEntries] = useState<ApiLogEntry[]>([]);
   const [backendEntries, setBackendEntries] = useState<LLMApiLogEntry[]>([]);
-  const [filter, setFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
+  const [filter, setFilter] = useState<'all' | 'ai' | 'error' | 'warn' | 'info'>('ai');
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -137,7 +179,11 @@ export const ApiLogsPage: React.FC = () => {
   ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
   const filtered = allEntries.filter(e => {
-    if (filter !== 'all' && e.level !== filter) return false;
+    // 'ai' 标签：只看 AI/LLM 相关调用（后端 LLM 请求 + 前端 /ai/ 路径请求）
+    if (filter === 'ai') {
+      const isAI = e.source === 'backend' || e.url.includes('/ai/');
+      if (!isAI) return false;
+    } else if (filter !== 'all' && e.level !== filter) return false;
     if (search) {
       const s = search.toLowerCase();
       return e.url.toLowerCase().includes(s) ||
@@ -184,7 +230,7 @@ export const ApiLogsPage: React.FC = () => {
           />
         </div>
         <div className="flex items-center gap-1">
-          {(['all', 'error', 'warn', 'info'] as const).map(f => (
+          {(['all', 'ai', 'error', 'warn', 'info'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -194,7 +240,7 @@ export const ApiLogsPage: React.FC = () => {
                   : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10'
               }`}
             >
-              {f === 'all' ? '全部' : f === 'error' ? '错误' : f === 'warn' ? '警告' : '信息'}
+              {f === 'all' ? '全部' : f === 'ai' ? 'AI/LLM' : f === 'error' ? '错误' : f === 'warn' ? '警告' : '信息'}
             </button>
           ))}
         </div>
@@ -271,28 +317,13 @@ export const ApiLogsPage: React.FC = () => {
                     </div>
                   )}
                   {entry.error && (
-                    <div>
-                      <div className="text-[10px] text-gray-400 font-bold mb-1">错误信息</div>
-                      <pre className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                        {entry.error}
-                      </pre>
-                    </div>
+                    <SnippetBlock label="错误信息" content={entry.error} bg="bg-red-50 dark:bg-red-500/10" />
                   )}
                   {entry.requestSnippet && (
-                    <div>
-                      <div className="text-[10px] text-gray-400 font-bold mb-1">请求体</div>
-                      <pre className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                        {entry.requestSnippet}
-                      </pre>
-                    </div>
+                    <SnippetBlock label="请求体" content={entry.requestSnippet} />
                   )}
                   {entry.responseSnippet && (
-                    <div>
-                      <div className="text-[10px] text-gray-400 font-bold mb-1">响应体</div>
-                      <pre className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                        {entry.responseSnippet}
-                      </pre>
-                    </div>
+                    <SnippetBlock label="响应体" content={entry.responseSnippet} />
                   )}
                   {!entry.error && !entry.requestSnippet && !entry.responseSnippet && (
                     <div className="text-xs text-gray-400">无额外信息</div>
