@@ -372,6 +372,25 @@ func extractAndStoreFacts(
 	// 用于跨批次消解"他/她/那个事"等指代，避免张冠李戴
 	var runningSummary memContextSummary
 
+	// 断点续传时，先回退处理上一个 segment 以重建上下文摘要，
+	// 这样续传的第一个 segment 也能拿到前文上下文。
+	// 回退 segment 的事实不重复入库（之前已提取过）。
+	if startChunk > 0 && startChunk <= totalChunks {
+		lookbackIdx := startChunk - 1
+		if lookbackIdx < len(segments) {
+			lookbackSeg := segments[lookbackIdx]
+			lookbackChunk := msgs[lookbackSeg.Start:lookbackSeg.End]
+			if lookbackSeg.GapSplit {
+				runningSummary.Unresolved = nil
+				runningSummary.ActiveTopics = nil
+			}
+			lbResult, lbErr := extractFactsFromChunk(lookbackChunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx, runningSummary)
+			if lbErr == nil {
+				runningSummary = lbResult.ContextSummary
+			}
+		}
+	}
+
 	for chunkIdx := startChunk; chunkIdx < totalChunks; chunkIdx++ {
 		// 检查是否被暂停
 		if abortCh != nil {
@@ -558,8 +577,8 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"8. 不要在事实文本中添加具体日期或时间，只有当时间本身是关键信息（如'下个月要吃饺'、'五天前有考试'这种相对时间虚指）时才保留\n" +
 			"9. 参考前文上下文摘要来理解\"他/她/那个事\"等指代；如果仍无法确定所指对象，跳过该条事实\n" +
 			"\n" + outputFormat +
-			priorSection +
 			bgSection +
+			priorSection +
 			"\n聊天记录：\n" + sb.String() + "\n输出："
 	} else {
 		prompt = fmt.Sprintf("你是一个记忆提炼专家。从以下聊天记录中提取关键事实，并生成供下一段分析使用的上下文摘要。\n"+
@@ -580,8 +599,8 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"\n聊天记录：\n%s\n输出：",
 			accuracyRule,
 			outputFormat,
-			priorSection,
 			bgSection,
+			priorSection,
 			sb.String())
 	}
 
