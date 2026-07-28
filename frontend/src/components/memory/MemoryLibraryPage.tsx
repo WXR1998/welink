@@ -337,10 +337,8 @@ async function renderChatToBlob(
   ctx.fillRect(0, 0, canvasW, totalH);
 
   // ── 3.5. Draw header (group avatar + name) ─────────────────────────────
+  // Header avatar is loaded in parallel with sender avatars below (step 5)
   let headerAvatarEl: HTMLImageElement | null = null;
-  if (header?.avatarUrl) {
-    try { headerAvatarEl = await loadImage(header.avatarUrl); } catch { /* ignore */ }
-  }
   if (header) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvasW, HEADER_H);
@@ -410,18 +408,25 @@ async function renderChatToBlob(
   ctx.lineTo(canvasW, HEADER_H + titleH);
   ctx.stroke();
 
-  // ── 5. Pre-load avatars ────────────────────────────────────────────────
+  // ── 5. Pre-load avatars (parallel) ─────────────────────────────────────
   const senderAvatars = new Map<string, HTMLImageElement | null>();
   const uniqueSenders = [...new Set(msgs.map(m => m.sender))];
-  for (const sender of uniqueSenders) {
-    const avatarUrl = avatarLookup(sender);
-    if (avatarUrl) {
-      try { senderAvatars.set(sender, await loadImage(avatarUrl)); }
-      catch { senderAvatars.set(sender, null); }
-    } else {
-      senderAvatars.set(sender, null);
-    }
-  }
+  await Promise.all([
+    ...uniqueSenders.map(async (sender) => {
+      const avatarUrl = avatarLookup(sender);
+      if (avatarUrl) {
+        try { senderAvatars.set(sender, await loadImage(avatarUrl)); }
+        catch { senderAvatars.set(sender, null); }
+      } else {
+        senderAvatars.set(sender, null);
+      }
+    }),
+    (async () => {
+      if (header?.avatarUrl) {
+        try { headerAvatarEl = await loadImage(header.avatarUrl); } catch { /* ignore */ }
+      }
+    })(),
+  ]);
 
   // ── 6. Draw messages ───────────────────────────────────────────────────
   let y = HEADER_H + padX + titleH;
@@ -812,20 +817,26 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       setHoverPos({ top, left });
       setHoverVisible(true);
       try {
-        const r = await axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
-          `/api/memory/${fact.id}/source`,
-        );
-        setHoverMsgs(r.data.messages || []);
+        // 并行拉取来源消息 + 匹配索引
+        const [srcRes, matchedRes] = await Promise.all([
+          axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
+            `/api/memory/${fact.id}/source`,
+          ),
+          axios.get<{ matched_indices: number[] }>(`/api/memory/${fact.id}/matched`).catch(() => null),
+        ]);
+        setHoverMsgs(srcRes.data.messages || []);
         // 用后端返回的同段事实构建完整标题（不受搜索结果 limit 限制）
-        if (r.data.related_facts && r.data.related_facts.length > 0) {
-          const rfPrefix = extractTimeRangePrefix(r.data.related_facts[0]);
+        if (srcRes.data.related_facts && srcRes.data.related_facts.length > 0) {
+          const rfPrefix = extractTimeRangePrefix(srcRes.data.related_facts[0]);
           const rfTimeRange = rfPrefix ? rfPrefix.trim() : '';
-          const contents = r.data.related_facts.map(f => {
+          const contents = srcRes.data.related_facts.map(f => {
             const p = extractTimeRangePrefix(f);
             return p ? f.substring(p.length).trim() : f;
           });
           setHoverFactText(rfTimeRange + '\n' + contents.map(c => '- ' + c).join('\n'));
         }
+        // 预取的匹配索引，截图时直接用
+        setMatchedIndices(matchedRes?.data?.matched_indices || []);
       } catch { /* ignore */ }
       finally { setHoverLoading(false); }
     }, 300);
@@ -866,21 +877,14 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (hoverMsgs.length === 0) return;
     setHoverShotLoading(true);
     try {
-      // 获取匹配的消息索引用于高亮
-      let matched: number[] = [];
-      if (hoverFactId !== null) {
-        try {
-          const r = await axios.get<{ matched_indices: number[] }>(`/api/memory/${hoverFactId}/matched`);
-          matched = r.data.matched_indices || [];
-        } catch { /* 匹配失败不影响截图 */ }
-      }
+      // matchedIndices 已在 hover 时预取
       const blob = await renderChatToBlob(
         hoverMsgs,
         (sender) => senderAvatarMap.get(sender),
         hoverFactText,
         hoverContactInfo ? { name: hoverContactInfo.name, avatarUrl: hoverContactInfo.avatar } : undefined,
         allNames,
-        matched,
+        matchedIndices,
       );
 
       let copied = false;
