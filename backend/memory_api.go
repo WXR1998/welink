@@ -55,9 +55,24 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		var total int
 		_ = db.QueryRow("SELECT COUNT(*) FROM mem_facts"+where, args...).Scan(&total)
 
-		// 查列表（置顶优先，创建时间倒序）
+		// 排序：sort 决定字段，order 决定方向；置顶始终优先
+		sort := c.DefaultQuery("sort", "id")          // id | contact_key | created_at | source_from
+		order := c.DefaultQuery("order", "desc")       // asc | desc
+		sortCol := "id"
+		switch sort {
+		case "contact_key":
+			sortCol = "contact_key"
+		case "created_at":
+			sortCol = "created_at"
+		case "source_from":
+			sortCol = "source_from"
+		}
+		orderDir := "DESC"
+		if order == "asc" {
+			orderDir = "ASC"
+		}
 		query := "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
-			where + " ORDER BY pinned DESC, id DESC LIMIT ? OFFSET ?"
+			where + " ORDER BY pinned DESC, " + sortCol + " " + orderDir + ", id DESC LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 		rows, err := db.Query(query, args...)
 		if err != nil {

@@ -574,6 +574,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
+  const [sortKey, setSortKey] = useState<'id' | 'contact_key' | 'created_at' | 'source_from'>('id');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [displayMode, setDisplayMode] = useState<'large' | 'medium' | 'small'>(() => {
     const saved = localStorage.getItem('welink_memory_display');
     if (saved === 'large' || saved === 'medium' || saved === 'small') return saved;
@@ -657,6 +659,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       if (pinnedOnly) params.set('pinned', '1');
       params.set('limit', String(pageSize));
       params.set('offset', String(page * pageSize));
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
       const r = await axios.get<{ facts: MemFact[]; total: number }>(`/api/memory/list?${params}`);
       setFacts(r.data.facts || []);
       const newTotal = r.data.total || 0;
@@ -668,7 +672,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     } finally {
       setLoading(false);
     }
-  }, [activeContact, q, pinnedOnly, page, pageSize]);
+  }, [activeContact, q, pinnedOnly, page, pageSize, sortKey, sortOrder]);
 
   // 轻量检查：仅拉 total（limit=1），用于非第一页时检测是否有新记忆
   const checkNewMemories = useCallback(async () => {
@@ -679,13 +683,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       if (pinnedOnly) params.set('pinned', '1');
       params.set('limit', '1');
       params.set('offset', '0');
+      params.set('sort', sortKey);
+      params.set('order', sortOrder);
       const r = await axios.get<{ facts: MemFact[]; total: number }>(`/api/memory/list?${params}`);
       const newTotal = r.data.total || 0;
       if (newTotal > lastSeenTotal) {
         setNewMemoryHint(true);
       }
     } catch { /* ignore */ }
-  }, [activeContact, q, pinnedOnly, lastSeenTotal]);
+  }, [activeContact, q, pinnedOnly, lastSeenTotal, sortKey, sortOrder]);
 
   const fetchContactStats = useCallback(async () => {
     try {
@@ -1210,6 +1216,23 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               <option value={100}>100/页</option>
               <option value={200}>200/页</option>
             </select>
+            <select
+              value={sortKey}
+              onChange={e => { setSortKey(e.target.value as typeof sortKey); setPage(0); }}
+              className="text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1 outline-none cursor-pointer"
+            >
+              <option value="id">默认</option>
+              <option value="contact_key">来源</option>
+              <option value="created_at">提取时间</option>
+              <option value="source_from">聊天时间</option>
+            </select>
+            <button
+              onClick={() => { setSortOrder(o => o === 'asc' ? 'desc' : 'asc'); setPage(0); }}
+              className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 hover:border-[#07c160] hover:text-[#07c160] transition-colors"
+              title={sortOrder === 'asc' ? '升序（点击切换降序）' : '降序（点击切换升序）'}
+            >
+              {sortOrder === 'asc' ? '↑' : '↓'}
+            </button>
             <div className="flex items-center gap-0.5 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5">
               {([['large','大'],['medium','中'],['small','小']] as const).map(([mode, label]) => (
                 <button
