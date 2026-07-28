@@ -289,7 +289,7 @@ const TokenHoverSection: React.FC<{
             <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{toM(total)}</span>
           </div>
           {CATEGORY_ORDER.map(kind => {
-            const items = (byKind.get(kind) || []).slice().sort((a, b) => a.model.localeCompare(b.model));
+            const items = (byKind.get(kind) || []).slice().sort((a, b) => b.total_tokens - a.total_tokens).slice(0, 3);
             const sp = speedMap.get(kind);
             const subtotal = items.reduce((s, u) => s + u.total_tokens, 0);
             const hasData = items.length > 0;
