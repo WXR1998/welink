@@ -727,7 +727,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         hoverMsgs,
         (sender) => senderAvatarMap.get(sender),
         hoverFactText,
-        hoverContactInfo || undefined,
+        hoverContactInfo ? { name: hoverContactInfo.name, avatarUrl: hoverContactInfo.avatar } : undefined,
         allNames,
       );
 
