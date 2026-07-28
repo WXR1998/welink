@@ -541,7 +541,9 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 
 	bgSection := ""
 	if backgroundCtx != "" {
-		bgSection = "\n已知背景信息（用于理解聊天中的人物）：\n" + backgroundCtx + "\n"
+		now := time.Now()
+		monthStr := fmt.Sprintf("%d年%d月", now.Year(), int(now.Month()))
+		bgSection = "\n已知背景信息（反映 " + monthStr + " 的当前状态，仅用于理解人物关系，不代表历史状态）：\n" + backgroundCtx + "\n"
 	}
 
 	priorSection := "\n前文上下文（来自上一段分析的摘要，用于消解\"他/她/那个\"等指代）：\n" + formatPriorSummary(priorSummary) + "\n"
