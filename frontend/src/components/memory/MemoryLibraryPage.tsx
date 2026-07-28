@@ -577,6 +577,11 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 触摸设备检测：移动端用 click 代替 hover 触发预览
+  const isTouchRef = useRef(false);
+  useEffect(() => {
+    isTouchRef.current = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  }, []);
 
   // 用于把 contact_key 映射到头像 / 名称
   // 注意：后端 contact_key 带 contact:/group: 前缀，lookup 时要脱
@@ -813,6 +818,16 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         setHoverMsgs([]);
       }, 150);
     }, 100);
+  };
+
+  // 移动端：点击记忆行时 toggle 预览
+  const handleFactClick = (fact: MemFact, e: React.MouseEvent) => {
+    if (!isTouchRef.current) return;
+    if (hoverFactId === fact.id && hoverVisible) {
+      hidePreview();
+    } else {
+      showPreview(fact, e.currentTarget.getBoundingClientRect());
+    }
   };
 
   const handleCopyAll = () => {
@@ -1216,9 +1231,9 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                     className={`flex items-center gap-2 px-3 py-1 border-b border-gray-100 dark:border-white/5 transition-colors ${
                       isSelected ? 'bg-[#07c160]/5' : 'hover:bg-gray-50 dark:hover:bg-white/5'
                     } ${f.pinned ? 'border-l-2 border-l-amber-400' : ''}`}
-                    onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
-                    onMouseLeave={() => hidePreview()}
-                    onClick={selectMode ? () => toggleSelect(f.id) : undefined}
+                    onMouseEnter={isTouchRef.current ? undefined : (e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={isTouchRef.current ? undefined : () => hidePreview()}
+                    onClick={selectMode ? () => toggleSelect(f.id) : (e) => handleFactClick(f, e)}
                   >
                     {selectMode && (
                       <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${
@@ -1283,9 +1298,9 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                     className={`bg-white dark:bg-[#1d1d1f] ${isMedium ? 'rounded-xl p-2.5' : 'rounded-2xl p-4'} border transition-colors ${
                       isSelected ? 'border-[#07c160] ring-1 ring-[#07c160]/30' : f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
                     }`}
-                    onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
-                    onMouseLeave={() => hidePreview()}
-                    onClick={selectMode ? () => toggleSelect(f.id) : undefined}
+                    onMouseEnter={isTouchRef.current ? undefined : (e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={isTouchRef.current ? undefined : () => hidePreview()}
+                    onClick={selectMode ? () => toggleSelect(f.id) : (e) => handleFactClick(f, e)}
                   >
                     <div className={`flex items-start ${isMedium ? 'gap-2' : 'gap-3'}`}>
                       {selectMode && (
@@ -1478,54 +1493,68 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
 
       {/* hover 预览浮层 */}
       {hoverFactId !== null && hoverPos && (
-        <div
-          className={`fixed z-[8000] w-[460px] max-h-[420px] rounded-2xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden transition-opacity duration-150 ${hoverVisible ? 'opacity-100' : 'opacity-0'}`}
-          style={{ top: hoverPos.top, left: hoverPos.left }}
-          onMouseEnter={() => {
-            if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
-            if (fadeTimer.current) { clearTimeout(fadeTimer.current); fadeTimer.current = null; }
-            setHoverVisible(true);
-          }}
-          onMouseLeave={() => hidePreview()}
-        >
-          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 shrink-0">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">来源聊天记录</span>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleScreenshot}
-                disabled={hoverShotLoading || hoverMsgs.length === 0}
-                className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors disabled:opacity-50"
-              >
-                {hoverShotLoading ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
-                截图
-              </button>
-              <button
-                onClick={handleCopyAll}
-                className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
-              >
-                {hoverCopied ? <Check size={12} /> : <Copy size={12} />}
-                {hoverCopied ? '已复制' : '复制全部'}
-              </button>
+        <>
+          {/* 移动端背景遮罩：点击关闭 */}
+          <div
+            className="sm:hidden fixed inset-0 z-[7999] bg-black/30"
+            onClick={() => hidePreview()}
+          />
+          <div
+            className={`fixed z-[8000] w-[460px] max-w-[calc(100vw-16px)] max-h-[420px] rounded-2xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden transition-opacity duration-150 ${hoverVisible ? 'opacity-100' : 'opacity-0'}`}
+            style={{ top: hoverPos.top, left: hoverPos.left }}
+            onMouseEnter={() => {
+              if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+              if (fadeTimer.current) { clearTimeout(fadeTimer.current); fadeTimer.current = null; }
+              setHoverVisible(true);
+            }}
+            onMouseLeave={() => hidePreview()}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 shrink-0">
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">来源聊天记录</span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleScreenshot}
+                  disabled={hoverShotLoading || hoverMsgs.length === 0}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors disabled:opacity-50"
+                >
+                  {hoverShotLoading ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+                  截图
+                </button>
+                <button
+                  onClick={handleCopyAll}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#07c160] transition-colors"
+                >
+                  {hoverCopied ? <Check size={12} /> : <Copy size={12} />}
+                  {hoverCopied ? '已复制' : '复制全部'}
+                </button>
+                {/* 关闭按钮：移动端可点击关闭 */}
+                <button
+                  onClick={() => hidePreview()}
+                  className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto p-2 space-y-1 flex-1">
+              {hoverLoading ? (
+                <div className="py-4 text-center">
+                  <Loader2 size={16} className="animate-spin inline text-gray-400" />
+                </div>
+              ) : hoverMsgs.length === 0 ? (
+                <div className="py-4 text-center text-xs text-gray-400">无来源聊天记录</div>
+              ) : (
+                hoverMsgs.map((m, idx) => (
+                  <div key={idx} className="text-[11px] leading-relaxed break-words">
+                    <span className="text-gray-400">{m.datetime}</span>{' '}
+                    <span className="text-gray-600 dark:text-gray-300 font-medium">{m.sender}:</span>{' '}
+                    <span className="text-gray-700 dark:text-gray-200">{m.content}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
-          <div className="overflow-y-auto p-2 space-y-1 flex-1">
-            {hoverLoading ? (
-              <div className="py-4 text-center">
-                <Loader2 size={16} className="animate-spin inline text-gray-400" />
-              </div>
-            ) : hoverMsgs.length === 0 ? (
-              <div className="py-4 text-center text-xs text-gray-400">无来源聊天记录</div>
-            ) : (
-              hoverMsgs.map((m, idx) => (
-                <div key={idx} className="text-[11px] leading-relaxed break-words">
-                  <span className="text-gray-400">{m.datetime}</span>{' '}
-                  <span className="text-gray-600 dark:text-gray-300 font-medium">{m.sender}:</span>{' '}
-                  <span className="text-gray-700 dark:text-gray-200">{m.content}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
