@@ -79,10 +79,9 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
   const [allTime, setAllTime] = useState<TokenUsage[]>([]);
   const [daily, setDaily] = useState<TokenUsage[]>([]);
   const [speeds, setSpeeds] = useState<RecentSpeed[]>([]);
-  const [totalTokens, setTotalTokens] = useState(0);
+
   const [flash, setFlash] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<'all' | 'daily'>('all');
+
   const prevCallCountRef = useRef(0);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -118,8 +117,6 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
         setAllTime(r.usage || []);
         setDaily(r.daily || []);
         setSpeeds(r.recent_speeds || []);
-        const total = (r.usage || []).reduce((s, u) => s + u.total_tokens, 0);
-        setTotalTokens(total);
         const totalCalls = (r.usage || []).reduce((s, u) => s + u.call_count, 0);
         if (totalCalls > prevCallCountRef.current) {
           setFlash(true);
@@ -157,14 +154,19 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
   }, [pollAll]);
 
   // Token stats derived data
-  const usage = mode === 'all' ? allTime : daily;
-  const byKind = new Map<string, TokenUsage[]>();
-  for (const u of usage) {
-    const arr = byKind.get(u.kind) || [];
-    arr.push(u);
-    byKind.set(u.kind, arr);
-  }
+  const allTimeTotal = allTime.reduce((s, u) => s + u.total_tokens, 0);
+  const dailyTotal = daily.reduce((s, u) => s + u.total_tokens, 0);
   const speedMap = new Map(speeds.map(s => [s.kind, s]));
+
+  const buildByKind = (usage: TokenUsage[]) => {
+    const m = new Map<string, TokenUsage[]>();
+    for (const u of usage) {
+      const arr = m.get(u.kind) || [];
+      arr.push(u);
+      m.set(u.kind, arr);
+    }
+    return m;
+  };
 
   // Running task info
   const runningBatchTask = batchTasks.find(t => t.status === 'running');
@@ -192,8 +194,6 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
   return (
     <div
       className="fixed bottom-0 left-0 right-0 z-[6000] h-9 bg-white/95 dark:bg-[#1d1d1f]/95 backdrop-blur-md border-t border-gray-200 dark:border-white/10 flex items-center px-4 gap-4 text-xs"
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
     >
       {/* Left: running tasks */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -229,77 +229,104 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
         <MemoryCountDisplay />
       </div>
 
-      {/* Right: token count with hover panel */}
-      <div className="flex items-center gap-1.5 shrink-0 relative">
-        <Zap
-          size={12}
-          className={flash ? 'text-[#07c160] transition-colors' : 'text-gray-400 transition-colors'}
-          fill={flash ? 'currentColor' : 'none'}
+      {/* Right: token stats (daily + all-time, each with hover detail) */}
+      <div className="flex items-center gap-3 shrink-0">
+        <TokenHoverSection
+          label="今日"
+          total={dailyTotal}
+          flash={flash}
+          usage={daily}
+          speeds={speeds}
         />
-        <span className={`font-semibold tabular-nums ${flash ? 'text-[#07c160]' : 'text-gray-600 dark:text-gray-300'}`}>
-          {toM(totalTokens)}
-        </span>
-        {expanded && (
-          <div className="absolute bottom-full right-0 mb-1 w-[340px] bg-white dark:bg-[#1d1d1f] rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 p-3 space-y-3 max-h-[450px] overflow-y-auto">
-            {/* Mode toggle */}
-            <div className="flex gap-1 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5">
-              <button
-                className={`flex-1 text-[10px] font-semibold py-1 rounded-md transition-colors ${
-                  mode === 'all' ? 'bg-white dark:bg-white/10 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500 dark:text-gray-400'
-                }`}
-                onClick={() => setMode('all')}
-              >
-                全量
-              </button>
-              <button
-                className={`flex-1 text-[10px] font-semibold py-1 rounded-md transition-colors ${
-                  mode === 'daily' ? 'bg-white dark:bg-white/10 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500 dark:text-gray-400'
-                }`}
-                onClick={() => setMode('daily')}
-              >
-                今日
-              </button>
-            </div>
-            {CATEGORY_ORDER.map(kind => {
-              const items = (byKind.get(kind) || []).slice().sort((a, b) => a.model.localeCompare(b.model));
-              const sp = speedMap.get(kind);
-              const subtotal = items.reduce((s, u) => s + u.total_tokens, 0);
-              const hasData = items.length > 0;
-              if (!hasData && !sp) return null;
-              return (
-                <div key={kind}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{CATEGORY_LABELS[kind]}</span>
-                    <div className="flex items-center gap-2">
-                      {sp && sp.count > 0 && <span className="text-[10px] text-[#07c160] font-semibold">{sp.speed.toFixed(1)} t/s</span>}
-                      <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{toM(subtotal)}</span>
-                    </div>
-                  </div>
-                  {hasData && (
-                    <div className="space-y-1">
-                      {items.map(u => (
-                        <div key={u.model} className="flex items-center justify-between text-[11px]">
-                          <span className="text-gray-600 dark:text-gray-300 truncate max-w-[160px]" title={u.model}>{u.model}</span>
-                          <span className="text-gray-400 shrink-0">
-                            <span className="text-gray-500 dark:text-gray-400">{toM(u.prompt_tokens)}→{toM(u.output_tokens)}</span>
-                            {' '}
-                            <span className="font-semibold text-gray-700 dark:text-gray-200">{toM(u.total_tokens)}</span>
-                            {' '}
-                            <span className="text-gray-400">({u.call_count}次)</span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {usage.length === 0 && speeds.length === 0 && (
-              <div className="text-xs text-gray-400 text-center py-2">暂无 token 使用记录</div>
-            )}
-          </div>
-        )}
+        <span className="text-gray-300">|</span>
+        <TokenHoverSection
+          label="全量"
+          total={allTimeTotal}
+          flash={flash}
+          usage={allTime}
+          speeds={speeds}
+        />
       </div>
+    </div>
+  );
+};
+
+const TokenHoverSection: React.FC<{
+  label: string;
+  total: number;
+  flash: boolean;
+  usage: TokenUsage[];
+  speeds: RecentSpeed[];
+}> = ({ label, total, flash, usage, speeds }) => {
+  const [hovered, setHovered] = useState(false);
+  const byKind = new Map<string, TokenUsage[]>();
+  for (const u of usage) {
+    const arr = byKind.get(u.kind) || [];
+    arr.push(u);
+    byKind.set(u.kind, arr);
+  }
+  const speedMap = new Map(speeds.map(s => [s.kind, s]));
+
+  return (
+    <div
+      className="flex items-center gap-1 relative cursor-default"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Zap
+        size={12}
+        className={flash ? 'text-[#07c160] transition-colors' : 'text-gray-400 transition-colors'}
+        fill={flash ? 'currentColor' : 'none'}
+      />
+      <span className="text-[10px] text-gray-400">{label}</span>
+      <span className={`font-semibold tabular-nums text-[11px] ${flash ? 'text-[#07c160]' : 'text-gray-600 dark:text-gray-300'}`}>
+        {toM(total)}
+      </span>
+      {hovered && (
+        <div className="absolute bottom-full right-0 mb-1 w-[340px] bg-white dark:bg-[#1d1d1f] rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 p-3 space-y-3 max-h-[450px] overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{label}用量</span>
+            <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{toM(total)}</span>
+          </div>
+          {CATEGORY_ORDER.map(kind => {
+            const items = (byKind.get(kind) || []).slice().sort((a, b) => a.model.localeCompare(b.model));
+            const sp = speedMap.get(kind);
+            const subtotal = items.reduce((s, u) => s + u.total_tokens, 0);
+            const hasData = items.length > 0;
+            if (!hasData && !sp) return null;
+            return (
+              <div key={kind}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{CATEGORY_LABELS[kind]}</span>
+                  <div className="flex items-center gap-2">
+                    {sp && sp.count > 0 && <span className="text-[10px] text-[#07c160] font-semibold">{sp.speed.toFixed(1)} t/s</span>}
+                    <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{toM(subtotal)}</span>
+                  </div>
+                </div>
+                {hasData && (
+                  <div className="space-y-1">
+                    {items.map(u => (
+                      <div key={u.model} className="flex items-center justify-between text-[11px]">
+                        <span className="text-gray-600 dark:text-gray-300 truncate max-w-[160px]" title={u.model}>{u.model}</span>
+                        <span className="text-gray-400 shrink-0">
+                          <span className="text-gray-500 dark:text-gray-400">{toM(u.prompt_tokens)}→{toM(u.output_tokens)}</span>
+                          {' '}
+                          <span className="font-semibold text-gray-700 dark:text-gray-200">{toM(u.total_tokens)}</span>
+                          {' '}
+                          <span className="text-gray-400">({u.call_count}次)</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {usage.length === 0 && (
+            <div className="text-xs text-gray-400 text-center py-2">暂无 token 使用记录</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
