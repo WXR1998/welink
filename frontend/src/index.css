@@ -132,16 +132,27 @@ html.dark .prose code {
 
 /* ─── 移动端适配基础样式 ─────────────────────────────────────────── */
 
-/* 禁止水平溢出滚动 */
-html, body {
+/* 禁止水平溢出滚动 — iOS Safari 关键修复 */
+html {
   overflow-x: hidden;
-  max-width: 100vw;
+  max-width: 100%;
+}
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+  position: relative;
+  width: 100%;
 }
 
 /* iOS Safari: 禁止双击缩放 & 高亮延迟 */
 * {
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
+}
+
+/* 防止任何子元素超出视口宽度 */
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
 /* 输入框 / 文本区域：禁止 iOS 自动放大（字号 >= 16px 才不会缩放） */
