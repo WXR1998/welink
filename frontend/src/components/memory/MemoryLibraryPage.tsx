@@ -240,7 +240,9 @@ async function renderChatToBlob(
   title: string,
   header?: { name: string; avatarUrl?: string },
   nameSet?: Set<string>,
+  matchedIndices?: number[],
 ): Promise<Blob> {
+  const matchedSet = new Set(matchedIndices || []);
   await ensureFontLoaded();
   const font = '"PingFang", "PingFang SC", "Microsoft YaHei", sans-serif';
   const canvasW = 500;
@@ -428,6 +430,7 @@ async function renderChatToBlob(
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     const layout = layouts[i];
+    const isMatched = matchedSet.has(i);
 
     // Extra gap above avatar message (but not when timestamp is shown)
     if (layout.showAvatar && i > 0 && !layout.showTs) y += avatarTopGap;
@@ -472,7 +475,7 @@ async function renderChatToBlob(
       // Content bubble — vertically centered text
       const bubbleX = contentX;
       const bubbleY = y + nameH;
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = isMatched ? '#fff8e1' : '#fff';
       roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
       ctx.fill();
       ctx.fillStyle = '#1a1a1a';
@@ -488,7 +491,7 @@ async function renderChatToBlob(
       // Same sender, no avatar/name — just bubble with vertically centered text
       const bubbleX = contentX;
       const bubbleY = y;
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = isMatched ? '#fff8e1' : '#fff';
       roundRect(ctx, bubbleX, bubbleY, layout.bubbleW, layout.bubbleH, 8);
       ctx.fill();
       ctx.fillStyle = '#1a1a1a';
@@ -589,6 +592,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverFactText, setHoverFactText] = useState('');
   const [hoverContactInfo, setHoverContactInfo] = useState<{ name: string; avatar?: string } | null>(null);
   const [hoverVisible, setHoverVisible] = useState(false);
+  const [matchedIndices, setMatchedIndices] = useState<number[]>([]);
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -856,12 +860,21 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (hoverMsgs.length === 0) return;
     setHoverShotLoading(true);
     try {
+      // 获取匹配的消息索引用于高亮
+      let matched: number[] = [];
+      if (hoverFactId !== null) {
+        try {
+          const r = await axios.get<{ matched_indices: number[] }>(`/api/memory/${hoverFactId}/matched`);
+          matched = r.data.matched_indices || [];
+        } catch { /* 匹配失败不影响截图 */ }
+      }
       const blob = await renderChatToBlob(
         hoverMsgs,
         (sender) => senderAvatarMap.get(sender),
         hoverFactText,
         hoverContactInfo ? { name: hoverContactInfo.name, avatarUrl: hoverContactInfo.avatar } : undefined,
         allNames,
+        matched,
       );
 
       let copied = false;
