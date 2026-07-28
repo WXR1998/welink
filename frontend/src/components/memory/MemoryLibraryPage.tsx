@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera } from 'lucide-react';
+import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera, CheckSquare } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -533,6 +533,8 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [addPinned, setAddPinned] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // hover 预览：hover 某条记忆时显示来源聊天记录
   const [hoverFactId, setHoverFactId] = useState<number | null>(null);
@@ -829,6 +831,36 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     void fetchContactStats();
   };
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const enterSelectMode = () => {
+    setSelectMode(true);
+    setSelectedIds(new Set());
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`确定删除选中的 ${selectedIds.size} 条记忆？`)) return;
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map(id => axios.delete(`/api/memory/${id}`)));
+    const idSet = new Set(ids);
+    setFacts(list => list.filter(f => !idSet.has(f.id)));
+    setTotal(t => Math.max(0, t - ids.length));
+    void fetchContactStats();
+    exitSelectMode();
+  };
+
   const startEdit = (f: MemFact) => { setEditingId(f.id); setEditDraft(f.fact); };
   const cancelEdit = () => { setEditingId(null); setEditDraft(''); };
   const saveEdit = async (id: number) => {
@@ -922,13 +954,50 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
             共 {totalAll} 条 AI 提炼事实 · {pinnedAll} 条已置顶（AI 对话自动引用）
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#07c160] text-white text-sm font-semibold hover:bg-[#06ad56] transition-colors"
-        >
-          <Plus size={14} />
-          手动添加
-        </button>
+        {!selectMode ? (
+          <>
+            <button
+              onClick={enterSelectMode}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-semibold hover:border-[#07c160] hover:text-[#07c160] transition-colors"
+            >
+              <CheckSquare size={14} />
+              多选
+            </button>
+            <button
+              onClick={openAdd}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#07c160] text-white text-sm font-semibold hover:bg-[#06ad56] transition-colors"
+            >
+              <Plus size={14} />
+              手动添加
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => {
+                if (selectedIds.size === facts.length) setSelectedIds(new Set());
+                else setSelectedIds(new Set(facts.map(f => f.id)));
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-semibold hover:border-[#07c160] hover:text-[#07c160] transition-colors"
+            >
+              {selectedIds.size === facts.length && facts.length > 0 ? '取消全选' : '全选'}
+            </button>
+            <button
+              onClick={deleteSelected}
+              disabled={selectedIds.size === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+            >
+              <Trash2 size={14} />
+              删除{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            </button>
+            <button
+              onClick={exitSelectMode}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-semibold hover:border-gray-400 transition-colors"
+            >
+              取消
+            </button>
+          </>
+        )}
       </header>
 
       <JobProgressPanel contacts={contacts} groups={groups} />
@@ -1022,16 +1091,25 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
               {facts.map(f => {
                 const info = lookup(f.contact_key);
                 const isEditing = editingId === f.id;
+                const isSelected = selectedIds.has(f.id);
                 return (
                   <div
                     key={f.id}
                     className={`bg-white dark:bg-[#1d1d1f] rounded-2xl border p-4 transition-colors ${
-                      f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
+                      isSelected ? 'border-[#07c160] ring-1 ring-[#07c160]/30' : f.pinned ? 'border-amber-300 dark:border-amber-500/40' : 'border-gray-100 dark:border-white/10'
                     }`}
                     onMouseEnter={(e) => showPreview(f, e.currentTarget.getBoundingClientRect())}
                     onMouseLeave={() => hidePreview()}
+                    onClick={selectMode ? () => toggleSelect(f.id) : undefined}
                   >
                     <div className="flex items-start gap-3">
+                      {selectMode && (
+                        <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 cursor-pointer ${
+                          isSelected ? 'bg-[#07c160] border-[#07c160]' : 'border-gray-300 dark:border-gray-600'
+                        }`}>
+                          {isSelected && <Check size={12} className="text-white" />}
+                        </div>
+                      )}
                       {info ? (
                         <img src={info.avatar} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0" title={info.name} />
                       ) : (
