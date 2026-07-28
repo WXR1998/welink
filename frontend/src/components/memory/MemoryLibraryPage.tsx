@@ -600,6 +600,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverContactInfo, setHoverContactInfo] = useState<{ name: string; avatar?: string } | null>(null);
   const [hoverVisible, setHoverVisible] = useState(false);
   const [matchedIndices, setMatchedIndices] = useState<number[]>([]);
+  const matchedPromiseRef = useRef<Promise<number[]> | null>(null);
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -816,11 +817,18 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
 
       setHoverPos({ top, left });
       setHoverVisible(true);
-      // 匹配索引后台静默预取，不阻塞 hover loading
+      // 匹配索引后台预取（不阻塞 hover loading，但截图时会等待它完成）
       setMatchedIndices([]);
-      axios.get<{ matched_indices: number[] }>(`/api/memory/${fact.id}/matched`)
-        .then(r => setMatchedIndices(r.data.matched_indices || []))
-        .catch(() => {});
+      matchedPromiseRef.current = (async () => {
+        try {
+          const r = await axios.get<{ matched_indices: number[] }>(`/api/memory/${fact.id}/matched`);
+          const indices = r.data.matched_indices || [];
+          setMatchedIndices(indices);
+          return indices;
+        } catch {
+          return [];
+        }
+      })();
       try {
         const srcRes = await axios.get<{ messages: { datetime: string; sender: string; content: string }[]; related_facts?: string[] }>(
           `/api/memory/${fact.id}/source`,
@@ -876,14 +884,18 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     if (hoverMsgs.length === 0) return;
     setHoverShotLoading(true);
     try {
-      // matchedIndices 已在 hover 时预取
+      // 等待匹配索引预取完成（hover 时已开始，这里大概率已完成）
+      let matched = matchedIndices;
+      if (matchedPromiseRef.current) {
+        matched = await matchedPromiseRef.current;
+      }
       const blob = await renderChatToBlob(
         hoverMsgs,
         (sender) => senderAvatarMap.get(sender),
         hoverFactText,
         hoverContactInfo ? { name: hoverContactInfo.name, avatarUrl: hoverContactInfo.avatar } : undefined,
         allNames,
-        matchedIndices,
+        matched,
       );
 
       let copied = false;
