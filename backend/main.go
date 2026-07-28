@@ -35,9 +35,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -225,6 +225,9 @@ func serverMain() {
 		dataLabel = "(configured)"
 	}
 	log.Printf("WeLink %s (commit %s) starting...", appVersion, gitCommit)
+
+	// 加载持久化的 token 使用统计（全量累计，跨重启不丢失）
+	initTokenStats(tokenStatsPath())
 	log.Printf("WeLink config: data_dir=%s port=%s timezone=%s workers=%d",
 		dataLabel, prefs.Port, prefs.Timezone, prefs.WorkerCount)
 
@@ -316,6 +319,8 @@ func serverMain() {
 
 	// 启动定时任务调度器（每分钟扫到期任务，串行跑；app 重开时补跑错过的）
 	StartTaskScheduler(getSvc)
+	batchSvc = getSvc
+	go ResumeBatchTasks()
 
 	// 4. 初始化 Gin 路由
 	r := gin.Default()
@@ -975,22 +980,24 @@ func serverMain() {
 			return
 		}
 		var incoming struct {
-			LLMProfiles        []LLMProfile `json:"llm_profiles"`
-			LLMProvider        string       `json:"llm_provider"`
-			LLMAPIKey          string       `json:"llm_api_key"`
-			LLMBaseURL         string       `json:"llm_base_url"`
-			LLMModel           string       `json:"llm_model"`
-			GeminiClientID     string       `json:"gemini_client_id"`
-			GeminiClientSecret string       `json:"gemini_client_secret"`
-			AIAnalysisDBPath   string       `json:"ai_analysis_db_path"`
-			EmbeddingProvider  string       `json:"embedding_provider"`
-			EmbeddingAPIKey    string       `json:"embedding_api_key"`
-			EmbeddingBaseURL   string       `json:"embedding_base_url"`
-			EmbeddingModel     string       `json:"embedding_model"`
-			EmbeddingDims      int          `json:"embedding_dims"`
-			MemLLMBaseURL      string       `json:"mem_llm_base_url"`
-			MemLLMModel        string       `json:"mem_llm_model"`
-			MemLLMAPIKey       string       `json:"mem_llm_api_key"`
+			LLMProfiles        []LLMProfile      `json:"llm_profiles"`
+			LLMProvider        string            `json:"llm_provider"`
+			LLMAPIKey          string            `json:"llm_api_key"`
+			LLMBaseURL         string            `json:"llm_base_url"`
+			LLMModel           string            `json:"llm_model"`
+			GeminiClientID     string            `json:"gemini_client_id"`
+			GeminiClientSecret string            `json:"gemini_client_secret"`
+			AIAnalysisDBPath   string            `json:"ai_analysis_db_path"`
+			EmbeddingProvider  string            `json:"embedding_provider"`
+			EmbeddingAPIKey    string            `json:"embedding_api_key"`
+			EmbeddingBaseURL   string            `json:"embedding_base_url"`
+			EmbeddingModel     string            `json:"embedding_model"`
+			EmbeddingDims      int               `json:"embedding_dims"`
+			EmbeddingProfiles  []EmbeddingProfile `json:"embedding_profiles"`
+			MemLLMBaseURL      string            `json:"mem_llm_base_url"`
+			MemLLMModel        string            `json:"mem_llm_model"`
+			MemLLMAPIKey       string            `json:"mem_llm_api_key"`
+			MemLLMProfiles     []MemLLMProfile   `json:"mem_llm_profiles"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1051,6 +1058,30 @@ func serverMain() {
 		}
 		existing.GeminiClientID = incoming.GeminiClientID
 		existing.AIAnalysisDBPath = incoming.AIAnalysisDBPath
+		// 多 Embedding 提供商：保护未修改的 API Key
+		for i, ep := range incoming.EmbeddingProfiles {
+			if keepOld(ep.APIKey) {
+				for _, old := range existing.EmbeddingProfiles {
+					if old.ID == ep.ID && old.Provider == ep.Provider {
+						incoming.EmbeddingProfiles[i].APIKey = old.APIKey
+						break
+					}
+				}
+			}
+		}
+		existing.EmbeddingProfiles = incoming.EmbeddingProfiles
+		// 多记忆提炼 LLM 提供商：保护未修改的 API Key
+		for i, mp := range incoming.MemLLMProfiles {
+			if keepOld(mp.APIKey) {
+				for _, old := range existing.MemLLMProfiles {
+					if old.ID == mp.ID && old.Provider == mp.Provider {
+						incoming.MemLLMProfiles[i].APIKey = old.APIKey
+						break
+					}
+				}
+			}
+		}
+		existing.MemLLMProfiles = incoming.MemLLMProfiles
 		existing.EmbeddingProvider = incoming.EmbeddingProvider
 		if !keepOld(incoming.EmbeddingAPIKey) {
 			existing.EmbeddingAPIKey = incoming.EmbeddingAPIKey
@@ -1240,7 +1271,9 @@ func serverMain() {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			if list == nil { list = []ConversationEntry{} }
+			if list == nil {
+				list = []ConversationEntry{}
+			}
 			c.JSON(http.StatusOK, gin.H{"conversations": list})
 			return
 		}
@@ -1397,12 +1430,13 @@ func serverMain() {
 	// 后端拉取聊天记录 → 构造 prompt → 流式转发 LLM 响应
 	api.POST("/ai/analyze", func(c *gin.Context) {
 		var body struct {
-			Username  string       `json:"username"`
-			IsGroup   bool         `json:"is_group"`
-			From      int64        `json:"from"`
-			To        int64        `json:"to"`
-			Messages  []LLMMessage `json:"messages"`
-			ProfileID string       `json:"profile_id"`
+			Username   string       `json:"username"`
+			IsGroup    bool         `json:"is_group"`
+			From       int64        `json:"from"`
+			To         int64        `json:"to"`
+			Messages   []LLMMessage `json:"messages"`
+			ProfileID  string       `json:"profile_id"`
+			SkipMemory bool         `json:"skip_memory"` // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1432,88 +1466,91 @@ func serverMain() {
 			}
 		}
 
-		// 提取用户最后一条问题作为语义检索词
-		var searchQ string
-		for i := len(body.Messages) - 1; i >= 0; i-- {
-			if body.Messages[i].Role == "user" {
-				searchQ = body.Messages[i].Content
-				break
+		// skip_memory=true 时跳过后端记忆注入（前端已通过 memory-search 注入）
+		if !body.SkipMemory {
+			// 提取用户最后一条问题作为语义检索词
+			var searchQ string
+			for i := len(body.Messages) - 1; i >= 0; i-- {
+				if body.Messages[i].Role == "user" {
+					searchQ = body.Messages[i].Content
+					break
+				}
 			}
-		}
 
-		// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
-		pinnedFacts, _ := GetPinnedMemFacts(contactKey)
-		searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
+			// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
+			pinnedFacts, _ := GetPinnedMemFacts(contactKey)
+			searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
 
-		// 去重：置顶事实不再出现在检索结果中
-		seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))
-		for _, p := range pinnedFacts {
-			seen[p.Fact] = true
-		}
-		var dedupSearched []MemFact
-		for _, f := range searchedFacts {
-			if !seen[f.Fact] {
-				dedupSearched = append(dedupSearched, f)
-				seen[f.Fact] = true
+			// 去重：置顶事实不再出现在检索结果中
+			seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))
+			for _, p := range pinnedFacts {
+				seen[p.Fact] = true
 			}
-		}
+			var dedupSearched []MemFact
+			for _, f := range searchedFacts {
+				if !seen[f.Fact] {
+					dedupSearched = append(dedupSearched, f)
+					seen[f.Fact] = true
+				}
+			}
 
-		// contactKey → 可读来源名称
-		resolveSource := func(ck string) string {
-			svc := getSvc()
-			if svc == nil {
+			// contactKey → 可读来源名称
+			resolveSource := func(ck string) string {
+				svc := getSvc()
+				if svc == nil {
+					return ck
+				}
+				if strings.HasPrefix(ck, "group:") {
+					uname := strings.TrimPrefix(ck, "group:")
+					for _, g := range svc.GetGroups() {
+						if g.Username == uname {
+							return "群聊「" + g.Name + "」"
+						}
+					}
+					return "群聊「" + uname + "」"
+				}
+				if strings.HasPrefix(ck, "contact:") {
+					uname := strings.TrimPrefix(ck, "contact:")
+					for _, s := range svc.GetCachedStats() {
+						if s.Username == uname {
+							if s.Remark != "" {
+								return "与「" + s.Remark + "」的私聊"
+							}
+							if s.Nickname != "" {
+								return "与「" + s.Nickname + "」的私聊"
+							}
+						}
+					}
+					return "与「" + uname + "」的私聊"
+				}
 				return ck
 			}
-			if strings.HasPrefix(ck, "group:") {
-				uname := strings.TrimPrefix(ck, "group:")
-				for _, g := range svc.GetGroups() {
-					if g.Username == uname {
-						return "群聊「" + g.Name + "」"
-					}
-				}
-				return "群聊「" + uname + "」"
-			}
-			if strings.HasPrefix(ck, "contact:") {
-				uname := strings.TrimPrefix(ck, "contact:")
-				for _, s := range svc.GetCachedStats() {
-					if s.Username == uname {
-						if s.Remark != "" {
-							return "与「" + s.Remark + "」的私聊"
-						}
-						if s.Nickname != "" {
-							return "与「" + s.Nickname + "」的私聊"
-						}
-					}
-				}
-				return "与「" + uname + "」的私聊"
-			}
-			return ck
-		}
 
-		// 分两块构建 prompt 片段，让下游模型区分信息来源
-		var memSection string
-		if len(pinnedFacts) > 0 {
-			memSection += "\n\n【手工置顶的背景知识】\n"
-			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
-			for _, p := range pinnedFacts {
-				src := resolveSource(p.ContactKey)
-				memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+			// 分两块构建 prompt 片段，让下游模型区分信息来源
+			var memSection string
+			if len(pinnedFacts) > 0 {
+				memSection += "\n\n【手工置顶的背景知识】\n"
+				memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
+				for _, p := range pinnedFacts {
+					src := resolveSource(p.ContactKey)
+					memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+				}
 			}
-		}
-		if len(dedupSearched) > 0 {
-			memSection += "\n\n【从聊天记录中提炼的事实】\n"
-			memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
-			for _, f := range dedupSearched {
-				src := resolveSource(f.ContactKey)
-				memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+			if len(dedupSearched) > 0 {
+				memSection += "\n\n【从聊天记录中提炼的事实】\n"
+				memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
+				for _, f := range dedupSearched {
+					src := resolveSource(f.ContactKey)
+					memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+				}
 			}
-		}
 
-		if memSection != "" {
-			for i := range body.Messages {
-				if body.Messages[i].Role == "system" {
-					body.Messages[i].Content += memSection
-					break
+			if memSection != "" {
+				for i := range body.Messages {
+					if body.Messages[i].Role == "system" {
+						body.Messages[i].Content += memSection
+						break
+					}
 				}
 			}
 		}
@@ -1531,7 +1568,29 @@ func serverMain() {
 			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			flusher.Flush()
 		}
+
+		// SSE keepalive：防止 nginx 反向代理在等待 LLM 首 token 时超时（504）
+		// 发送 SSE 注释行（以 : 开头），客户端会自动忽略，但能保持连接活跃
+		fmt.Fprintf(c.Writer, ": keepalive\n\n")
+		flusher.Flush()
+		keepaliveDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					fmt.Fprintf(c.Writer, ": keepalive\n\n")
+					flusher.Flush()
+				case <-keepaliveDone:
+					return
+				}
+			}
+		}()
+
 		streamLLMCoreWithProfile(sendChunk, body.Messages, prefs, body.ProfileID)
+
+		close(keepaliveDone)
 	})
 
 	// ── AI 分身：三层记忆 + session 机制 ──
@@ -1573,8 +1632,8 @@ func serverMain() {
 	// 步骤: 加载消息 → 统计分析 → LLM提炼长期档案 → LLM提炼中期近况 → 组装prompt
 	api.POST("/ai/clone/learn", func(c *gin.Context) {
 		var body struct {
-			Username string   `json:"username"`
-			Count    int      `json:"count"`
+			Username       string   `json:"username"`
+			Count          int      `json:"count"`
 			Groups         []string `json:"groups"`
 			Bio            string   `json:"bio"`
 			ExtractProfile bool     `json:"extract_profile"`
@@ -1758,15 +1817,15 @@ func serverMain() {
 
 		// 最终结果
 		result, _ := json.Marshal(gin.H{
-			"done":           true,
-			"session_id":     sessionID,
-			"sample_count":   len(theirTexts) + len(groupSamples),
-			"private_count":  len(theirTexts),
-			"group_count":    len(groupSamples),
-			"has_profile":    profileText != "",
-			"has_recent":     false,
-			"avg_msg_len":    avgLen,
-			"emoji_pct":      emojiPct,
+			"done":          true,
+			"session_id":    sessionID,
+			"sample_count":  len(theirTexts) + len(groupSamples),
+			"private_count": len(theirTexts),
+			"group_count":   len(groupSamples),
+			"has_profile":   profileText != "",
+			"has_recent":    false,
+			"avg_msg_len":   avgLen,
+			"emoji_pct":     emojiPct,
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", result)
 		flusher.Flush()
@@ -1841,7 +1900,7 @@ func serverMain() {
 	api.POST("/ai/clone/history/:username", func(c *gin.Context) {
 		uname := c.Param("username")
 		var body struct {
-			Role    string `json:"role"`    // user / assistant
+			Role    string `json:"role"` // user / assistant
 			Content string `json:"content"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
@@ -1894,9 +1953,15 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 			return
 		}
-		if body.Rounds <= 0 { body.Rounds = 10 }
-		if body.Rounds > 30 { body.Rounds = 30 }
-		if body.MyName == "" { body.MyName = "我" }
+		if body.Rounds <= 0 {
+			body.Rounds = 10
+		}
+		if body.Rounds > 30 {
+			body.Rounds = 30
+		}
+		if body.MyName == "" {
+			body.MyName = "我"
+		}
 
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
@@ -2023,7 +2088,11 @@ func serverMain() {
 		} else if body.SkillType == "contact" && svc != nil {
 			for _, c := range svc.GetCachedStats() {
 				if c.Username == body.Username {
-					if c.Remark != "" { targetName = c.Remark } else if c.Nickname != "" { targetName = c.Nickname }
+					if c.Remark != "" {
+						targetName = c.Remark
+					} else if c.Nickname != "" {
+						targetName = c.Nickname
+					}
 					break
 				}
 			}
@@ -2194,25 +2263,31 @@ func serverMain() {
 	api.POST("/ai/group-sim", func(c *gin.Context) {
 		var body struct {
 			GroupUsername string `json:"group_username"`
-			MessageCount int    `json:"message_count"`
-			ProfileID    string `json:"profile_id"`
-			UserMessage  string `json:"user_message"`
-			History      []struct {
+			MessageCount  int    `json:"message_count"`
+			ProfileID     string `json:"profile_id"`
+			UserMessage   string `json:"user_message"`
+			History       []struct {
 				Speaker string `json:"speaker"`
 				Content string `json:"content"`
 			} `json:"history"`
 			Rounds  int      `json:"rounds"`
 			Topic   string   `json:"topic"`   // 话题/场景设定
-			Mood    string   `json:"mood"`     // 聊天氛围
+			Mood    string   `json:"mood"`    // 聊天氛围
 			Members []string `json:"members"` // 指定参与成员（为空则自动选 top 10）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 			return
 		}
-		if body.MessageCount <= 0 { body.MessageCount = 1000 }
-		if body.Rounds <= 0 { body.Rounds = 5 }
-		if body.Rounds > 20 { body.Rounds = 20 }
+		if body.MessageCount <= 0 {
+			body.MessageCount = 1000
+		}
+		if body.Rounds <= 0 {
+			body.Rounds = 5
+		}
+		if body.Rounds > 20 {
+			body.Rounds = 20
+		}
 
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
@@ -2238,18 +2313,20 @@ func serverMain() {
 		type memberInfo struct {
 			Name       string
 			Count      int
-			Samples    []string  // 文本消息样本
-			TotalChars int       // 总字符数
-			TextCount  int       // 文本消息数
-			EmojiCount int       // 含表情的消息数
-			QMarkCount int       // 含问号的消息数（爱提问）
-			ExclCount  int       // 含感叹号的消息数（情绪化）
-			ShortCount int       // <=5字的消息数（简短回复型）
-			LongCount  int       // >=50字的消息数（长篇大论型）
+			Samples    []string // 文本消息样本
+			TotalChars int      // 总字符数
+			TextCount  int      // 文本消息数
+			EmojiCount int      // 含表情的消息数
+			QMarkCount int      // 含问号的消息数（爱提问）
+			ExclCount  int      // 含感叹号的消息数（情绪化）
+			ShortCount int      // <=5字的消息数（简短回复型）
+			LongCount  int      // >=50字的消息数（长篇大论型）
 		}
 		memberMap := make(map[string]*memberInfo)
 		for _, m := range msgs {
-			if m.Speaker == "" || m.Speaker == "未知" { continue }
+			if m.Speaker == "" || m.Speaker == "未知" {
+				continue
+			}
 			mi, ok := memberMap[m.Speaker]
 			if !ok {
 				mi = &memberInfo{Name: m.Speaker}
@@ -2260,11 +2337,21 @@ func serverMain() {
 				mi.TextCount++
 				charLen := len([]rune(m.Content))
 				mi.TotalChars += charLen
-				if charLen <= 5 { mi.ShortCount++ }
-				if charLen >= 50 { mi.LongCount++ }
-				if strings.ContainsAny(m.Content, "？?") { mi.QMarkCount++ }
-				if strings.ContainsAny(m.Content, "！!") { mi.ExclCount++ }
-				if strings.ContainsAny(m.Content, "😂🤣😄😁😆😅😊😉😎🥰😍") || strings.Contains(m.Content, "[") { mi.EmojiCount++ }
+				if charLen <= 5 {
+					mi.ShortCount++
+				}
+				if charLen >= 50 {
+					mi.LongCount++
+				}
+				if strings.ContainsAny(m.Content, "？?") {
+					mi.QMarkCount++
+				}
+				if strings.ContainsAny(m.Content, "！!") {
+					mi.ExclCount++
+				}
+				if strings.ContainsAny(m.Content, "😂🤣😄😁😆😅😊😉😎🥰😍") || strings.Contains(m.Content, "[") {
+					mi.EmojiCount++
+				}
 				// 保留样本（均匀抽样：前中后各取一些）
 				if len(mi.Samples) < 30 {
 					mi.Samples = append(mi.Samples, m.Content)
@@ -2276,18 +2363,28 @@ func serverMain() {
 		members := make([]*memberInfo, 0, len(memberMap))
 		if len(body.Members) > 0 {
 			allowed := make(map[string]bool)
-			for _, name := range body.Members { allowed[name] = true }
+			for _, name := range body.Members {
+				allowed[name] = true
+			}
 			for _, mi := range memberMap {
-				if allowed[mi.Name] { members = append(members, mi) }
+				if allowed[mi.Name] {
+					members = append(members, mi)
+				}
 			}
 		} else {
-			for _, mi := range memberMap { members = append(members, mi) }
+			for _, mi := range memberMap {
+				members = append(members, mi)
+			}
 		}
 		sort.Slice(members, func(i, j int) bool { return members[i].Count > members[j].Count })
-		if len(members) > 10 { members = members[:10] }
+		if len(members) > 10 {
+			members = members[:10]
+		}
 
 		totalCount := 0
-		for _, mi := range members { totalCount += mi.Count }
+		for _, mi := range members {
+			totalCount += mi.Count
+		}
 
 		// 3. 构造系统 prompt（含风格特征画像）
 		var sb strings.Builder
@@ -2326,42 +2423,66 @@ func serverMain() {
 			var traits []string
 			if mi.TextCount > 0 {
 				avgLen := mi.TotalChars / mi.TextCount
-				if avgLen <= 8 { traits = append(traits, "惜字如金，回复简短") }
-				if avgLen >= 30 { traits = append(traits, "话多，经常长篇大论") }
-				if avgLen > 8 && avgLen < 30 { traits = append(traits, fmt.Sprintf("消息平均%d字", avgLen)) }
+				if avgLen <= 8 {
+					traits = append(traits, "惜字如金，回复简短")
+				}
+				if avgLen >= 30 {
+					traits = append(traits, "话多，经常长篇大论")
+				}
+				if avgLen > 8 && avgLen < 30 {
+					traits = append(traits, fmt.Sprintf("消息平均%d字", avgLen))
+				}
 			}
 			if mi.TextCount > 0 {
 				emojiPct := float64(mi.EmojiCount) / float64(mi.TextCount) * 100
-				if emojiPct > 30 { traits = append(traits, "爱用表情") }
-				if emojiPct < 5 { traits = append(traits, "很少用表情") }
+				if emojiPct > 30 {
+					traits = append(traits, "爱用表情")
+				}
+				if emojiPct < 5 {
+					traits = append(traits, "很少用表情")
+				}
 			}
 			if mi.TextCount > 0 {
 				qPct := float64(mi.QMarkCount) / float64(mi.TextCount) * 100
-				if qPct > 20 { traits = append(traits, "爱提问") }
+				if qPct > 20 {
+					traits = append(traits, "爱提问")
+				}
 			}
 			if mi.TextCount > 0 {
 				exclPct := float64(mi.ExclCount) / float64(mi.TextCount) * 100
-				if exclPct > 25 { traits = append(traits, "语气强烈，常用感叹号") }
+				if exclPct > 25 {
+					traits = append(traits, "语气强烈，常用感叹号")
+				}
 			}
 			if mi.TextCount > 0 {
 				shortPct := float64(mi.ShortCount) / float64(mi.TextCount) * 100
-				if shortPct > 40 { traits = append(traits, "经常几个字就回复") }
+				if shortPct > 40 {
+					traits = append(traits, "经常几个字就回复")
+				}
 			}
-			if len(traits) == 0 { traits = append(traits, "风格中等") }
+			if len(traits) == 0 {
+				traits = append(traits, "风格中等")
+			}
 			sb.WriteString(strings.Join(traits, "、") + "\n")
 
 			// 样本消息
 			sb.WriteString("说话样本：\n")
 			sampleCount := len(mi.Samples)
-			if sampleCount > 10 { sampleCount = 10 }
+			if sampleCount > 10 {
+				sampleCount = 10
+			}
 			for _, s := range mi.Samples[:sampleCount] {
-				if len(s) > 100 { s = s[:100] + "…" }
+				if len(s) > 100 {
+					s = s[:100] + "…"
+				}
 				sb.WriteString(fmt.Sprintf("- 「%s」\n", s))
 			}
 		}
 		sb.WriteString("\n【最近的群聊记录】\n")
 		recentStart := len(msgs) - 50
-		if recentStart < 0 { recentStart = 0 }
+		if recentStart < 0 {
+			recentStart = 0
+		}
 		for _, m := range msgs[recentStart:] {
 			if m.Content != "" {
 				sb.WriteString(fmt.Sprintf("%s：%s\n", m.Speaker, m.Content))
@@ -2412,9 +2533,14 @@ func serverMain() {
 			cumulative := 0
 			for _, mi := range members {
 				cumulative += mi.Count
-				if r < cumulative { chosen = mi; break }
+				if r < cumulative {
+					chosen = mi
+					break
+				}
 			}
-			if chosen == nil { chosen = members[0] }
+			if chosen == nil {
+				chosen = members[0]
+			}
 			speakerOrder = append(speakerOrder, chosen.Name)
 		}
 
@@ -2439,23 +2565,31 @@ func serverMain() {
 		// 流式输出，实时解析每行 "成员名：消息内容" 并逐条推送
 		var lineBuf strings.Builder
 		memberSet := make(map[string]bool)
-		for _, mi := range members { memberSet[mi.Name] = true }
+		for _, mi := range members {
+			memberSet[mi.Name] = true
+		}
 
 		streamLLMCoreWithProfile(func(chunk StreamChunk) {
-			if chunk.Delta == "" { return }
+			if chunk.Delta == "" {
+				return
+			}
 			lineBuf.WriteString(chunk.Delta)
 
 			// 逐行解析
 			for {
 				text := lineBuf.String()
 				nlIdx := strings.Index(text, "\n")
-				if nlIdx < 0 { break }
+				if nlIdx < 0 {
+					break
+				}
 
 				line := strings.TrimSpace(text[:nlIdx])
 				lineBuf.Reset()
 				lineBuf.WriteString(text[nlIdx+1:])
 
-				if line == "" { continue }
+				if line == "" {
+					continue
+				}
 
 				// 尝试解析 "成员名：内容" 或 "成员名:内容"
 				var speaker, content string
@@ -2471,7 +2605,9 @@ func serverMain() {
 						break
 					}
 				}
-				if speaker == "" || content == "" { continue }
+				if speaker == "" || content == "" {
+					continue
+				}
 
 				sendSim(SimMessage{Speaker: speaker, Content: content})
 			}
@@ -2556,6 +2692,7 @@ func serverMain() {
 	})
 
 	// GET /api/ai/vec/all-jobs — 列出所有构建/提炼任务及其进度
+	// 只返回运行中或已暂停的任务；已完成的不再返回。按 key 字典序排序。
 	api.GET("/ai/vec/all-jobs", func(c *gin.Context) {
 		vecJobsMu.Lock()
 		keys := make([]string, 0, len(vecJobs))
@@ -2563,11 +2700,16 @@ func serverMain() {
 			keys = append(keys, k)
 		}
 		vecJobsMu.Unlock()
+		sort.Strings(keys)
 
 		jobs := make([]gin.H, 0, len(keys))
 		for _, k := range keys {
 			p := GetVecBuildProgress(k)
 			if p == nil {
+				continue
+			}
+			// 跳过已完成的任务
+			if p.Done {
 				continue
 			}
 			jobs = append(jobs, gin.H{
@@ -2615,13 +2757,18 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		cfg := defaultEmbeddingConfig(prefs)
-		_, err := GetEmbeddingsBatch([]string{"测试"}, cfg)
+		configs := embeddingConfigs(prefs)
+		if len(configs) == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置 embedding 提供商"})
+			return
+		}
+		// 测试第一个（优先级最高的）提供商
+		_, err := GetEmbeddingsBatch([]string{"测试"}, configs[0])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.Provider, "model": cfg.Model})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model})
 	})
 
 	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
@@ -2647,13 +2794,17 @@ func serverMain() {
 	// POST /api/ai/mem/test — 验证记忆提炼本地模型配置是否可用
 	api.POST("/ai/mem/test", func(c *gin.Context) {
 		prefs := loadPreferences()
-		memPrefs := memLLMPrefs(prefs)
-		model, err := testLLMConn(memPrefs)
+		configs := memLLMConfigs(prefs)
+		if len(configs) == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置记忆提炼模型"})
+			return
+		}
+		model, err := testLLMConn(configs[0])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": memPrefs.LLMProvider, "model": model})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].LLMProvider, "model": model})
 	})
 
 	// GET /api/ai/mem/status?key=...
@@ -2686,13 +2837,15 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"facts": facts})
 	})
 
-	// POST /api/ai/mem/build?key= — 独立触发记忆事实提炼（无需重建向量索引）
+	// POST /api/ai/mem/build?key=&rebuild= — 独立触发记忆事实提炼（无需重建向量索引）
+	// rebuild=true 时清除 v2 记忆和检查点，强制重新提取
 	api.POST("/ai/mem/build", func(c *gin.Context) {
 		key := c.Query("key")
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 key 参数"})
 			return
 		}
+		rebuild := c.Query("rebuild") == "true"
 		job := getOrCreateJob(key)
 		job.mu.Lock()
 		if job.Step != "" && !job.Done && job.Error == "" && !job.Paused {
@@ -2707,6 +2860,7 @@ func serverMain() {
 		job.Error = ""
 		job.FactCount = 0
 		job.abort = abortCh
+		job.abortClosed = false
 		job.mu.Unlock()
 
 		prefs := loadPreferences()
@@ -2750,30 +2904,44 @@ func serverMain() {
 				setErr("语义向量索引为空，请先构建索引")
 				return
 			}
-			cfg := defaultEmbeddingConfig(prefs)
-			totalChunks := (len(msgs) + memExtractChunkSize - 1) / memExtractChunkSize
+			embConfigs := embeddingConfigs(prefs)
+			totalChunks := len(computeSegments(msgs))
+
+			if rebuild {
+				// rebuild 模式：清除 v2 记忆 + 重置检查点，强制重新提取
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion); err != nil {
+					setErr("清理旧记忆失败：" + err.Error())
+					return
+				}
+				db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
+			}
 
 			// ── 检查点：判断是续传还是全新开始 ──────────────────────────────────
 			startChunk := 0
 			var prevOffset int = -1
-			db.QueryRow("SELECT extract_offset FROM vec_index_status WHERE contact_key = ?", key).Scan(&prevOffset)
-			if prevOffset >= 0 && prevOffset < totalChunks {
+			var prevVersion int
+			db.QueryRow("SELECT extract_offset, extract_version FROM vec_index_status WHERE contact_key = ?", key).Scan(&prevOffset, &prevVersion)
+			// 版本不匹配时忽略旧检查点（v1 stride=64 与 v2 动态分段不兼容）
+			if prevVersion != memFactVersion {
+				prevOffset = -1
+			}
+			if prevOffset >= 0 && prevOffset+1 < totalChunks {
 				// 上次中断于 prevOffset 批（已完成），从下一批续传
 				startChunk = prevOffset + 1
 			} else {
 				// 全新开始：清空旧事实，reset 检查点
-				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ?", key); err != nil {
+				if _, err := db.Exec("DELETE FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion); err != nil {
 					setErr("清理旧记忆失败：" + err.Error())
 					return
 				}
 			}
 			// 记录本次起始偏移，表示提炼进行中
-			db.Exec(`UPDATE vec_index_status SET extract_offset = ? WHERE contact_key = ?`,
-				startChunk-1, key) // 上一批已完成的索引（-1 表示尚未完成任何批次）
+			db.Exec(`UPDATE vec_index_status SET extract_offset = ?, extract_version = ? WHERE contact_key = ?`,
+				startChunk-1, memFactVersion, key) // 上一批已完成的索引（-1 表示尚未完成任何批次）
 
 			// 统计已有事实数（续传时保留）
 			var prevFactCount int
-			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ?", key).Scan(&prevFactCount)
+			db.QueryRow("SELECT COUNT(*) FROM mem_facts WHERE contact_key = ? AND version = ?", key, memFactVersion).Scan(&prevFactCount)
 
 			job.mu.Lock()
 			job.Total = totalChunks
@@ -2811,7 +2979,7 @@ func serverMain() {
 				}
 			}
 
-			newFacts, extractErr := extractAndStoreFacts(key, msgs, prefs, db, cfg,
+			newFacts, extractErr := extractAndStoreFacts(key, msgs, prefs, db, embConfigs,
 				isGroup, displayName,
 				startChunk,
 				func(done, total int) {
@@ -2822,8 +2990,8 @@ func serverMain() {
 				},
 				func(chunkIdx int) {
 					// 每批完成后写检查点，服务重启后可续传
-					db.Exec(`UPDATE vec_index_status SET extract_offset = ? WHERE contact_key = ?`,
-						chunkIdx, key)
+					db.Exec(`UPDATE vec_index_status SET extract_offset = ?, extract_version = ? WHERE contact_key = ?`,
+						chunkIdx, memFactVersion, key)
 				},
 				abortCh,
 			)
@@ -2839,17 +3007,26 @@ func serverMain() {
 				return
 			}
 
+			if extractErr != nil {
+				// 提炼出错（如 embedding 服务不可用）：标记错误，清除检查点
+				fmt.Printf("[MEM-BUILD] ⚠️ 提炼失败 key=%s: %v\n", key, extractErr)
+				db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
+				job.mu.Lock()
+				job.Step = "error"
+				job.Done = true
+				job.Error = "提炼失败：" + extractErr.Error()
+				job.mu.Unlock()
+				return
+			}
+
 			// 全部完成，清除检查点
-			db.Exec(`UPDATE vec_index_status SET extract_offset = -1 WHERE contact_key = ?`, key)
+			db.Exec(`UPDATE vec_index_status SET extract_offset = -1, extract_version = ? WHERE contact_key = ?`, memFactVersion, key)
 
 			factCount := prevFactCount + newFacts
 			job.mu.Lock()
 			job.Step = "done"
 			job.Done = true
 			job.FactCount = factCount
-			if newFacts == 0 && extractErr != nil {
-				job.Error = "提炼失败：" + extractErr.Error()
-			}
 			job.mu.Unlock()
 		}()
 		c.JSON(http.StatusOK, gin.H{"started": true})
@@ -2877,7 +3054,7 @@ func serverMain() {
 			c.JSON(http.StatusOK, gin.H{"paused": false, "reason": "not running"})
 			return
 		}
-		close(abortCh)
+		job.safeAbort()
 		c.JSON(http.StatusOK, gin.H{"paused": true})
 	})
 
@@ -2903,11 +3080,90 @@ func serverMain() {
 			running := job.Step != "" && !job.Done && !job.Paused
 			job.mu.Unlock()
 			if running && abortCh != nil {
-				close(abortCh)
+				job.safeAbort()
 				aborted++
 			}
 		}
+		// 清空所有 job，让任务从列表中消失
+		vecJobsMu.Lock()
+		for k := range vecJobs {
+			delete(vecJobs, k)
+		}
+		vecJobsMu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"aborted": aborted})
+	})
+
+	// ── 批量记忆提炼 ──────────────────────────────────────────────────────
+
+	// POST /api/ai/mem/batch  body: {tasks: [{contact_key, username, is_group}]}
+	api.POST("/ai/mem/batch", func(c *gin.Context) {
+		var body struct {
+			Tasks []BatchTask `json:"tasks"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || len(body.Tasks) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误或任务列表为空"})
+			return
+		}
+		if err := EnqueueBatchTasks(body.Tasks); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"enqueued": len(body.Tasks)})
+	})
+
+	// GET /api/ai/mem/batch — 列出所有批量任务
+	api.GET("/ai/mem/batch", func(c *gin.Context) {
+		tasks, err := ListBatchTasks()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
+	})
+
+	// DELETE /api/ai/mem/batch/:id — 删除单个批量任务
+	api.DELETE("/ai/mem/batch/:id", func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "id 非法"})
+			return
+		}
+		if err := DeleteBatchTask(id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// DELETE /api/ai/mem/batch — 清除所有已完成/出错的批量任务
+	api.DELETE("/ai/mem/batch", func(c *gin.Context) {
+		if err := ClearBatchTasks(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// POST /api/ai/mem/batch/clear-all — 清空所有批量任务（包括 pending）
+	api.POST("/ai/mem/batch/clear-all", func(c *gin.Context) {
+		aiDBMu.Lock()
+		db := aiDB
+		aiDBMu.Unlock()
+		if db == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
+			return
+		}
+		db.Exec("DELETE FROM batch_tasks")
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// POST /api/ai/mem/batch/stop-all — 停止所有任务并清空队列
+	api.POST("/ai/mem/batch/stop-all", func(c *gin.Context) {
+		if err := StopAllBatchTasks(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
 	// POST /api/ai/rag  body: {key, messages, search_query?}
@@ -3081,16 +3337,24 @@ func serverMain() {
 
 		// 第一轮：放入所有命中消息
 		for _, ir := range allIndexed {
-			if !ir.hit { continue }
-			if totalChars+len(ir.line) > maxContextChars { break }
+			if !ir.hit {
+				continue
+			}
+			if totalChars+len(ir.line) > maxContextChars {
+				break
+			}
 			selected[ir.idx] = true
 			totalChars += len(ir.line)
 		}
 
 		// 第二轮：用窗口上下文消息填充剩余预算
 		for _, ir := range allIndexed {
-			if selected[ir.idx] { continue }
-			if totalChars+len(ir.line) > maxContextChars { break }
+			if selected[ir.idx] {
+				continue
+			}
+			if totalChars+len(ir.line) > maxContextChars {
+				break
+			}
 			selected[ir.idx] = true
 			totalChars += len(ir.line)
 		}
@@ -3099,7 +3363,9 @@ func serverMain() {
 		var ctxLines []string
 		snipets := make([]RagSnipet, 0, len(selected))
 		for _, ir := range allIndexed {
-			if !selected[ir.idx] { continue }
+			if !selected[ir.idx] {
+				continue
+			}
 			ctxLines = append(ctxLines, ir.line)
 			snipets = append(snipets, RagSnipet{
 				Datetime: ir.r.Datetime,
@@ -3458,6 +3724,19 @@ func serverMain() {
 			c.JSON(http.StatusOK, getSvc().GetCommonGroups(uname))
 		})
 
+		// POST /api/contacts/common-groups-for-many
+		// body: {usernames: ["wxid1", "wxid2"]} → 返回这些联系人共同所在的群
+		prot.POST("/contacts/common-groups-for-many", func(c *gin.Context) {
+			var body struct {
+				Usernames []string `json:"usernames"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil || len(body.Usernames) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误或 usernames 为空"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"groups": getSvc().GetCommonGroupsForContacts(body.Usernames)})
+		})
+
 		// 获取联系人深度分析（小时/周/日历/深夜/红包/主动率）
 		prot.GET("/contacts/detail", func(c *gin.Context) {
 			uname := c.Query("username")
@@ -3549,10 +3828,18 @@ func serverMain() {
 			}
 			monthSamples := make(map[string][]sampledMsg)
 			for _, m := range msgs {
-				if m.Type != 1 || m.Content == "" { continue } // 只要文本
+				if m.Type != 1 || m.Content == "" {
+					continue
+				} // 只要文本
 				month := ""
-				if m.Date != "" { month = m.Date[:7] } else { continue }
-				if len(monthSamples[month]) >= 3 { continue }
+				if m.Date != "" {
+					month = m.Date[:7]
+				} else {
+					continue
+				}
+				if len(monthSamples[month]) >= 3 {
+					continue
+				}
 				content := m.Content
 				if len([]rune(content)) > 80 {
 					content = string([]rune(content)[:80]) + "…"
@@ -3573,8 +3860,12 @@ func serverMain() {
 			var monthly []monthSummary
 			if detail != nil {
 				months := make(map[string]bool)
-				for m := range detail.TheirMonthlyTrend { months[m] = true }
-				for m := range detail.MyMonthlyTrend { months[m] = true }
+				for m := range detail.TheirMonthlyTrend {
+					months[m] = true
+				}
+				for m := range detail.MyMonthlyTrend {
+					months[m] = true
+				}
 				for m := range months {
 					their := detail.TheirMonthlyTrend[m]
 					mine := detail.MyMonthlyTrend[m]
@@ -3588,8 +3879,12 @@ func serverMain() {
 
 			// 5. 计算额外特征
 			displayName := stats.Remark
-			if displayName == "" { displayName = stats.Nickname }
-			if displayName == "" { displayName = stats.Username }
+			if displayName == "" {
+				displayName = stats.Nickname
+			}
+			if displayName == "" {
+				displayName = stats.Username
+			}
 			daysKnown := 0
 			if stats.FirstMessage != "" && stats.FirstMessage != "-" {
 				if t, err := time.Parse("2006-01-02", stats.FirstMessage); err == nil {
@@ -3609,33 +3904,48 @@ func serverMain() {
 			tokenEstimate := len(monthly)*50 + 500 // 粗略估算
 
 			c.JSON(http.StatusOK, gin.H{
-				"display_name":    displayName,
-				"username":        uname,
-				"first_message":   stats.FirstMessage,
-				"last_message":    stats.LastMessage,
-				"first_msg":       stats.FirstMsg,
-				"days_known":      daysKnown,
-				"total_messages":  stats.TotalMessages,
-				"their_messages":  stats.TheirMessages,
-				"my_messages":     stats.MyMessages,
-				"their_chars":     stats.TheirChars,
-				"my_chars":        stats.MyChars,
-				"avg_msg_len":     stats.AvgMsgLen,
-				"peak_monthly":    stats.PeakMonthly,
-				"peak_period":     stats.PeakPeriod,
-				"recent_monthly":  stats.RecentMonthly,
-				"recall_count":    stats.RecallCount,
-				"money_count":     stats.MoneyCount,
-				"emoji_count":     stats.EmojiCnt,
-				"shared_groups":   stats.SharedGroupsCount,
-				"type_cnt":        stats.TypeCnt,
-				"initiation_pct":  initiationPct,
-				"late_night_pct":  lateNightPct,
-				"late_night_count": func() int64 { if detail != nil { return detail.LateNightCount }; return 0 }(),
-				"total_sessions":  func() int64 { if detail != nil { return detail.TotalSessions }; return 0 }(),
-				"hourly_dist":     func() [24]int { if detail != nil { return detail.HourlyDist }; return [24]int{} }(),
-				"monthly":         monthly,
-				"token_estimate":  tokenEstimate,
+				"display_name":   displayName,
+				"username":       uname,
+				"first_message":  stats.FirstMessage,
+				"last_message":   stats.LastMessage,
+				"first_msg":      stats.FirstMsg,
+				"days_known":     daysKnown,
+				"total_messages": stats.TotalMessages,
+				"their_messages": stats.TheirMessages,
+				"my_messages":    stats.MyMessages,
+				"their_chars":    stats.TheirChars,
+				"my_chars":       stats.MyChars,
+				"avg_msg_len":    stats.AvgMsgLen,
+				"peak_monthly":   stats.PeakMonthly,
+				"peak_period":    stats.PeakPeriod,
+				"recent_monthly": stats.RecentMonthly,
+				"recall_count":   stats.RecallCount,
+				"money_count":    stats.MoneyCount,
+				"emoji_count":    stats.EmojiCnt,
+				"shared_groups":  stats.SharedGroupsCount,
+				"type_cnt":       stats.TypeCnt,
+				"initiation_pct": initiationPct,
+				"late_night_pct": lateNightPct,
+				"late_night_count": func() int64 {
+					if detail != nil {
+						return detail.LateNightCount
+					}
+					return 0
+				}(),
+				"total_sessions": func() int64 {
+					if detail != nil {
+						return detail.TotalSessions
+					}
+					return 0
+				}(),
+				"hourly_dist": func() [24]int {
+					if detail != nil {
+						return detail.HourlyDist
+					}
+					return [24]int{}
+				}(),
+				"monthly":        monthly,
+				"token_estimate": tokenEstimate,
 			})
 		})
 
@@ -3843,18 +4153,22 @@ func serverMain() {
 			// 清理 markdown fence
 			raw = strings.TrimSpace(raw)
 			if strings.HasPrefix(raw, "```") {
-				if idx := strings.Index(raw, "\n"); idx >= 0 { raw = raw[idx+1:] }
-				if idx := strings.LastIndex(raw, "```"); idx >= 0 { raw = raw[:idx] }
+				if idx := strings.Index(raw, "\n"); idx >= 0 {
+					raw = raw[idx+1:]
+				}
+				if idx := strings.LastIndex(raw, "```"); idx >= 0 {
+					raw = raw[:idx]
+				}
 				raw = strings.TrimSpace(raw)
 			}
 
 			var parsed struct {
-				Mode         string `json:"mode"`
-				DB           string `json:"db"`
-				SQL          string `json:"sql"`
-				ContactHint  string `json:"contact_hint"`
-				MessageSQL   string `json:"message_sql"`
-				Explain      string `json:"explain"`
+				Mode        string `json:"mode"`
+				DB          string `json:"db"`
+				SQL         string `json:"sql"`
+				ContactHint string `json:"contact_hint"`
+				MessageSQL  string `json:"message_sql"`
+				Explain     string `json:"explain"`
 			}
 			if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 				c.JSON(http.StatusOK, gin.H{"generated_sql": raw, "error": "LLM 返回格式异常"})
@@ -3885,15 +4199,21 @@ func serverMain() {
 					return
 				}
 				username := ""
-				if s, ok := contactResult.Rows[0][0].(string); ok { username = s }
+				if s, ok := contactResult.Rows[0][0].(string); ok {
+					username = s
+				}
 				if username == "" {
 					c.JSON(http.StatusOK, gin.H{"error": "联系人 username 为空"})
 					return
 				}
 				contactName := ""
-				if s, ok := contactResult.Rows[0][1].(string); ok && s != "" { contactName = s }
+				if s, ok := contactResult.Rows[0][1].(string); ok && s != "" {
+					contactName = s
+				}
 				if contactName == "" {
-					if s, ok := contactResult.Rows[0][2].(string); ok { contactName = s }
+					if s, ok := contactResult.Rows[0][2].(string); ok {
+						contactName = s
+					}
 				}
 
 				// Step 2: 计算表名 + 找到 DB + 执行
@@ -3915,9 +4235,13 @@ func serverMain() {
 					dbRows, _ := mdb.Query("PRAGMA database_list")
 					if dbRows != nil {
 						for dbRows.Next() {
-							var seq int; var name, file string
+							var seq int
+							var name, file string
 							dbRows.Scan(&seq, &name, &file)
-							if seq == 0 { usedDB = filepath.Base(file); break }
+							if seq == 0 {
+								usedDB = filepath.Base(file)
+								break
+							}
 						}
 						dbRows.Close()
 					}
@@ -4386,9 +4710,9 @@ func serverMain() {
 		needsDataDir := merged.DataDir == "" && len(merged.DataDirProfiles) == 0
 		log.Printf("[IMPORT] backup=%s needs_data_dir=%v", bak, needsDataDir)
 		c.JSON(http.StatusOK, gin.H{
-			"status":          "ok",
-			"backup":          bak,
-			"needs_data_dir":  needsDataDir, // 前端可据此提示用户重新选数据目录
+			"status":         "ok",
+			"backup":         bak,
+			"needs_data_dir": needsDataDir, // 前端可据此提示用户重新选数据目录
 		})
 	})
 
@@ -4397,6 +4721,12 @@ func serverMain() {
 
 	// 记忆库相关端点（/api/memory/*）
 	registerMemoryRoutes(api)
+
+	// 记忆优先两级检索端点（/api/ai/memory-search）
+	registerMemorySearchRoutes(api, getSvc)
+
+	// LLM API 调用日志端点（/api/ai/llm-logs）
+	registerLLMLogRoutes(api)
 
 	// Token 使用统计端点
 	registerTokenStatsRoutes(api)

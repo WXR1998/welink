@@ -1,0 +1,277 @@
+# 记忆摘要链设计文档
+
+> 分支：`codex/fix-memory-summary-chain`
+> 相关代码：`backend/mem.go`
+> 诊断文档：`docs/memory-extraction-pipeline-diagnosis.md`
+
+---
+
+## 一、问题回顾
+
+当前记忆提取管线（`extractAndStoreFacts`）采用固定条数分段：
+
+- 每批 80 条消息（`memExtractChunkSize = 80`）
+- 步进 64 条（`memExtractStride = 64`），重叠 16 条
+
+每批独立调用 LLM 提炼事实，批次之间仅靠 16 条原始消息重叠衔接。这导致两类系统性故障：
+
+1. **张冠李戴（幻觉）**：指代对象在很早之前被引入，重叠窗口之外，模型只能猜
+2. **找不到主语**：群聊大量省略主语，分段边界切断"主语引入点"与"后续讨论"
+
+根本原因：**16 条原始消息重叠的信噪比太低**，且**无结构化上下文在批次间传递**。
+
+---
+
+## 二、解决方案：上下文摘要链
+
+### 核心思路
+
+不再仅依赖原始消息重叠，而是在每批分析后生成一份**结构化上下文摘要**，传递给下一批。下一批模型可以参考摘要中的"人物表"、"当前话题"、"未消解指代"来消解"他/她/那个事"等指代。
+
+```
+段1分析 → 提取事实 + 生成摘要_0
+                ↓ 摘要_0 传入
+段2分析 → 参考摘要_0 消解指代 → 提取事实 + 生成摘要_1
+                ↓ 摘要_1 传入
+段3分析 → ...
+```
+
+### 数据结构
+
+```go
+// memContextSummary 是上一段分析传递给下一段的结构化上下文摘要。
+type memContextSummary struct {
+    Entities     []memEntity `json:"entities"`               // 人物表
+    ActiveTopics []string    `json:"active_topics"`          // 当前话题
+    Unresolved   []string    `json:"unresolved_references"`  // 未消解指代
+}
+
+type memEntity struct {
+    Name    string   `json:"name"`
+    Aliases []string `json:"aliases"`
+}
+```
+
+### LLM 输出格式变更
+
+**旧格式**（JSON 数组）：
+```json
+["张三喜欢户外运动", "李四在北京做程序员"]
+```
+
+**新格式**（JSON 对象）：
+```json
+{
+  "facts": ["张三喜欢户外运动", "李四在北京做程序员"],
+  "context_summary": {
+    "entities": [{"name": "张三", "aliases": ["老张"]}],
+    "active_topics": ["张三的项目进度"],
+    "unresolved_references": ["第75条的'他'不确定指谁"]
+  }
+}
+```
+
+### 兼容性处理
+
+`parseExtractResult` 函数兼容两种格式：
+1. 优先尝试解析 JSON 对象（新格式）
+2. 若失败，回退到 JSON 数组（旧格式）
+
+这样即使某些模型仍返回旧格式，管线也能正常工作。
+
+---
+
+## 三、Prompt 改进
+
+### 1. 强调"宁愿少记也不要错记"
+
+将此作为**最重要原则**，置于规则列表之前：
+
+```
+【最重要原则】宁愿少记也不要错记。记忆一旦出错会误导后续所有判断，因此：
+  - 如果某条信息缺乏主语、上下文不完整或无法确定所指对象，跳过该条
+  - 不要根据片段猜测、脑补或推断
+  - 宁可遗漏一条可能有价值的信息，也不要记录一条可能错误的信息
+```
+
+### 2. 注入前文上下文摘要
+
+在 prompt 中新增"前文上下文"段，格式化展示上一段的人物表、当前话题、未消解指代：
+
+```
+前文上下文（来自上一段分析的摘要，用于消解"他/她/那个"等指代）：
+已知人物：张三（又称：老张）、李四
+当前话题：张三的项目进度
+未消解指代：第75条的"他"不确定指谁
+```
+
+第一段无前文上下文时，显示"（本段是第一段，无前文上下文）"。
+
+### 3. 要求输出上下文摘要
+
+在输出格式中明确要求模型同时输出 `context_summary`，即使没有有价值的事实（`facts` 为 `[]`），也必须输出 `context_summary`。
+
+---
+
+## 四、实现细节
+
+### 摘要体积限制
+
+为防止摘要随批次无限膨胀，`capContextSummary` 函数限制：
+- 最多 15 个人物条目
+- 最多 8 个当前话题
+- 最多 5 个未消解指代
+
+### 摘要链在循环中的传递
+
+在 `extractAndStoreFacts` 的循环中：
+
+```go
+var runningSummary memContextSummary  // 循环前初始化
+
+for chunkIdx := ... {
+    result, err := extractFactsFromChunk(chunk, ..., runningSummary)
+    if err != nil {
+        lastErr = err
+    } else {
+        runningSummary = result.ContextSummary  // 更新摘要，供下一段使用
+        facts := result.Facts
+        // ... 后续 embedding、去重、存库逻辑不变 ...
+    }
+}
+```
+
+### 保留原有重叠机制
+
+16 条原始消息重叠仍然保留。摘要链是**补充**而非替代：
+- 重叠提供短期上下文衔接（最近 16 条消息）
+- 摘要链提供长期上下文衔接（跨批次的人物、话题、指代）
+
+---
+
+## 五、不变的部分
+
+以下部分**不改动**，保持向后兼容：
+
+- DB schema（`mem_facts` 表结构不变）
+- 检查点机制（`extract_offset` 续传逻辑不变）
+- 跨批次去重机制（embedding 相似度比对不变）
+- 置顶记忆背景注入（`backgroundCtx` 不变）
+
+---
+
+## 六、预期效果
+
+| 问题 | 改进前 | 改进后 |
+|------|--------|--------|
+| 张冠李戴 | 模型看不到指代引入点，硬猜 | 摘要中"已知人物"帮助消解指代 |
+| 找不到主语 | 分段边界切断主语链 | 摘要中"当前话题"延续主语链 |
+| 上下文衔接断裂 | 16 条原始重叠信噪比低 | 结构化摘要提供高质量上下文 |
+| 错误记忆 | 模型可能猜测记录 | Prompt 强制"宁愿少记也不要错记" |
+
+---
+
+## 七、动态分段：时间感知的切分策略
+
+### 动机
+
+固定条数（80 条）盲切有两个问题：
+1. **时间跨度不可控**：80 条消息可能跨越几分钟（群聊高峰）或几个月（低频私聊），后者导致一段内话题混杂
+2. **话题边界被切断**：分段边界不考虑自然对话边界，容易在话题中间切刀
+
+### 新方案：条数上限 + 时间间隔双重约束
+
+```go
+const memExtractChunkSize = 150         // 每段最多 150 条消息
+const memMaxTimeGap    = 24 * time.Hour // 每段最多跨越 24 小时
+```
+
+`computeSegments` 函数动态计算分段边界，切分条件（任一满足即切分）：
+- **条数上限**：段内消息数达到 150
+- **时间间隔**：相邻消息间隔超过 24h → 强行切分
+- **时间跨度**：段总时间跨度（首条到末条）超过 24h → 切分
+
+### 为什么选 150 条？
+
+| 因素 | 分析 |
+|------|------|
+| 上下文窗口 | DeepSeek V4 Flash 有 32K-128K token 上下文，150 条消息约 15K-22K token，远在范围内 |
+| 提取质量 | 太大会导致"lost in the middle"注意力衰减；150 条是质量与覆盖的平衡点 |
+| 摘要链 | 有了结构化摘要链传递上下文，不再需要原始消息重叠，因此可以放宽条数 |
+| 时间切分 | 24h 时间限制是主要分段机制；150 条作为上限安全阀，只对极密集对话触发 |
+
+### 移除原始消息重叠
+
+旧方案：`chunkSize=80, stride=64, overlap=16`（16 条原始消息重叠）
+
+新方案：**无重叠**，非连续分段。摘要链完全替代了原始重叠的功能：
+- 摘要链提供长期上下文（人物表、当前话题、未消解指代）
+- 时间感知切分保证段内话题连贯
+
+### Gap-forced split 后的摘要重置
+
+当两个段之间出现 > 24h 的时间间隔时（`seg.GapSplit == true`）：
+- **清除** `Unresolved`（未消解指代）：旧对话中的"他/她"与新对话无关
+- **清除** `ActiveTopics`（当前话题）：24h+ 间隔意味着话题大概率已切换
+- **保留** `Entities`（人物表）：群聊中的人物通常仍然相关，保留有助于消解指代
+
+```go
+if seg.GapSplit {
+    runningSummary.Unresolved = nil
+    runningSummary.ActiveTopics = nil
+    // 保留 Entities：群聊人物表跨段仍有价值
+}
+```
+
+### 检查点兼容性
+
+`computeSegments` 是纯函数：相同的 `msgs` 输入始终产生相同的分段结果。因此：
+- 续传时重新调用 `computeSegments` 得到相同的分段边界
+- `startChunk`（检查点）仍然表示"从第几段开始"
+- 检查点语义不变，只是分段边界从固定步进变为动态计算
+
+---
+
+## 八、记忆版本管理
+
+### 动机
+
+新管线（摘要链 + 动态分段）与旧管线（固定 80 条分段）生成的记忆格式不同。为了：
+- 在不删除旧版本记忆的情况下使用新版本
+- 支持回滚（切回旧分支后旧记忆仍然存在）
+- 支持 A/B 对比（旧 v1 记忆 vs 新 v2 记忆）
+
+### 方案
+
+在 `mem_facts` 表中新增 `version` 列（`INTEGER NOT NULL DEFAULT 1`）：
+
+| version | 管线 | 说明 |
+|---------|------|------|
+| 1 | 旧管线 | 固定 80 条分段，无摘要链 |
+| 2 | 新管线 | 摘要链 + 动态分段（150 条上限 + 24h 间隔切分）|
+
+### 代码改动
+
+```go
+// mem.go
+const memFactVersion = 2  // 当前记忆提取管线版本
+```
+
+所有与 `mem_facts` 交互的 SQL 均按 `version` 过滤：
+
+| 操作 | 旧代码 | 新代码 |
+|------|--------|--------|
+| 提炼存储 | `INSERT ... (created_at, updated_at)` | `INSERT ... (version, created_at, updated_at)` with `memFactVersion` |
+| 计数 | `SELECT COUNT(*) ... WHERE contact_key = ?` | `... AND version = ?` |
+| 列表 | `SELECT ... WHERE contact_key = ?` | `... AND version = ?` |
+| 语义检索 | `SELECT ... FROM mem_facts` | `... WHERE version = ?` |
+| 置顶记忆 | `SELECT ... WHERE pinned = 1` | `... AND version = ?` |
+| 重建删除 | `DELETE ... WHERE contact_key = ?` | `... AND version = 2` |
+| 手动添加 | `INSERT ... (pinned, created_at, ...)` | `INSERT ... (pinned, version, created_at, ...)` with `version = 2` |
+
+### 涉及文件
+
+- `backend/mem.go` — schema 迁移、提炼存储、计数、列表、语义检索
+- `backend/memory_api.go` — 列表、计数、手动添加、删除非置顶、置顶记忆
+- `backend/main.go` — 重建时删除、计数
+- `backend/demo_seed.go` — demo 数据插入

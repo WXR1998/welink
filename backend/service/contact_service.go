@@ -355,10 +355,13 @@ func NewContactService(mgr *db.DBManager, params AnalysisParams, defaultInitFrom
 
 	// 已完成分析：标记已完成，前端直接进入主界面，不重新索引
 	if alreadyInitialized {
-		log.Printf("[CONFIG] Analysis already completed, skipping re-index")
+		log.Printf("[CONFIG] Analysis already completed, rebuilding cache in background")
 		svc.cacheMu.Lock()
 		svc.isInitialized = true
 		svc.cacheMu.Unlock()
+		// 缓存是内存态，重启后丢失；在后台静默重建，前端立即可用
+		// defaultInitFrom/To 为 0 表示不限时间（全量），同样需要重建
+		go svc.silentRebuildCache(defaultInitFrom, defaultInitTo)
 	} else if defaultInitFrom != 0 || defaultInitTo != 0 {
 		// 配置了自动初始化时间范围且尚未完成：启动后立即开始索引
 		log.Printf("[CONFIG] Auto-init with from=%d to=%d", defaultInitFrom, defaultInitTo)
@@ -4054,6 +4057,67 @@ func (s *ContactService) GetCommonCircle(user1, user2 string) *CommonCircleResul
 		SharedGroups:  sharedGroups,
 		CommonFriends: commonFriends,
 	}
+}
+
+// GetCommonGroupsForContacts 找出所有选定联系人都出现的群聊。
+// usernames 是联系人 wxid 列表，返回这些联系人共同所在的群。
+func (s *ContactService) GetCommonGroupsForContacts(usernames []string) []GroupInfo {
+	if len(usernames) == 0 {
+		return []GroupInfo{}
+	}
+	allGroups := s.GetGroups()
+	if len(allGroups) == 0 {
+		return []GroupInfo{}
+	}
+
+	// 对每个联系人，记录他们在哪些群聊中
+	contactGroupSet := make([]map[string]bool, len(usernames))
+	for i := range usernames {
+		contactGroupSet[i] = make(map[string]bool)
+	}
+
+	// 查每个联系人在 contact 表的 id
+	for i, uname := range usernames {
+		var id int64
+		s.dbMgr.ContactDB.QueryRow("SELECT id FROM contact WHERE username = ?", uname).Scan(&id)
+		if id == 0 {
+			continue
+		}
+		// 查该联系人所在的群
+		rows, err := s.dbMgr.ContactDB.Query(`
+			SELECT cr.username FROM chat_room cr
+			WHERE EXISTS (SELECT 1 FROM chatroom_member cm WHERE cm.room_id = cr.id AND cm.member_id = ?)
+		`, id)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var groupUname string
+			rows.Scan(&groupUname)
+			contactGroupSet[i][groupUname] = true
+		}
+		rows.Close()
+	}
+
+	// 找所有联系人都出现的群
+	var result []GroupInfo
+	for _, g := range allGroups {
+		allPresent := true
+		for i := range usernames {
+			if !contactGroupSet[i][g.Username] {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			result = append(result, g)
+		}
+	}
+
+	if result == nil {
+		return []GroupInfo{}
+	}
+	return result
 }
 
 func (s *ContactService) GetCommonGroups(contactUsername string) []GroupInfo {

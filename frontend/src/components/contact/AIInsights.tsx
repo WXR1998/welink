@@ -8,7 +8,7 @@ import { FileText, User, BookOpen, Loader2, Share2, Check, Sparkles, Film } from
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
-import { generateShareImage } from '../../utils/shareImage';
+import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { getPrompt, loadCustomPrompts } from '../../utils/promptTemplates';
@@ -238,13 +238,12 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
     if (!result || sharing) return;
     setSharing(true);
     try {
-      const p = await generateShareImage({
+      const result2 = await generateAIScreenshot({
         question: INSIGHT_TABS.find(t => t.key === type)?.label + ` — ${displayName}`,
         answer: result,
-        contactName: displayName,
-        avatarUrl,
+        subjects: [{ name: displayName, avatarUrl }],
       });
-      setSavedPath(p);
+      if (result2.path) setSavedPath(result2.path);
       setShared(true);
       setTimeout(() => { setShared(false); setSavedPath(null); }, 6000);
     } catch (e) { console.error(e); }

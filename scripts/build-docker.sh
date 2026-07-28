@@ -10,6 +10,9 @@
 #
 set -euo pipefail
 
+# 启用 BuildKit，利用 --mount=type=cache 缓存 go mod / npm 下载
+export DOCKER_BUILDKIT=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-/volume4/docker/archive/compose.yaml}"
@@ -37,11 +40,10 @@ fi
 # ── 构建后端 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "📦 [1/2] 构建后端镜像 welink-backend:$SHA"
-echo "   Dockerfile: backend/Dockerfile.simple"
-echo "   --no-cache: 确保代码变更完全体现"
+echo "   Dockerfile: backend/Dockerfile"
 echo ""
-docker build --no-cache --network=host \
-  -f backend/Dockerfile.simple \
+docker build --network=host \
+  -f backend/Dockerfile \
   -t "welink-backend:$SHA" \
   backend/
 
@@ -51,11 +53,10 @@ echo "✅ 后端镜像构建完成: welink-backend:$SHA"
 # ── 构建前端 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "📦 [2/2] 构建前端镜像 welink-frontend:$SHA"
-echo "   Dockerfile: frontend/Dockerfile.simple"
-echo "   --no-cache: 确保代码变更完全体现"
+echo "   Dockerfile: frontend/Dockerfile"
 echo ""
-docker build --no-cache --network=host \
-  -f frontend/Dockerfile.simple \
+docker build --network=host \
+  -f frontend/Dockerfile \
   -t "welink-frontend:$SHA" \
   frontend/
 
@@ -66,7 +67,6 @@ echo "✅ 前端镜像构建完成: welink-frontend:$SHA"
 if [ -f "$COMPOSE_FILE" ]; then
   echo ""
   echo "📝 更新 $COMPOSE_FILE 中的镜像 tag..."
-  # 用 sed 替换 welink-backend 和 welink-frontend 的 tag
   sed -i.bak \
     -e "s|image: welink-backend:.*|image: welink-backend:$SHA|" \
     -e "s|image: welink-frontend:.*|image: welink-frontend:$SHA|" \
@@ -100,7 +100,6 @@ fi
 # ── 清理旧镜像 ────────────────────────────────────────────────────────────────
 echo ""
 echo "🧹 清理旧镜像 (保留当前 SHA: $SHA)..."
-# 列出所有 welink-backend 和 welink-frontend 镜像，排除当前 SHA
 OLD_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'welink-(backend|frontend):' | grep -v ":$SHA" || true)
 if [ -n "$OLD_IMAGES" ]; then
   echo "删除旧镜像:"
@@ -110,6 +109,17 @@ if [ -n "$OLD_IMAGES" ]; then
   done
 else
   echo "没有旧镜像需要清理"
+fi
+
+# ── 清理悬空镜像 (headless / dangling) ───────────────────────────────────────
+echo ""
+echo "🧹 清理悬空镜像 (dangling/headless)..."
+DANGLING_COUNT=$(docker images -f "dangling=true" -q | wc -l)
+if [ "$DANGLING_COUNT" -gt 0 ]; then
+  echo "删除 $DANGLING_COUNT 个悬空镜像..."
+  docker image prune -f
+else
+  echo "没有悬空镜像需要清理"
 fi
 
 echo ""

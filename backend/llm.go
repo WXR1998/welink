@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // maxStreamParseFails 单次流式响应允许的 chunk 解析失败次数上限。
@@ -25,11 +26,19 @@ type LLMMessage struct {
 
 // StreamChunk 是 SSE 推给前端的单次增量
 type StreamChunk struct {
-	Delta   string   `json:"delta,omitempty"`
-	Thinking string  `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
-	Done    bool     `json:"done,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	RagMeta *RagMeta `json:"rag_meta,omitempty"`
+	Delta     string       `json:"delta,omitempty"`
+	Thinking  string       `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
+	Done      bool         `json:"done,omitempty"`
+	Error     string       `json:"error,omitempty"`
+	RagMeta   *RagMeta     `json:"rag_meta,omitempty"`
+	Usage     *StreamUsage `json:"usage,omitempty"` // 本次调用的 token 统计
+}
+
+// StreamUsage 携带本次 LLM 调用的 token 使用统计。
+type StreamUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
 }
 
 // RagMeta 携带 RAG 检索统计信息及命中消息（在 LLM 流式响应前发送）。
@@ -58,12 +67,14 @@ type CompleteResponse struct {
 // ─── Provider 配置 ─────────────────────────────────────────────────────────────
 
 type llmConfig struct {
-	provider        string
-	apiKey          string
-	baseURL         string
-	model           string
-	noThink         bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
-	reasoningEffort string // off / low / medium / high；空字符串 = off
+	provider          string
+	apiKey            string
+	baseURL           string
+	model             string
+	noThink           bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
+	reasoningEffort   string // off / low / medium / high；空字符串 = off
+	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
+	compressThreshold int    // 上下文压缩阈值，0 = contextWindow - 4000
 }
 
 // reasoningBudgetTokens 把档位映射到 Claude thinking.budget_tokens
@@ -292,7 +303,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	if profileID != "" {
 		for _, p := range prefs.LLMProfiles {
 			if p.ID == profileID {
-				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort}
+				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold}
 				goto applyGemini
 			}
 		}
@@ -394,12 +405,133 @@ func testLLMConnProfile(profileID string, prefs Preferences) (string, error) {
 	return testLLMConn(tmp)
 }
 
+const defaultContextWindow = 128000
+
+// compressContextIfNeeded 当对话历史过长时，自动压缩旧消息：
+// 1. 保留第一条 system 消息（含聊天记录上下文）
+// 2. 将中间的旧消息用 LLM 总结成一条 system 消息
+// 3. 保留最近若干轮对话
+// 整个过程是同步阻塞的，但只在超过阈值时才触发。
+func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamChunk)) []LLMMessage {
+	maxTokens := cfg.contextWindow
+	if maxTokens <= 0 {
+		maxTokens = defaultContextWindow
+	}
+	// 压缩阈值：用户可配置；未配置时默认 contextWindow - 4000（留 4K 给输出）
+	compressThreshold := cfg.compressThreshold
+	if compressThreshold <= 0 {
+		compressThreshold = maxTokens - 4000
+	}
+	if compressThreshold < 1000 {
+		compressThreshold = 1000
+	}
+
+	totalTokens := estimateMsgTokens(msgs)
+	if totalTokens <= compressThreshold {
+		return msgs
+	}
+
+	log.Printf("[llm] 上下文压缩触发：%d tokens（阈值 %d）", totalTokens, compressThreshold)
+	if send != nil {
+		send(StreamChunk{Delta: "⏳ 对话历史较长，正在自动压缩旧消息…\n\n"})
+	}
+
+	// 分离 system 消息和对话消息
+	var systemMsgs []LLMMessage
+	var convMsgs []LLMMessage
+	for _, m := range msgs {
+		if m.Role == "system" {
+			systemMsgs = append(systemMsgs, m)
+		} else {
+			convMsgs = append(convMsgs, m)
+		}
+	}
+
+	// 计算需要保留的最近消息数量（从后往前，直到总 token 数低于阈值的一半）
+	keepCount := 0
+	keepTokens := 0
+	halfThreshold := compressThreshold / 2
+	for i := len(convMsgs) - 1; i >= 0; i-- {
+		msgTokens := estimateMsgTokens([]LLMMessage{convMsgs[i]})
+		if keepTokens+msgTokens > halfThreshold {
+			break
+		}
+		keepTokens += msgTokens
+		keepCount++
+	}
+
+	// 需要压缩的旧消息
+	toCompress := convMsgs[:len(convMsgs)-keepCount]
+	if len(toCompress) == 0 {
+		return msgs
+	}
+
+	// 用 LLM 总结旧对话
+	var convText strings.Builder
+	for _, m := range toCompress {
+		convText.WriteString(m.Role)
+		convText.WriteString(": ")
+		convText.WriteString(m.Content)
+		convText.WriteString("\n\n")
+	}
+
+	summarizeMsgs := []LLMMessage{
+		{Role: "system", Content: "你是一个对话总结助手。请将以下对话历史压缩成一段简洁的摘要，保留关键信息、结论和用户意图。用中文回答。"},
+		{Role: "user", Content: convText.String()},
+	}
+
+	// 复用已有的 provider 路由逻辑完成同步摘要
+	var summary string
+	var err error
+	switch cfg.provider {
+	case "claude":
+		summary, err = completeClaudeSync(summarizeMsgs, cfg)
+	case "bedrock":
+		summary, err = completBedrockSync(summarizeMsgs, cfg)
+	case "vertex":
+		summary, err = completVertexSync(summarizeMsgs, cfg)
+	default:
+		summary, err = completeOpenAICompatSync(summarizeMsgs, cfg)
+	}
+	if err != nil || summary == "" {
+		// 压缩失败，退回到截断策略
+		log.Printf("[llm] 上下文压缩失败（%v），退回截断", err)
+		result := make([]LLMMessage, 0, len(systemMsgs)+keepCount+1)
+		result = append(result, systemMsgs...)
+		result = append(result, LLMMessage{
+			Role:    "system",
+			Content: "（注：部分早期对话内容因上下文长度限制已被省略）",
+		})
+		result = append(result, convMsgs[len(convMsgs)-keepCount:]...)
+		return result
+	}
+
+	// 组装压缩后的消息
+	result := make([]LLMMessage, 0, len(systemMsgs)+1+keepCount)
+	result = append(result, systemMsgs...)
+	result = append(result, LLMMessage{
+		Role:    "system",
+		Content: "以下是之前对话的摘要：\n\n" + summary,
+	})
+	result = append(result, convMsgs[len(convMsgs)-keepCount:]...)
+
+	log.Printf("[llm] 上下文压缩完成：%d tokens → %d tokens",
+		totalTokens, estimateMsgTokens(result))
+	if send != nil {
+		send(StreamChunk{Delta: "✅ 上下文已压缩，继续回答。\n\n"})
+	}
+
+	return result
+}
+
 // dispatchLLMStream 统一流式分发
 func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) error {
 	// Demo 模式下拒绝指向内网的 baseURL，防 SSRF（M2/L4）；本地部署不限制（Ollama 等走 localhost）
 	if err := guardOutboundURL(cfg.baseURL); err != nil {
 		return err
 	}
+	// 上下文窗口管理：对话过长时自动压缩旧消息
+	msgs = compressContextIfNeeded(msgs, cfg, send)
 	// Token 统计：记录输入 token
 	promptTokens := estimateMsgTokens(msgs)
 	// 用 wrapper 追踪输出 token
@@ -410,6 +542,7 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 		}
 		send(chunk)
 	}
+	llmStart := time.Now()
 	t := startTimer("llm_stream")
 	var err error
 	switch cfg.provider {
@@ -431,7 +564,13 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	)
 	// Token 统计：记录输出 token
 	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
-	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
+	// 推送 token 使用信息给前端
+	send(StreamChunk{Usage: &StreamUsage{
+		PromptTokens:  promptTokens,
+		OutputTokens:  outputTokens,
+		TotalTokens:   promptTokens + outputTokens,
+	}})
 	return err
 }
 
@@ -491,22 +630,32 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
+	llmStart := time.Now()
 	resp, err := httpClientLLMStream.Do(req)
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	scanner := bufio.NewScanner(teeReader)
 	// 用于检测 <think>...</think> 标签（MiniMax / DeepSeek-R1 等思考模型）
 	inThinkTag := false
 	thinkBuf := ""
 	parseFails := 0 // 累计 chunk 解析失败数，超阈值即中止，避免静默丢数据（H3）
+	gotDone := false // 是否收到 [DONE] 标记
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -515,6 +664,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 		}
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
+			gotDone = true
 			break
 		}
 		var chunk struct {
@@ -590,6 +740,16 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	if thinkBuf != "" {
 		send(StreamChunk{Thinking: thinkBuf})
 	}
+	// 检测流是否被意外中断（没收到 [DONE] 就结束了）
+	if !gotDone {
+		if err := scanner.Err(); err != nil {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
+			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", err)
+		}
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
+		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
+	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	return scanner.Err()
 }
 
@@ -738,6 +898,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		return "", err
 	}
 	promptTokens := estimateMsgTokens(msgs)
+	llmStart := time.Now()
 	t := startTimer("llm_complete")
 	var (
 		out string
@@ -761,7 +922,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		"resp_chars", len(out),
 	)
 	outputTokens := estimateTokens(out)
-	recordTokenUsage(cfg.model, "summary", promptTokens, outputTokens)
+	recordTokenUsage(cfg.model, "summary", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
 	return out, err
 }
 
@@ -795,16 +956,21 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
-	resp, err := withRetry(0, func(attempt int) (*http.Response, error) {
+	llmStart := time.Now()
+	resp, err := withRetry(3, func(attempt int) (*http.Response, error) {
 		return httpClientLLMSync.Do(req)
 	})
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
@@ -815,9 +981,15 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("响应为空")
 	}
@@ -863,14 +1035,19 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 	req.Header.Set("x-api-key", cfg.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
+	llmStart := time.Now()
 	resp, err := httpClientLLMSync.Do(req)
+	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
@@ -880,9 +1057,15 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// TeeReader 捕获响应体片段供日志展示
+	var respBuf limitedBuffer
+	respBuf.max = snippetLen
+	teeReader := io.TeeReader(resp.Body, &respBuf)
+	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	for _, block := range result.Content {
 		if block.Type == "text" && block.Text != "" {
 			return block.Text, nil

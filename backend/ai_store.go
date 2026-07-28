@@ -15,13 +15,16 @@ import (
 
 // AIMessage 与前端 AnalysisMessage 结构对应
 type AIMessage struct {
-	Role         string  `json:"role"`
-	Content      string  `json:"content"`
-	Provider     string  `json:"provider,omitempty"`
-	Model        string  `json:"model,omitempty"`
-	ElapsedSecs  float64 `json:"elapsedSecs,omitempty"`
-	TokensPerSec int     `json:"tokensPerSec,omitempty"`
-	CharCount    int     `json:"charCount,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	Searching        bool            `json:"searching,omitempty"`        // 是否处于检索/生成中的中间状态
+	Provider         string          `json:"provider,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	ElapsedSecs      float64         `json:"elapsedSecs,omitempty"`
+	TokensPerSec     int             `json:"tokensPerSec,omitempty"`
+	CharCount        int             `json:"charCount,omitempty"`
+	MemorySearchData json.RawMessage `json:"memorySearchData,omitempty"` // 记忆检索详情（JSON 透传，前端展示用）
+	LLMPrompt        json.RawMessage `json:"llmPrompt,omitempty"`        // 最终发给 LLM 的原始 prompt
 }
 
 var (
@@ -134,6 +137,11 @@ func InitAIDB() error {
 		return fmt.Errorf("ai_store: %w", err)
 	}
 	if err := initScheduledTaskTables(); err != nil {
+		db.Close()
+		aiDB = nil
+		return fmt.Errorf("ai_store: %w", err)
+	}
+	if err := initBatchTaskTable(); err != nil {
 		db.Close()
 		aiDB = nil
 		return fmt.Errorf("ai_store: %w", err)

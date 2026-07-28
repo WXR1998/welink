@@ -1173,7 +1173,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
     );
   }
 
-  const totalMembers = groups.reduce((s, g) => s + (g.member_count ?? 0), 0);
+  const totalMembers = filtered.reduce((s, g) => s + (g.member_count ?? 0), 0);
 
   return (
     <div className="space-y-6">
@@ -1181,7 +1181,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="dk-text text-3xl sm:text-5xl font-black tracking-tight text-[#1d1d1f] mb-1">群聊画像</h1>
-          <p className="text-gray-400 text-sm">{groups.length} 个群聊</p>
+          <p className="text-gray-400 text-sm">{filtered.length} 个群聊</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -1211,13 +1211,13 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
       <div className="grid grid-cols-3 gap-4">
         <div className="dk-card bg-white dk-border border border-gray-100 rounded-2xl p-5">
           <Users size={20} className="text-[#10aeff] mb-2" strokeWidth={2.5} />
-          <div className="dk-text text-2xl sm:text-3xl font-black text-[#1d1d1f]">{groups.length}</div>
+          <div className="dk-text text-2xl sm:text-3xl font-black text-[#1d1d1f]">{filtered.length}</div>
           <div className="dk-text-muted text-xs text-gray-500 mt-1">群聊总数</div>
         </div>
         <div className="dk-card bg-white dk-border border border-gray-100 rounded-2xl p-5">
           <MessageSquare size={20} className="text-[#07c160] mb-2" strokeWidth={2.5} />
           <div className="dk-text text-2xl sm:text-3xl font-black text-[#1d1d1f]">
-            {(groups.reduce((s, g) => s + g.total_messages, 0) / 10000).toFixed(1)}万
+            {(filtered.reduce((s, g) => s + g.total_messages, 0) / 10000).toFixed(1)}万
           </div>
           <div className="dk-text-muted text-xs text-gray-500 mt-1">群消息总量</div>
         </div>
@@ -1231,11 +1231,11 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
       </div>
 
       {/* 最活跃群聊 Top 3 */}
-      {groups.length > 0 && (() => {
-        const top3 = [...groups].sort((a, b) => b.total_messages - a.total_messages).slice(0, 3);
+      {filtered.length > 0 && (() => {
+        const top3 = [...filtered].sort((a, b) => b.total_messages - a.total_messages).slice(0, 3);
         const maxMsg = top3[0]?.total_messages || 1;
-        const activeCount = groups.filter(g => getGroupStatusTier(g) === 0).length;
-        const dormantCount = groups.filter(g => getGroupStatusTier(g) === 3).length;
+        const activeCount = filtered.filter(g => getGroupStatusTier(g) === 0).length;
+        const dormantCount = filtered.filter(g => getGroupStatusTier(g) === 3).length;
         const medals = ['🥇', '🥈', '🥉'];
         return (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1287,8 +1287,8 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { label: '活跃', desc: '7天内', count: activeCount, color: '#07c160', bg: 'bg-[#e7f8f0]' },
-                  { label: '温热', desc: '7-30天', count: groups.filter(g => getGroupStatusTier(g) === 1).length, color: '#7bc934', bg: 'bg-[#f0fce8]' },
-                  { label: '渐冷', desc: '1-6月', count: groups.filter(g => getGroupStatusTier(g) === 2).length, color: '#ff9500', bg: 'bg-orange-50' },
+                  { label: '温热', desc: '7-30天', count: filtered.filter(g => getGroupStatusTier(g) === 1).length, color: '#7bc934', bg: 'bg-[#f0fce8]' },
+                  { label: '渐冷', desc: '1-6月', count: filtered.filter(g => getGroupStatusTier(g) === 2).length, color: '#ff9500', bg: 'bg-orange-50' },
                   { label: '沉寂', desc: '半年+', count: dormantCount, color: '#576b95', bg: 'bg-[#eef1f7]' },
                 ].map(s => (
                   <div key={s.label} className={`${s.bg} rounded-xl px-3 py-2.5`}>
@@ -1298,7 +1298,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
                     </div>
                     <div className="text-[10px] text-gray-400 mt-0.5">{s.desc}</div>
                     <div className="h-1 bg-white/50 dark:bg-white/10 rounded-full mt-1.5 overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${groups.length > 0 ? (s.count / groups.length) * 100 : 0}%`, background: s.color }} />
+                      <div className="h-full rounded-full" style={{ width: `${filtered.length > 0 ? (s.count / filtered.length) * 100 : 0}%`, background: s.color }} />
                     </div>
                   </div>
                 ))}
@@ -1591,7 +1591,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
 
       {/* 对比面板 */}
       {showCompare && (() => {
-        const selected = groups.filter(g => compareSelected.has(g.username));
+        const selected = filtered.filter(g => compareSelected.has(g.username));
         return selected.length >= 2 ? (
           <GroupComparePanel groups={selected} onClose={() => setShowCompare(false)} />
         ) : null;

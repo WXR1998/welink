@@ -10,20 +10,6 @@ import QRCode from 'qrcode';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
-export interface ShareImageOptions {
-  question?: string;
-  answer: string;
-  contactName?: string;
-  avatarUrl?: string;
-  stats?: {
-    provider?: string;
-    model?: string;
-    elapsedSecs?: number;
-    tokensPerSec?: number;
-    charCount?: number;
-    timestamp?: number;
-  };
-}
 
 // ─── 头像预加载（fetch → data URL，避免 html2canvas 截图时异步加载失败）────────
 
@@ -396,307 +382,6 @@ export async function generateReportImage(options: ReportImageOptions): Promise<
 // ─── 主函数 ───────────────────────────────────────────────────────────────────
 
 /** 生成并下载分享图片；返回保存路径（App 模式）或文件名（浏览器模式） */
-export async function generateShareImage(options: ShareImageOptions): Promise<string> {
-  const { question, answer, contactName, avatarUrl, stats } = options;
-
-  const FONT = "system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif";
-
-  // 并行：生成二维码 + 渲染 Markdown + 预加载头像 + 加载图标
-  marked.use({ breaks: true });
-  const [qrDataUrl, answerHtml, avatarDataUrl, faviconImg, githubImg] = await Promise.all([
-    QRCode.toDataURL('https://welink.click', { width: 96, margin: 1, color: { dark: '#1d1d1f', light: '#f8f9fb' } }),
-    Promise.resolve(marked.parse(answer) as string),
-    fetchAvatarDataUrl(avatarUrl),
-    fetch('/favicon.svg').then(r => r.text()).then(svg => loadSvgAsImage(svg, 42)).catch(() => null),
-    loadSvgAsImage(GITHUB_SVG_SOURCE, 12),
-  ]);
-  // QR / 头像 data URL → Image 对象（Canvas drawImage 需要）
-  const qrImageEl = await loadDataUrlAsImage(qrDataUrl);
-  const avatarImageEl = avatarDataUrl ? await loadDataUrlAsImage(avatarDataUrl) : null;
-  const year = new Date().getFullYear();
-
-  // ── 构建卡片 DOM ────────────────────────────────────────────────────────────
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
-
-  // 640px 原来对中文 AI 回答太窄（每行 ~30 字切），放宽到 720，
-  // 对应 body 内容区 720-72=648px，约能放 40+ 中文字符。
-  // S=2 @2x 输出仍然高清（最终 1440 px 宽，微信朋友圈等直接显示无压力）。
-  const card = document.createElement('div');
-  card.style.cssText = `width:720px;background:#fff;font-family:${FONT};`;
-
-  const S = 2;   // @2x
-  const W = 720;
-  const FF = FONT; // font-family 字符串
-
-  // ── Header（Canvas 2D 直接绘制，彻底绕开 html2canvas CSS 对齐问题）──
-  const headerCvs = document.createElement('canvas');
-  headerCvs.width = W * S;
-  headerCvs.height = 84 * S;
-  headerCvs.style.cssText = `width:${W}px;height:84px;display:block;`;
-  const hCtx = headerCvs.getContext('2d')!;
-
-  // 渐变背景
-  const hGrad = hCtx.createLinearGradient(0, 0, W * S, 0);
-  hGrad.addColorStop(0, '#09d46a');
-  hGrad.addColorStop(1, '#06a850');
-  hCtx.fillStyle = hGrad;
-  hCtx.fillRect(0, 0, W * S, 84 * S);
-
-  // 装饰圆圈
-  hCtx.fillStyle = 'rgba(255,255,255,0.08)';
-  hCtx.beginPath();
-  hCtx.arc((W - 15 + 55) * S, (6 + 55) * S, 55 * S, 0, Math.PI * 2);
-  hCtx.fill();
-  hCtx.fillStyle = 'rgba(255,255,255,0.06)';
-  hCtx.beginPath();
-  hCtx.arc((W + 25 + 35) * S, (42 + 35) * S, 35 * S, 0, Math.PI * 2);
-  hCtx.fill();
-
-  // Logo（42×42, x=36, y=21, 圆角 r=10）
-  if (faviconImg) {
-    hCtx.save();
-    hCtx.beginPath();
-    const [lx, ly, lw, lh, lr] = [36*S, 21*S, 42*S, 42*S, 10*S];
-    hCtx.moveTo(lx+lr, ly);
-    hCtx.lineTo(lx+lw-lr, ly); hCtx.arcTo(lx+lw, ly, lx+lw, ly+lr, lr);
-    hCtx.lineTo(lx+lw, ly+lh-lr); hCtx.arcTo(lx+lw, ly+lh, lx+lw-lr, ly+lh, lr);
-    hCtx.lineTo(lx+lr, ly+lh); hCtx.arcTo(lx, ly+lh, lx, ly+lh-lr, lr);
-    hCtx.lineTo(lx, ly+lr); hCtx.arcTo(lx, ly, lx+lr, ly, lr);
-    hCtx.closePath(); hCtx.clip();
-    hCtx.drawImage(faviconImg, lx, ly, lw, lh);
-    hCtx.restore();
-  }
-
-  // 文字组（textBaseline=middle，y 为每行中心）
-  // 文字组高 44px → top=(84-44)/2=20px；WeLink 中心 y=32px；副标题中心 y=55px
-  const TX = (faviconImg ? 90 : 36) * S;
-  hCtx.textBaseline = 'middle';
-  hCtx.fillStyle = '#ffffff';
-  hCtx.font = `900 ${20*S}px ${FF}`;
-  hCtx.fillText('WeLink', TX, 32 * S);
-  hCtx.fillStyle = 'rgba(255,255,255,0.78)';
-  hCtx.font = `${12*S}px ${FF}`;
-  hCtx.fillText('微信聊天记录 AI 助手', TX, 55 * S);
-
-  const header = document.createElement('div');
-  header.style.cssText = 'line-height:0;font-size:0;overflow:hidden;';
-  header.appendChild(headerCvs);
-
-  // ── Body ──
-  const body = document.createElement('div');
-  body.style.cssText = 'padding:28px 36px;background:#fff;';
-
-  // 联系人徽章（Canvas 2D，绕开 html2canvas flexbox 垂直居中失效问题）
-  if (contactName) {
-    const BH = 38; // 总高度：5px padding + 28px avatar + 5px padding
-    const initial = contactName.slice(0, 1);
-    const badgeText = `与「${contactName}」的对话分析`;
-
-    // 预测文本宽度
-    const tmpCvs = document.createElement('canvas');
-    const tmpCtx = tmpCvs.getContext('2d')!;
-    tmpCtx.font = `600 ${13 * S}px ${FF}`;
-    const textW = tmpCtx.measureText(badgeText).width / S;
-
-    const BW = 5 + 28 + 8 + textW + 14;
-    const BR = BH / 2; // border-radius: 圆角 = 半高，呈现为胶囊形
-
-    const badgeCvs = document.createElement('canvas');
-    badgeCvs.width  = Math.ceil(BW * S);
-    badgeCvs.height = BH * S;
-    badgeCvs.style.cssText = `width:${BW}px;height:${BH}px;display:block;margin-bottom:14px;`;
-    const bCtx = badgeCvs.getContext('2d')!;
-
-    // 圆角矩形辅助函数
-    const roundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y,     x + w, y + r,     r);
-      ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-      ctx.lineTo(x + r, y + h); ctx.arcTo(x,     y + h, x,     y + h - r, r);
-      ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
-      ctx.closePath();
-    };
-
-    // 背景填充
-    bCtx.fillStyle = '#edfaf3';
-    roundRect(bCtx, 0, 0, BW * S, BH * S, BR * S);
-    bCtx.fill();
-
-    // 边框
-    bCtx.strokeStyle = '#b7ecd4';
-    bCtx.lineWidth = 1 * S;
-    roundRect(bCtx, 0, 0, BW * S, BH * S, BR * S);
-    bCtx.stroke();
-
-    // 头像圆形（x=5, y=5, 28×28）
-    const AX = 5 * S, AY = 5 * S, AW = 28 * S;
-    bCtx.save();
-    bCtx.beginPath();
-    bCtx.arc(AX + AW / 2, AY + AW / 2, AW / 2, 0, Math.PI * 2);
-    bCtx.clip();
-    if (avatarImageEl) {
-      bCtx.drawImage(avatarImageEl, AX, AY, AW, AW);
-    } else {
-      bCtx.fillStyle = '#07c160';
-      bCtx.fillRect(AX, AY, AW, AW);
-      bCtx.fillStyle = '#ffffff';
-      bCtx.font = `700 ${13 * S}px ${FF}`;
-      bCtx.textBaseline = 'middle';
-      bCtx.textAlign = 'center';
-      bCtx.fillText(initial, AX + AW / 2, AY + AW / 2);
-    }
-    bCtx.restore();
-
-    // 文字（垂直居中）
-    bCtx.textBaseline = 'middle';
-    bCtx.textAlign = 'left';
-    bCtx.fillStyle = '#07c160';
-    bCtx.font = `600 ${13 * S}px ${FF}`;
-    bCtx.fillText(badgeText, (5 + 28 + 8) * S, (BH / 2) * S);
-
-    body.appendChild(badgeCvs);
-  }
-
-  // 提问框
-  if (question) {
-    const qBox = document.createElement('div');
-    qBox.style.cssText = `
-      background:#f7f8fa;border-radius:10px;
-      padding:12px 14px 12px 17px;margin-bottom:14px;
-      border-left:3px solid #07c160;
-    `;
-    const qLabel = document.createElement('div');
-    qLabel.style.cssText = 'font-size:11px;font-weight:700;color:#aaa;margin-bottom:7px;';
-    qLabel.textContent = '提问';
-    const qText = document.createElement('div');
-    qText.style.cssText = 'font-size:13px;color:#444;line-height:1.6;white-space:pre-wrap;';
-    qText.textContent = question;
-    qBox.appendChild(qLabel);
-    qBox.appendChild(qText);
-    body.appendChild(qBox);
-  }
-
-  // AI 回复（Markdown 渲染，消毒后设置）
-  const styleEl = document.createElement('style');
-  styleEl.textContent = MARKDOWN_CSS;
-  const answerDiv = document.createElement('div');
-  answerDiv.className = 'sa';
-  answerDiv.style.cssText = 'font-size:14px;color:#1d1d1f;line-height:1.7;';
-  // 基础消毒：移除 script 标签和事件处理器属性
-  const sanitized = answerHtml
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
-  answerDiv.innerHTML = sanitized;
-  body.appendChild(styleEl);
-  body.appendChild(answerDiv);
-
-  // AI 元信息（两行：时间 / 模型+性能）
-  if (stats && stats.elapsedSecs !== undefined) {
-    const perfParts: string[] = [];
-    if (stats.provider) perfParts.push(`${stats.provider}${stats.model ? ` · ${stats.model}` : ''}`);
-    perfParts.push(`${stats.elapsedSecs.toFixed(1)}s`);
-    if (stats.tokensPerSec) perfParts.push(`~${stats.tokensPerSec} tok/s`);
-    if (stats.charCount) perfParts.push(`${stats.charCount} 字符`);
-
-    let timeStr = '';
-    if (stats.timestamp) {
-      const d = new Date(stats.timestamp);
-      timeStr = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日${d.getHours()}点${String(d.getMinutes()).padStart(2,'0')}分`;
-    }
-
-    const metaDiv = document.createElement('div');
-    metaDiv.style.cssText = 'text-align:right;font-size:10px;color:#bbb;margin-top:10px;padding-top:8px;border-top:1px solid #f0f0f0;font-family:' + FONT;
-    if (timeStr) {
-      const line1 = document.createElement('div');
-      line1.style.marginBottom = '3px';
-      line1.textContent = perfParts.join('  ·  ');
-      const line2 = document.createElement('div');
-      line2.textContent = timeStr;
-      metaDiv.appendChild(line1);
-      metaDiv.appendChild(line2);
-    } else {
-      metaDiv.textContent = perfParts.join('  ·  ');
-    }
-    body.appendChild(metaDiv);
-  }
-
-  // ── Footer（Canvas 2D 直接绘制）──
-  const footerCvs = document.createElement('canvas');
-  footerCvs.width = W * S;
-  footerCvs.height = 68 * S;
-  footerCvs.style.cssText = `width:${W}px;height:68px;display:block;`;
-  const fCtx = footerCvs.getContext('2d')!;
-
-  // 背景 + 顶部边框
-  fCtx.fillStyle = '#f8f9fb';
-  fCtx.fillRect(0, 0, W * S, 68 * S);
-  fCtx.fillStyle = '#ececec';
-  fCtx.fillRect(0, 0, W * S, 1 * S);
-
-  fCtx.textBaseline = 'middle';
-
-  // 左侧：GitHub 行（中心 y=25px）
-  if (githubImg) {
-    fCtx.drawImage(githubImg, 36*S, (25-6)*S, 12*S, 12*S);
-  }
-  fCtx.fillStyle = '#888888';
-  fCtx.font = `${11*S}px ${FF}`;
-  fCtx.fillText('https://github.com/runzhliu/welink', (githubImg ? 52 : 36)*S, 25*S);
-
-  // 左侧：版权（中心 y=43px = 18+14+4+7）
-  fCtx.fillStyle = '#bbbbbb';
-  fCtx.font = `${10*S}px ${FF}`;
-  fCtx.fillText(`© ${year} @runzhliu · AGPL-3.0`, 36*S, 43*S);
-
-  // 右侧：QR 码（48×48, top=(68-48)/2=10px）
-  const QR_SIZE = 48, QR_R = 36, QR_TOP = (68-QR_SIZE)/2;
-  const QR_X = W - QR_R - QR_SIZE;
-  if (qrImageEl) {
-    fCtx.drawImage(qrImageEl, QR_X*S, QR_TOP*S, QR_SIZE*S, QR_SIZE*S);
-  }
-
-  // 右侧：扫码提示文字（右对齐，与 QR 左边留 10px 间距）
-  fCtx.textAlign = 'right';
-  const CX = (QR_X - 10) * S;
-  fCtx.fillStyle = '#555555';
-  fCtx.font = `700 ${11*S}px ${FF}`;
-  fCtx.fillText('你也想分析微信聊天记录？', CX, 26*S);
-  fCtx.fillStyle = '#07c160';
-  fCtx.font = `${10*S}px ${FF}`;
-  fCtx.fillText('扫码免费体验 →', CX, 43*S);
-  fCtx.textAlign = 'left';
-
-  const footer = document.createElement('div');
-  footer.style.cssText = 'line-height:0;font-size:0;overflow:hidden;';
-  footer.appendChild(footerCvs);
-
-  card.appendChild(header);
-  card.appendChild(body);
-  card.appendChild(footer);
-  wrap.appendChild(card);
-  document.body.appendChild(wrap);
-
-  try {
-    const cvs = await html2canvas(card, {
-      scale: 2,
-      useCORS: true,       // 允许加载同源代理图片
-      allowTaint: false,
-      backgroundColor: '#ffffff',
-      logging: false,
-    });
-    const dataUrl = cvs.toDataURL('image/png');
-    const safeName = contactName
-      ? contactName.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '_').slice(0, 20)
-      : 'analysis';
-    const filename = `welink-${safeName}-${Date.now()}.png`;
-    const savedPath = await downloadPng(dataUrl, filename);
-    return savedPath;
-  } finally {
-    document.body.removeChild(wrap);
-  }
-}
 
 // ─── AI 分身聊天截图 ──────────────────────────────────────────────────────────
 
@@ -911,4 +596,363 @@ export async function generateCloneChatImage(options: CloneChatImageOptions): Pr
   const safeName = options.contactName.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '_').slice(0, 20);
   const filename = `welink-clone-${safeName}-${Date.now()}.png`;
   return downloadPng(dataUrl, filename);
+}
+
+// ─── AI 对话截图（Canvas 2D + html2canvas 渲染 Markdown）─────────────────────
+
+export interface ScreenshotSubject {
+  name: string;
+  avatarUrl?: string;
+}
+
+export interface AIScreenshotOptions {
+  question?: string;
+  answer: string;
+  subjects?: ScreenshotSubject[];
+  isCrossContact?: boolean;
+  stats?: {
+    provider?: string;
+    model?: string;
+    elapsedSecs?: number;
+    tokensPerSec?: number;
+    charCount?: number;
+    timestamp?: number;
+  };
+}
+
+/** 渲染 Markdown 到 canvas（marked 解析 → html2canvas 捕获 DOM） */
+async function renderMarkdownCanvas(
+  markdown: string,
+  contentWidth: number,
+  font: string,
+): Promise<HTMLCanvasElement> {
+  marked.use({ breaks: true });
+  const html = marked.parse(markdown) as string;
+  const sanitized = html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `position:fixed;left:-10000px;top:0;width:${contentWidth}px;`;
+  const styleEl = document.createElement('style');
+  styleEl.textContent = MARKDOWN_CSS;
+  const content = document.createElement('div');
+  content.className = 'sa';
+  content.style.cssText = `font-size:14px;color:#1d1d1f;line-height:1.7;font-family:${font};`;
+  content.innerHTML = sanitized;
+  wrap.appendChild(styleEl);
+  wrap.appendChild(content);
+  document.body.appendChild(wrap);
+
+  try {
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch { /* ignore */ }
+    }
+    await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    return await html2canvas(content, {
+      scale: 2,
+      backgroundColor: null,
+      useCORS: true,
+      logging: false,
+    });
+  } finally {
+    document.body.removeChild(wrap);
+  }
+}
+
+export async function generateAIScreenshot(options: AIScreenshotOptions): Promise<{ ok: boolean; method: string; path?: string }> {
+  const FONT = "system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+  const S = 2;
+  const W = 640;
+  const FF = FONT;
+
+  const PAD = 28;
+  const MSG_GAP = 16;
+  const BUBBLE_PAD = 12;
+  const AVATAR_SIZE = 36;
+  const MAX_BUBBLE_W = W - PAD * 2 - AVATAR_SIZE - 20;
+  const LINE_H = 22;
+
+  // Header 布局常量
+  const HEADER_PAD_V = 14;
+  const HEADER_PAD_H = 28;
+  const CHIP_AVATAR = 22;
+  const CHIP_GAP = 5;
+  const CHIP_PAD_R = 10;
+  const CHIP_HEIGHT = 30;
+  const CHIP_MARGIN = 8;
+  const FOOTER_H = 48;
+  const CONTENT_PAD = 20;
+
+  // ── 预加载 subjects 头像 ──
+  const subjectImgs: (HTMLImageElement | null)[] = options.subjects
+    ? await Promise.all(options.subjects.map(async s => {
+        if (!s.avatarUrl) return null;
+        const dataUrl = await fetchAvatarDataUrl(s.avatarUrl);
+        return dataUrl ? await loadDataUrlAsImage(dataUrl) : null;
+      }))
+    : [];
+
+  // ── 渲染 Markdown answer 到 sub-canvas ──
+  const answerCanvas = options.answer
+    ? await renderMarkdownCanvas(options.answer, MAX_BUBBLE_W - BUBBLE_PAD * 2, FONT)
+    : null;
+  const answerH = answerCanvas ? answerCanvas.height / S : 0;
+
+  // ── 文本测量工具 ──
+  const tmpCvs = document.createElement('canvas');
+  const tmpCtx = tmpCvs.getContext('2d')!;
+
+  function wrapText(text: string, maxW: number): { lines: string[]; textH: number } {
+    const paragraphs = text.split('\n');
+    const lines: string[] = [];
+    for (const para of paragraphs) {
+      if (para === '') { lines.push(''); continue; }
+      let cur = '';
+      for (const ch of para) {
+        const test = cur + ch;
+        if (tmpCtx.measureText(test).width / S > maxW - BUBBLE_PAD * 2) {
+          lines.push(cur); cur = ch;
+        } else {
+          cur = test;
+        }
+      }
+      if (cur) lines.push(cur);
+    }
+    if (lines.length === 0) lines.push('');
+    return { lines, textH: lines.length * LINE_H };
+  }
+
+  // ── 计算 question (plain text) 布局 ──
+  let questionLayout: { lines: string[]; textH: number; bubbleW: number; bubbleH: number } | null = null;
+  if (options.question) {
+    tmpCtx.font = `${14 * S}px ${FF}`;
+    const { lines, textH } = wrapText(options.question, MAX_BUBBLE_W);
+    const maxLineW = Math.max(...lines.map(l => tmpCtx.measureText(l).width / S));
+    const bubbleW = Math.min(MAX_BUBBLE_W, maxLineW + BUBBLE_PAD * 2);
+    const bubbleH = Math.max(textH + BUBBLE_PAD * 2, AVATAR_SIZE);
+    questionLayout = { lines, textH, bubbleW, bubbleH };
+  }
+
+  // ── 计算 header 高度和 subjects chip 布局 ──
+  const hasHeader = options.isCrossContact || (options.subjects && options.subjects.length > 0);
+  let headerH = 0;
+
+  type Chip = { name: string; img: HTMLImageElement | null; w: number };
+  const chips: Chip[] = [];
+  if (options.subjects) {
+    for (let i = 0; i < options.subjects.length; i++) {
+      const s = options.subjects[i];
+      tmpCtx.font = `${12 * S}px ${FF}`;
+      const nameW = tmpCtx.measureText(s.name).width / S;
+      const w = CHIP_AVATAR + CHIP_GAP + nameW + CHIP_PAD_R;
+      chips.push({ name: s.name, img: subjectImgs[i], w });
+    }
+  }
+
+  // Arrange chips in rows (wrap)
+  const chipRows: Chip[][] = [[]];
+  let rowW = 0;
+  const availW = W - HEADER_PAD_H * 2;
+  for (const chip of chips) {
+    if (rowW + chip.w > availW && chipRows[chipRows.length - 1].length > 0) {
+      chipRows.push([]);
+      rowW = 0;
+    }
+    chipRows[chipRows.length - 1].push(chip);
+    rowW += chip.w + CHIP_MARGIN;
+  }
+
+  if (hasHeader) {
+    if (options.isCrossContact) {
+      headerH = HEADER_PAD_V * 2 + 24;
+    } else {
+      headerH = HEADER_PAD_V * 2 + chipRows.length * CHIP_HEIGHT + Math.max(0, chipRows.length - 1) * 8;
+    }
+  }
+
+  // ── 计算总高度 ──
+  let contentH = 0;
+  if (questionLayout) {
+    contentH += questionLayout.bubbleH + MSG_GAP;
+  }
+  if (answerCanvas) {
+    contentH += answerH + BUBBLE_PAD * 2;
+  }
+  contentH += CONTENT_PAD * 2;
+
+  const totalH = headerH + contentH + FOOTER_H;
+
+  // ── 创建主 canvas ──
+  const cvs = document.createElement('canvas');
+  cvs.width = W * S;
+  cvs.height = totalH * S;
+  const ctx = cvs.getContext('2d')!;
+
+  // 白色背景（不透明）
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W * S, totalH * S);
+
+  // roundRect 辅助函数
+  const roundRect = (cx: CanvasRenderingContext2D, x: number, yy: number, w: number, h: number, r: number) => {
+    cx.beginPath();
+    cx.moveTo(x + r, yy); cx.lineTo(x + w - r, yy); cx.arcTo(x + w, yy, x + w, yy + r, r);
+    cx.lineTo(x + w, yy + h - r); cx.arcTo(x + w, yy + h, x + w - r, yy + h, r);
+    cx.lineTo(x + r, yy + h); cx.arcTo(x, yy + h, x, yy + h - r, r);
+    cx.lineTo(x, yy + r); cx.arcTo(x, yy, x + r, yy, r);
+    cx.closePath();
+  };
+
+  // ── 绘制 header ──
+  let y = 0;
+  if (hasHeader) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W * S, headerH * S);
+    // bottom border
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, (headerH - 1) * S, W * S, 1 * S);
+
+    if (options.isCrossContact) {
+      ctx.fillStyle = '#1d1d1f';
+      ctx.font = `700 ${14 * S}px ${FF}`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillText('🔍 跨联系人问答', HEADER_PAD_H * S, (HEADER_PAD_V + 12) * S);
+    } else {
+      // subject chips
+      let chipY = HEADER_PAD_V;
+      for (const row of chipRows) {
+        let chipX = HEADER_PAD_H;
+        for (const chip of row) {
+          // avatar circle
+          const avX = chipX;
+          const avY = chipY + (CHIP_HEIGHT - CHIP_AVATAR) / 2;
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc((avX + CHIP_AVATAR / 2) * S, (avY + CHIP_AVATAR / 2) * S, (CHIP_AVATAR / 2) * S, 0, Math.PI * 2);
+          ctx.clip();
+          if (chip.img) {
+            ctx.drawImage(chip.img, avX * S, avY * S, CHIP_AVATAR * S, CHIP_AVATAR * S);
+          } else {
+            ctx.fillStyle = '#576b95';
+            ctx.fillRect(avX * S, avY * S, CHIP_AVATAR * S, CHIP_AVATAR * S);
+          }
+          ctx.restore();
+
+          // name
+          ctx.fillStyle = '#1d1d1f';
+          ctx.font = `${12 * S}px ${FF}`;
+          ctx.textBaseline = 'middle';
+          ctx.textAlign = 'left';
+          ctx.fillText(chip.name, (chipX + CHIP_AVATAR + CHIP_GAP) * S, (chipY + CHIP_HEIGHT / 2) * S);
+
+          chipX += chip.w + CHIP_MARGIN;
+        }
+        chipY += CHIP_HEIGHT + 8;
+      }
+    }
+    y = headerH;
+  }
+
+  // ── 绘制 question bubble (user, plain text) ──
+  y += CONTENT_PAD;
+  if (questionLayout) {
+    const bx = W - PAD - questionLayout.bubbleW;
+    ctx.fillStyle = '#07c160';
+    roundRect(ctx, bx * S, y * S, questionLayout.bubbleW * S, questionLayout.bubbleH * S, 12 * S);
+    ctx.fill();
+
+    // 文字垂直居中 + 2px 下移修复
+    const textOffsetY = (questionLayout.bubbleH - questionLayout.textH) / 2 + 4;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `${14 * S}px ${FF}`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    questionLayout.lines.forEach((line, i) => {
+      ctx.fillText(line, (bx + BUBBLE_PAD) * S, (y + textOffsetY + i * LINE_H) * S);
+    });
+
+    y += questionLayout.bubbleH + MSG_GAP;
+  }
+
+  // ── 绘制 answer bubble (AI, markdown) ──
+  if (answerCanvas) {
+    const bubbleH = answerH + BUBBLE_PAD * 2;
+    const bubbleW = MAX_BUBBLE_W;
+
+    // AI avatar (left)
+    const avX = PAD;
+    const avY = y;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc((avX + AVATAR_SIZE / 2) * S, (avY + AVATAR_SIZE / 2) * S, (AVATAR_SIZE / 2) * S, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = '#576b95';
+    ctx.fillRect(avX * S, avY * S, AVATAR_SIZE * S, AVATAR_SIZE * S);
+    ctx.fillStyle = '#fff';
+    ctx.font = `700 ${13 * S}px ${FF}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText('AI', (avX + AVATAR_SIZE / 2) * S, (avY + AVATAR_SIZE / 2) * S);
+    ctx.restore();
+
+    // Gray bubble background
+    const bx = PAD + AVATAR_SIZE + 8;
+    ctx.fillStyle = '#f0f0f0';
+    roundRect(ctx, bx * S, y * S, bubbleW * S, bubbleH * S, 12 * S);
+    ctx.fill();
+
+    // Draw markdown content canvas on top
+    ctx.drawImage(answerCanvas, (bx + BUBBLE_PAD) * S, (y + BUBBLE_PAD - 4) * S);
+
+    y += bubbleH;
+  }
+
+  // ── 绘制 footer（模型名称 + 生成时间）──
+  const fY = (totalH - FOOTER_H) * S;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, fY, W * S, FOOTER_H * S);
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(0, fY, W * S, 1 * S);
+
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+
+  // Model name (left)
+  const modelParts: string[] = [];
+  if (options.stats?.provider) modelParts.push(options.stats.provider);
+  if (options.stats?.model) modelParts.push(options.stats.model);
+  if (modelParts.length > 0) {
+    ctx.fillStyle = '#888888';
+    ctx.font = `${11 * S}px ${FF}`;
+    ctx.fillText(modelParts.join(' · '), PAD * S, fY + (FOOTER_H / 2) * S);
+  }
+
+  // Generation time (right)
+  if (options.stats?.timestamp) {
+    const d = new Date(options.stats.timestamp);
+    const timeStr = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#aaaaaa';
+    ctx.font = `${11 * S}px ${FF}`;
+    ctx.fillText(timeStr, (W - PAD) * S, fY + (FOOTER_H / 2) * S);
+  }
+
+  // ── 导出：优先复制到剪贴板，失败则下载 ──
+  const blob = await new Promise<Blob | null>(resolve => cvs.toBlob(b => resolve(b), 'image/png'));
+  if (!blob) return { ok: false, method: 'failed' };
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      return { ok: true, method: 'clipboard' };
+    } catch {
+      // fall through to download
+    }
+  }
+
+  const dataUrl = cvs.toDataURL('image/png');
+  const filename = `welink-ai-${Date.now()}.png`;
+  await downloadPng(dataUrl, filename);
+  return { ok: true, method: 'download', path: filename };
 }

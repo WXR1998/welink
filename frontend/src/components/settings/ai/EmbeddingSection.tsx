@@ -1,44 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, AlertCircle, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Check, Plus, ChevronUp, ChevronDown, X } from 'lucide-react';
 import axios from 'axios';
+import { genId, newEmbeddingProfile, type EmbeddingProfile } from './types';
 
 const EMBEDDING_PROVIDERS = [
-  { value: 'ollama',  label: 'Ollama（本地，免费）', defaultURL: 'http://localhost:11434', defaultModel: 'nomic-embed-text', needsKey: false },
-  { value: 'openai',  label: 'OpenAI', defaultURL: 'https://api.openai.com/v1', defaultModel: 'text-embedding-3-small', needsKey: true },
-  { value: 'jina',    label: 'Jina AI', defaultURL: 'https://api.jina.ai/v1', defaultModel: 'jina-embeddings-v3', needsKey: true },
-  { value: 'custom',  label: '自定义（OpenAI 兼容）', defaultURL: '', defaultModel: '', needsKey: true },
+  { value: 'ollama',  label: 'Ollama（本地，免费）', defaultURL: 'http://localhost:11434', defaultModel: 'nomic-embed-text', defaultDims: 768, needsKey: false },
+  { value: 'openai',  label: 'OpenAI', defaultURL: 'https://api.openai.com/v1', defaultModel: 'text-embedding-3-small', defaultDims: 1536, needsKey: true },
+  { value: 'jina',    label: 'Jina AI', defaultURL: 'https://api.jina.ai/v1', defaultModel: 'jina-embeddings-v3', defaultDims: 1024, needsKey: true },
+  { value: 'custom',  label: '自定义（OpenAI 兼容）', defaultURL: '', defaultModel: '', defaultDims: 0, needsKey: true },
 ] as const;
 
 type EmbeddingProviderValue = typeof EMBEDDING_PROVIDERS[number]['value'];
 
 export const EmbeddingSection: React.FC = () => {
-  const [provider, setProvider] = useState<EmbeddingProviderValue>('ollama');
-  const [apiKey, setApiKey] = useState('');
-  const [baseURL, setBaseURL] = useState('');
-  const [model, setModel] = useState('');
+  const [profiles, setProfiles] = useState<EmbeddingProfile[]>([]);
   const [cacheMaxKeys, setCacheMaxKeys] = useState(3);
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    axios.get<{
-      embedding_provider?: string; embedding_api_key?: string;
-      embedding_base_url?: string; embedding_model?: string;
-      vec_cache_max_keys?: number;
-    }>('/api/preferences').then(r => {
-      if (r.data.embedding_provider) setProvider(r.data.embedding_provider as EmbeddingProviderValue);
-      setApiKey(r.data.embedding_api_key ?? '');
-      setBaseURL(r.data.embedding_base_url ?? '');
-      setModel(r.data.embedding_model ?? '');
-      setCacheMaxKeys(r.data.vec_cache_max_keys || 3);
+    axios.get<Record<string, unknown>>('/api/preferences').then(r => {
+      const eps = (r.data.embedding_profiles as EmbeddingProfile[] | undefined);
+      if (eps && eps.length > 0) {
+        setProfiles(eps);
+      } else {
+        // Migrate from single config
+        setProfiles([{
+          id: genId(),
+          name: '默认',
+          provider: (r.data.embedding_provider as string) || 'ollama',
+          api_key: (r.data.embedding_api_key as string) || '',
+          base_url: (r.data.embedding_base_url as string) || '',
+          model: (r.data.embedding_model as string) || '',
+          dims: (r.data.embedding_dims as number) || 768,
+        }]);
+      }
+      setCacheMaxKeys((r.data.vec_cache_max_keys as number) || 3);
     }).catch(() => {}).finally(() => setLoaded(true));
   }, []);
 
-  const providerInfo = EMBEDDING_PROVIDERS.find(p => p.value === provider) ?? EMBEDDING_PROVIDERS[0];
-
-  // save 时实时拉最新 prefs 再 merge —— 不会覆盖 LLM tab 刚保存的字段
   const buildPayload = async () => {
     let fresh: Record<string, unknown> = {};
     try {
@@ -47,10 +49,7 @@ export const EmbeddingSection: React.FC = () => {
     } catch { /* ignore */ }
     return {
       ...fresh,
-      embedding_provider: provider,
-      embedding_api_key: apiKey,
-      embedding_base_url: baseURL,
-      embedding_model: model,
+      embedding_profiles: profiles,
       vec_cache_max_keys: cacheMaxKeys,
     };
   };
@@ -73,7 +72,6 @@ export const EmbeddingSection: React.FC = () => {
     setTesting(true);
     setSaveMsg(null);
     try {
-      // 先保存当前配置，再测试
       await axios.put('/api/preferences/llm', await buildPayload());
       const r = await axios.post<{ ok: boolean; provider: string; model: string }>('/api/ai/vec/test-embedding');
       setSaveMsg({ ok: true, text: `连接成功（${r.data.provider} · ${r.data.model}）` });
@@ -86,89 +84,144 @@ export const EmbeddingSection: React.FC = () => {
     }
   };
 
-  if (!loaded) return null;
+  const moveProfile = (index: number, dir: -1 | 1) => {
+    const newIndex = index + dir;
+    if (newIndex < 0 || newIndex >= profiles.length) return;
+    const updated = [...profiles];
+    [updated[index], updated[newIndex]] = [updated[newIndex], updated[index]];
+    setProfiles(updated);
+  };
 
-  const urlPlaceholder = providerInfo.defaultURL ? `默认：${providerInfo.defaultURL}` : '请输入 Base URL';
-  const modelPlaceholder = providerInfo.defaultModel ? `默认：${providerInfo.defaultModel}` : '请输入模型名';
+  const updateProfile = (id: string, updates: Partial<EmbeddingProfile>) => {
+    setProfiles(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+  };
+
+  const removeProfile = (id: string) => {
+    if (profiles.length <= 1) return;
+    setProfiles(prev => prev.filter(p => p.id !== id));
+  };
+
+  if (!loaded) return null;
 
   return (
     <div>
       <p className="text-sm text-gray-400 mb-4">
-        用于混合检索模式的语义向量化。推荐使用 Ollama 本地运行，无需 API Key，完全免费。
-        <br />
-        Ollama 安装后执行：<code className="bg-gray-100 dark:bg-white/10 px-1.5 py-0.5 rounded text-xs font-mono">ollama pull nomic-embed-text</code>
+        用于混合检索模式的语义向量化。支持配置多个提供商，排在前面的优先使用；
+        连续失败时自动 fallback 到后面的提供商（粘性保持 1 小时）。
       </p>
 
+      {/* Provider cards */}
+      <div className="space-y-2 mb-4">
+        {profiles.map((p, i) => {
+          const provInfo = EMBEDDING_PROVIDERS.find(pr => pr.value === p.provider) ?? EMBEDDING_PROVIDERS[0];
+          const urlPlaceholder = provInfo.defaultURL ? `默认：${provInfo.defaultURL}` : '请输入 Base URL';
+          const modelPlaceholder = provInfo.defaultModel ? `默认：${provInfo.defaultModel}` : '请输入模型名';
+          return (
+            <div key={p.id} className="rounded-xl border border-gray-100 dark:border-white/10 bg-[#fafafa] dark:bg-white/5 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">#{i + 1}</span>
+                <input
+                  type="text"
+                  value={p.name}
+                  onChange={e => updateProfile(p.id, { name: e.target.value })}
+                  placeholder={`配置 ${i + 1}`}
+                  className="flex-1 text-sm font-semibold border-0 bg-transparent focus:outline-none text-[#1d1d1f] dark:text-gray-200 placeholder-gray-300"
+                />
+                <div className="flex items-center gap-0.5">
+                  <button onClick={() => moveProfile(i, -1)} disabled={i === 0} className="p-1 text-gray-300 hover:text-[#07c160] disabled:opacity-30 transition-colors">
+                    <ChevronUp size={14} />
+                  </button>
+                  <button onClick={() => moveProfile(i, 1)} disabled={i === profiles.length - 1} className="p-1 text-gray-300 hover:text-[#07c160] disabled:opacity-30 transition-colors">
+                    <ChevronDown size={14} />
+                  </button>
+                  {profiles.length > 1 && (
+                    <button onClick={() => removeProfile(p.id)} className="p-1 text-gray-300 hover:text-red-400 transition-colors">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase">提供商</label>
+                <select
+                  value={p.provider}
+                  onChange={e => {
+                    const newProv = EMBEDDING_PROVIDERS.find(pr => pr.value === e.target.value)!;
+                    updateProfile(p.id, {
+                      provider: e.target.value,
+                      base_url: newProv.defaultURL || '',
+                      model: newProv.defaultModel || '',
+                      dims: newProv.defaultDims || 0,
+                    });
+                  }}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white dk-input"
+                >
+                  {EMBEDDING_PROVIDERS.map(pr => <option key={pr.value} value={pr.value}>{pr.label}</option>)}
+                </select>
+              </div>
+
+              {provInfo.needsKey && (
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase">API Key</label>
+                  <input
+                    type="password"
+                    value={p.api_key === '__HAS_KEY__' ? '' : (p.api_key ?? '')}
+                    onChange={e => updateProfile(p.id, { api_key: e.target.value })}
+                    placeholder={p.api_key === '__HAS_KEY__' ? '●●●●●● 已保存（留空保留）' : '请输入 API Key'}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase">Base URL</label>
+                <input
+                  type="text"
+                  value={p.base_url ?? ''}
+                  onChange={e => updateProfile(p.id, { base_url: e.target.value })}
+                  placeholder={urlPlaceholder}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase">模型</label>
+                  <input
+                    type="text"
+                    value={p.model ?? ''}
+                    onChange={e => updateProfile(p.id, { model: e.target.value })}
+                    placeholder={modelPlaceholder}
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase">维度</label>
+                  <input
+                    type="number"
+                    value={p.dims ?? 0}
+                    onChange={e => updateProfile(p.id, { dims: parseInt(e.target.value) || 0 })}
+                    placeholder="0 = 默认"
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <button
+          onClick={() => setProfiles(prev => [...prev, newEmbeddingProfile(prev.length + 1)])}
+          className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-white/10 text-sm text-gray-400 hover:border-[#07c160] hover:text-[#07c160] transition-colors"
+        >
+          <Plus size={14} />
+          添加 Embedding 提供商
+        </button>
+      </div>
+
+      {/* Cache settings */}
       <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4 dk-card dk-border">
-        {/* Provider */}
-        <div>
-          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">Embedding 提供商</label>
-          <select
-            value={provider}
-            onChange={e => setProvider(e.target.value as EmbeddingProviderValue)}
-            className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#07c160] bg-[#f8f9fb] dk-input"
-          >
-            {EMBEDDING_PROVIDERS.map(p => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* API Key（Ollama 不需要） */}
-        {providerInfo.needsKey && (
-          <div>
-            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">API Key</label>
-            <input
-              type="password"
-              value={apiKey === '__HAS_KEY__' ? '' : apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder={apiKey === '__HAS_KEY__' ? '●●●●●● 已保存（留空保留）' : '请输入 API Key'}
-              className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#07c160] bg-[#f8f9fb] font-mono dk-input"
-            />
-          </div>
-        )}
-
-        {/* Base URL */}
-        <div>
-          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
-            Base URL <span className="text-gray-400 font-normal normal-case">（留空使用默认）</span>
-          </label>
-          <input
-            type="text"
-            value={baseURL}
-            onChange={e => setBaseURL(e.target.value)}
-            placeholder={urlPlaceholder}
-            className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#07c160] bg-[#f8f9fb] font-mono dk-input"
-          />
-          {provider === 'ollama' && (
-            <p className="text-[10px] text-gray-400 mt-1">
-              Docker 容器内访问宿主机 Ollama 请填：
-              <code
-                className="ml-1 bg-gray-100 dark:bg-white/10 px-1 rounded font-mono cursor-pointer hover:bg-gray-200 dark:hover:bg-white/15 transition-colors"
-                onClick={() => setBaseURL('http://host.docker.internal:11434')}
-              >
-                http://host.docker.internal:11434
-              </code>
-              <span className="ml-1 opacity-60">（点击填入）</span>
-            </p>
-          )}
-        </div>
-
-        {/* Model */}
-        <div>
-          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
-            模型 <span className="text-gray-400 font-normal normal-case">（留空使用默认）</span>
-          </label>
-          <input
-            type="text"
-            value={model}
-            onChange={e => setModel(e.target.value)}
-            placeholder={modelPlaceholder}
-            className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#07c160] bg-[#f8f9fb] font-mono dk-input"
-          />
-        </div>
-
-        {/* 向量缓存设置 */}
         <div>
           <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
             向量缓存联系人数 <span className="text-gray-400 font-normal normal-case">（内存中最多缓存几个联系人的 Embedding，默认 3）</span>
@@ -188,7 +241,6 @@ export const EmbeddingSection: React.FC = () => {
           </div>
         </div>
 
-        {/* Buttons */}
         <div className="flex items-center gap-3 pt-1">
           <button
             onClick={handleSave}

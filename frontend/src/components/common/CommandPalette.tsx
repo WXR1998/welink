@@ -64,14 +64,11 @@ type AIHit = { key: string; updated_at: number; msg_count: number; preview: stri
 
 const TAB_ITEMS: { tab: TabType; label: string; keywords: string[] }[] = [
   { tab: 'dashboard',   label: 'AI 首页',     keywords: ['ai', 'home', '首页'] },
-  { tab: 'inbox',       label: '关系收件箱',   keywords: ['inbox', '收件箱', '关系', '待处理'] },
-  { tab: 'digest',      label: '今日简报',     keywords: ['digest', '简报', '晨报', 'today', 'daily'] },
   { tab: 'stats',       label: '统计',         keywords: ['stats', '统计', '排行'] },
   { tab: 'contacts',    label: '联系人',       keywords: ['contacts', '联系人'] },
   { tab: 'groups',      label: '群聊',         keywords: ['groups', '群聊', '群'] },
   { tab: 'search',      label: '全局搜索',     keywords: ['search', '搜索'] },
   { tab: 'calendar',    label: '时光机',       keywords: ['calendar', '日历', '时光机', 'timeline', '时间线'] },
-  { tab: 'anniversary', label: '纪念日',       keywords: ['anniversary', '纪念日'] },
   { tab: 'urls',        label: '链接收藏',     keywords: ['urls', '链接'] },
   { tab: 'skills',      label: 'Skills',      keywords: ['skills'] },
   { tab: 'labs',        label: '创意实验室',   keywords: ['labs', '实验', '创意', 'virtual', 'group', '虚拟群聊'] },

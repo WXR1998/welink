@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { Bot, BarChart2, Database, Sun, Moon, MessagesSquare, MessageCircle, BookOpen, Github, Search, Hourglass, Heart, Link2, X, Settings, ChevronLeft, ChevronRight, Sparkles, Download, Brain, Sunrise, FlaskConical, CalendarClock, Image as ImageIcon, Inbox } from 'lucide-react';
+import { Bot, BarChart2, Database, Sun, Moon, MessagesSquare, MessageCircle, BookOpen, Github, Search, Hourglass, Link2, X, Settings, ChevronLeft, ChevronRight, Sparkles, Download, Brain, FlaskConical, CalendarClock, ScrollText } from 'lucide-react';
 import type { TabType } from '../../types';
 
 interface SidebarProps {
@@ -52,22 +52,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, 
 
   const navItems: { tab: TabType; icon: React.ReactNode; label: string }[] = [
     { tab: 'dashboard', icon: <Bot size={20} strokeWidth={2} />,              label: 'AI 首页' },
-    { tab: 'inbox',     icon: <Inbox size={20} strokeWidth={2} />,            label: '关系收件箱' },
-    { tab: 'digest',    icon: <Sunrise size={20} strokeWidth={2} />,          label: '今日简报' },
     { tab: 'stats',     icon: <BarChart2 size={20} strokeWidth={2} />,        label: '洞察' },
     { tab: 'contacts',  icon: <MessageCircle size={20} strokeWidth={2} />,    label: '私聊' },
     { tab: 'groups',    icon: <MessagesSquare size={20} strokeWidth={2} />,   label: '群聊' },
     { tab: 'calendar',    icon: <Hourglass size={20} strokeWidth={2} />,        label: '时光机' },
-    { tab: 'anniversary', icon: <Heart size={20} strokeWidth={2} />,          label: '纪念日' },
     { tab: 'search',      icon: <Search size={20} strokeWidth={2} />,         label: '搜索' },
     { tab: 'urls',        icon: <Link2 size={20} strokeWidth={2} />,           label: '链接' },
     { tab: 'skills',      icon: <Sparkles size={20} strokeWidth={2} />,        label: 'Skills' },
     { tab: 'labs',        icon: <FlaskConical size={20} strokeWidth={2} />,    label: '创意实验室' },
-    { tab: 'gallery',     icon: <ImageIcon size={20} strokeWidth={2} />,       label: 'AI 画廊' },
     { tab: 'memory',      icon: <Brain size={20} strokeWidth={2} />,           label: '记忆库' },
     { tab: 'tasks',       icon: <CalendarClock size={20} strokeWidth={2} />,   label: '定时任务' },
     { tab: 'export',      icon: <Download size={20} strokeWidth={2} />,        label: '导出中心' },
     { tab: 'db',        icon: <Database size={20} strokeWidth={2} />,         label: '数据库' },
+    { tab: 'apilogs',   icon: <ScrollText size={20} strokeWidth={2} />,        label: 'API日志' },
     { tab: 'settings',  icon: <Settings size={20} strokeWidth={2} />,         label: '设置' },
   ];
 

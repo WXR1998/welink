@@ -27,13 +27,11 @@ import { SetupRequiredPage } from './components/common/SetupRequiredPage';
 import { CommandPalette } from './components/common/CommandPalette';
 import { ReleaseNotesModal } from './components/common/ReleaseNotesModal';
 import { SpotlightTour, type TourStep } from './components/common/SpotlightTour';
-import { TokenStatsWidget } from './components/common/TokenStatsWidget';
+import { StatusBar } from './components/common/StatusBar';
 import { useDarkMode } from './hooks/useDarkMode';
 
 // ─── 懒加载的 tab 页与大 modal ───────────────────────────────────────────────
 // 切到对应 tab / 打开 modal 才下载对应 chunk；首屏 JS 大幅缩水
-const DailyDigestPage    = lazy(() => import('./components/dashboard/DailyDigestPage').then(m => ({ default: m.DailyDigestPage })));
-const RelationshipInboxPage = lazy(() => import('./components/inbox/RelationshipInboxPage').then(m => ({ default: m.RelationshipInboxPage })));
 const StatsPage          = lazy(() => import('./components/dashboard/StatsPage').then(m => ({ default: m.StatsPage })));
 const ContactsPage       = lazy(() => import('./components/dashboard/ContactsPage').then(m => ({ default: m.ContactsPage })));
 const URLCollectionPage  = lazy(() => import('./components/dashboard/URLCollectionPage').then(m => ({ default: m.URLCollectionPage })));
@@ -41,10 +39,8 @@ const ExportCenterPage   = lazy(() => import('./components/dashboard/ExportCente
 const DatabaseView       = lazy(() => import('./components/dashboard/DatabaseView').then(m => ({ default: m.DatabaseView })));
 const SearchView         = lazy(() => import('./components/search/SearchView').then(m => ({ default: m.SearchView })));
 const ChatCalendarPage   = lazy(() => import('./components/calendar/ChatCalendarPage').then(m => ({ default: m.ChatCalendarPage })));
-const AnniversaryPage    = lazy(() => import('./components/anniversary/AnniversaryPage').then(m => ({ default: m.AnniversaryPage })));
 const SkillsView         = lazy(() => import('./components/skills/SkillsView').then(m => ({ default: m.SkillsView })));
 const LabsPage           = lazy(() => import('./components/labs/LabsPage').then(m => ({ default: m.LabsPage })));
-const GalleryPage        = lazy(() => import('./components/gallery/GalleryPage').then(m => ({ default: m.GalleryPage })));
 const MemoryLibraryPage  = lazy(() => import('./components/memory/MemoryLibraryPage').then(m => ({ default: m.MemoryLibraryPage })));
 const SchedulerPage      = lazy(() => import('./components/tasks/SchedulerPage').then(m => ({ default: m.SchedulerPage })));
 const SettingsPage       = lazy(() => import('./components/settings').then(m => ({ default: m.SettingsPage })));
@@ -52,6 +48,7 @@ const SettingsPage       = lazy(() => import('./components/settings').then(m => 
 const GroupsView         = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupsView })));
 const GroupDetailModal   = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupDetailModal })));
 const ContactModal       = lazy(() => import('./components/contact/ContactModal').then(m => ({ default: m.ContactModal })));
+const ApiLogsPage         = lazy(() => import('./components/dashboard/ApiLogsPage').then(m => ({ default: m.ApiLogsPage })));
 
 // 切 tab / 打开 modal 时的兜底 loading
 const ChunkLoading: React.FC = () => (
@@ -90,7 +87,7 @@ function AppInner() {
 
   // State — 从 URL hash 恢复当前 tab + 联系人/群聊弹窗
   // hash 格式：#/stats  #/stats/contact/wxid_abc  #/groups/group/xxx@chatroom
-  const VALID_TABS: TabType[] = ['dashboard', 'inbox', 'digest', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'anniversary', 'urls', 'skills', 'labs', 'gallery', 'export', 'memory', 'tasks', 'settings'];
+  const VALID_TABS: TabType[] = ['dashboard', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'urls', 'skills', 'labs', 'export', 'memory', 'tasks', 'settings', 'apilogs'];
 
   const parseHash = (): { tab: TabType; contactId?: string; groupId?: string } => {
     const raw = window.location.hash.replace('#/', '').replace('#', '');
@@ -186,7 +183,7 @@ function AppInner() {
   const [releaseChecked, setReleaseChecked] = useState(false);
   useEffect(() => {
     // ⌘1..⌘9 映射到 VALID_TABS 的前 9 项；顺序对应 Sidebar 上的常用 tab
-    const TAB_ORDER: TabType[] = ['dashboard', 'inbox', 'digest', 'stats', 'contacts', 'groups', 'search', 'calendar', 'anniversary', 'settings'];
+    const TAB_ORDER: TabType[] = ['dashboard', 'stats', 'contacts', 'groups', 'search', 'calendar', 'settings'];
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       // 在输入框里按 ⌘1 之类不拦截（浏览器默认也会被某些组件拦截）
@@ -524,7 +521,7 @@ function AppInner() {
     <PrivacyModeContext.Provider value={{ privacyMode, setPrivacyMode }}>
     <div className="flex h-screen dk-page bg-[#f8f9fb] dk-text text-[#1d1d1f] font-sans overflow-hidden">
       {/* Sidebar */}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ inbox: taskUnread, tasks: taskUnread }} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} dark={dark} onToggleDark={toggleDark} badges={{ tasks: taskUnread }} />
 
       {/* Main Content */}
       <main className={`flex-1 overflow-y-auto dk-page ${activeTab === 'dashboard' ? 'pb-16 sm:pb-0' : 'p-4 sm:p-10 pb-20 sm:pb-10'}`}>
@@ -536,18 +533,8 @@ function AppInner() {
             onReselect={handleReselect}
             onContactClick={handleContactClick}
             onGroupClick={(g) => setSelectedGroup(g)}
-            onNavigateToAnniversary={() => setActiveTab('anniversary')}
             onOpenSettings={() => setActiveTab('settings')}
           />
-        ) : activeTab === 'inbox' ? (
-          <RelationshipInboxPage
-            contacts={contacts}
-            onContactClick={handleContactClick}
-            onNavigateTasks={() => setActiveTab('tasks')}
-            onNavigateAnniversary={() => setActiveTab('anniversary')}
-          />
-        ) : activeTab === 'digest' ? (
-          <DailyDigestPage contacts={contacts} onContactClick={handleContactClick} />
         ) : activeTab === 'stats' ? (
           <StatsPage
             contacts={contacts}
@@ -571,14 +558,12 @@ function AppInner() {
           <GroupsView allContacts={allContacts} onContactClick={handleContactClick} onGroupClick={(g) => setSelectedGroup(g)} blockedGroups={blockedGroups} onBlockGroup={addBlockedGroup} onOpenSettings={() => setActiveTab('settings')} />
         ) : activeTab === 'calendar' ? (
           <ChatCalendarPage contacts={contacts} onContactClick={handleContactClick} onOpenSettings={() => setActiveTab('settings')} />
-        ) : activeTab === 'anniversary' ? (
-          <AnniversaryPage contacts={contacts} onContactClick={handleContactClick} />
         ) : activeTab === 'skills' ? (
           <SkillsView />
         ) : activeTab === 'labs' ? (
           <LabsPage contacts={contacts} />
-        ) : activeTab === 'gallery' ? (
-          <GalleryPage />
+        ) : activeTab === 'apilogs' ? (
+          <ApiLogsPage />
         ) : activeTab === 'search' ? (
           <SearchView
             contacts={contacts}
@@ -680,7 +665,7 @@ function AppInner() {
         )}
       </Suspense>
 
-      <TokenStatsWidget />
+      <StatusBar contacts={contacts} groups={allGroups} />
     </div>
     </PrivacyModeContext.Provider>
     </SelfInfoProvider>

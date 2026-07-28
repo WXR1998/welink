@@ -4,11 +4,11 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Bot, Send, RotateCcw, Loader2, AlertTriangle, Info, Copy, Check, CalendarDays, SlidersHorizontal, Square, Database, Search, Share2, ChevronDown, ChevronRight, BrainCircuit, Trash2 } from 'lucide-react';
+import { useToast } from '../../components/common/Toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { generateShareImage } from '../../utils/shareImage';
+import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
-import { TTSButton } from '../common/TTSButton';
 import { contactsApi, groupsApi } from '../../services/api';
 import { CalendarRangePicker } from './CalendarRangePicker';
 import {
@@ -225,11 +225,10 @@ const AssistantMessage: React.FC<{
     setSharing(true);
     setShareMsg(null);
     try {
-      const savedPath = await generateShareImage({
+      const result = await generateAIScreenshot({
         question: prevQuestion,
         answer: msg.content,
-        contactName: displayName,
-        avatarUrl,
+        subjects: [{ name: displayName ?? "AI 对话", avatarUrl }],
         stats: msg.elapsedSecs !== undefined ? {
           provider: msg.provider,
           model: msg.model,
@@ -239,8 +238,11 @@ const AssistantMessage: React.FC<{
           timestamp: msg.timestamp,
         } : undefined,
       });
-      const isAppMode = savedPath.startsWith('/') || /^[A-Z]:\\/i.test(savedPath);
-      setShareMsg({ ok: true, text: isAppMode ? `已保存至 ${savedPath}` : '图片已下载', path: isAppMode ? savedPath : undefined });
+      setShareMsg({
+        ok: result.ok,
+        text: result.method === 'clipboard' ? '已复制到剪贴板' : result.path ? `已保存至 ${result.path}` : '图片已下载',
+        path: result.path,
+      });
     } catch (err) {
       setShareMsg({ ok: false, text: `生成失败：${(err as Error).message}` });
     } finally {
@@ -336,7 +338,6 @@ const AssistantMessage: React.FC<{
           </div>
           {msg.content && !msg.streaming && (
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <TTSButton text={msg.content} size={13} showLabel title="朗读回答" />
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-gray-400 hover:text-[#07c160] hover:bg-[#f0faf4] dark:hover:bg-[#07c160]/10 transition-colors"
@@ -384,6 +385,7 @@ const AssistantMessage: React.FC<{
 export const LLMAnalysisTab: React.FC<LLMAnalysisProps> = ({
   username, displayName, isGroup, avatarUrl, initialQuery, quickMode, onOpenSettings,
 }) => {
+  const toast = useToast();
   const key = `${isGroup ? 'group' : 'contact'}:${username}`;
   const { messages, loading, chunkProgress } = useAnalysisState(key);
 
@@ -693,6 +695,7 @@ export const LLMAnalysisTab: React.FC<LLMAnalysisProps> = ({
           setMemPaused(false);
           setMemExtractProgress(null);
           clearInterval(memPollRef.current!);
+          toast.error(`记忆提炼失败：${p.error}`, { persistent: true });
           return;
         }
         if (p.current != null && p.total) {

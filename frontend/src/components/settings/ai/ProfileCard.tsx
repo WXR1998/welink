@@ -262,6 +262,44 @@ export const ProfileCard: React.FC<{
         </div>
       )}
 
+      {/* 上下文窗口大小 */}
+      <div>
+        <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wide">
+          上下文窗口 <span className="font-normal normal-case">（token 数，留空 = 默认 128000）</span>
+        </label>
+        <input
+          type="number"
+          value={profile.context_window ?? ''}
+          onChange={e => {
+            const v = e.target.value;
+            onChange({ ...profile, context_window: v === '' ? undefined : parseInt(v, 10) });
+          }}
+          placeholder="128000"
+          min={1000}
+          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+        />
+        <p className="text-[11px] text-gray-400 mt-0.5">模型的最大上下文长度。例如：Gemini 2M → 2000000，Kimi 长文本 → 2000000</p>
+      </div>
+
+      {/* 上下文压缩阈值 */}
+      <div>
+        <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wide">
+          上下文压缩阈值 <span className="font-normal normal-case">（token 数，留空 = 窗口 - 4000）</span>
+        </label>
+        <input
+          type="number"
+          value={profile.compress_threshold ?? ''}
+          onChange={e => {
+            const v = e.target.value;
+            onChange({ ...profile, compress_threshold: v === '' ? undefined : parseInt(v, 10) });
+          }}
+          placeholder="自动"
+          min={1000}
+          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
+        />
+        <p className="text-[11px] text-gray-400 mt-0.5">对话 token 数超过此值时自动压缩旧消息。留空则使用「窗口 - 4000」。设得比窗口小可提前压缩</p>
+      </div>
+
       {/* 测试连接 */}
       <div className="flex items-center gap-2 pt-1">
         <button onClick={() => onSaveAndTest(profile.id)} disabled={testing}

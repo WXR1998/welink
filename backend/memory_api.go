@@ -16,8 +16,8 @@ import (
 func registerMemoryRoutes(api *gin.RouterGroup) {
 	// 全局列表 + 筛选
 	api.GET("/memory/list", func(c *gin.Context) {
-		contact := c.Query("contact")                // 为空则全量
-		q := strings.TrimSpace(c.Query("q"))         // 关键词（fact LIKE）
+		contact := c.Query("contact")        // 为空则全量
+		q := strings.TrimSpace(c.Query("q")) // 关键词（fact LIKE）
 		pinnedOnly := c.Query("pinned") == "1"
 		limit, _ := strconv.Atoi(c.Query("limit"))
 		if limit <= 0 || limit > 500 {
@@ -34,8 +34,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			return
 		}
 
-		whereParts := []string{}
-		args := []interface{}{}
+		whereParts := []string{"version = ?"}
+		args := []interface{}{memFactVersion}
 		if contact != "" {
 			whereParts = append(whereParts, "contact_key = ?")
 			args = append(args, contact)
@@ -49,10 +49,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			whereParts = append(whereParts, `fact LIKE ? ESCAPE '\'`)
 			args = append(args, "%"+escapeLikePattern(q)+"%")
 		}
-		where := ""
-		if len(whereParts) > 0 {
-			where = " WHERE " + strings.Join(whereParts, " AND ")
-		}
+		where := " WHERE " + strings.Join(whereParts, " AND ")
 
 		// 先统计总数
 		var total int
@@ -89,9 +86,9 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		rows, err := db.Query(`
 			SELECT contact_key, COUNT(*) AS n, SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) AS pinned
-			FROM mem_facts
+			FROM mem_facts WHERE version = ?
 			GROUP BY contact_key
-			ORDER BY n DESC`)
+			ORDER BY n DESC`, memFactVersion)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -151,8 +148,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		now := time.Now().Unix()
 		res, err := db.Exec(
-			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-			body.ContactKey, body.Fact, 0, 0, emb, pinned, now, now,
+			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+			body.ContactKey, body.Fact, 0, 0, emb, pinned, memFactVersion, now, now,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -188,8 +185,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
 			return
 		}
-		res, err := db.Exec("UPDATE mem_facts SET fact = ?, updated_at = ? WHERE id = ?",
-			strings.TrimSpace(body.Fact), time.Now().Unix(), id)
+		res, err := db.Exec("UPDATE mem_facts SET fact = ?, updated_at = ? WHERE id = ? AND version = ?",
+			strings.TrimSpace(body.Fact), time.Now().Unix(), id, memFactVersion)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -213,7 +210,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI DB 未就绪"})
 			return
 		}
-		if _, err := db.Exec("DELETE FROM mem_facts WHERE id = ?", id); err != nil {
+		if _, err := db.Exec("DELETE FROM mem_facts WHERE id = ? AND version = ?", id, memFactVersion); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -233,7 +230,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			return
 		}
 		// 删除所有未置顶的事实
-		res, err := tx.Exec("DELETE FROM mem_facts WHERE pinned = 0")
+		res, err := tx.Exec("DELETE FROM mem_facts WHERE pinned = 0 AND version = ?", memFactVersion)
 		if err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -241,11 +238,17 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		deleted, _ := res.RowsAffected()
 		// 重置记忆提取游标（extract_offset = -1）
-		tx.Exec("UPDATE vec_index_status SET extract_offset = -1")
+		tx.Exec("UPDATE vec_index_status SET extract_offset = -1, extract_version = ?", memFactVersion)
 		if err := tx.Commit(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		// 清空所有 job，让运行中/暂停的任务从列表中消失
+		vecJobsMu.Lock()
+		for k := range vecJobs {
+			delete(vecJobs, k)
+		}
+		vecJobsMu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "deleted": deleted})
 	})
 
@@ -266,11 +269,17 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		// 清空向量索引状态表
 		tx.Exec("DELETE FROM vec_index_status")
 		// 重置记忆提取游标
-		tx.Exec("UPDATE vec_index_status SET extract_offset = -1")
+		tx.Exec("UPDATE vec_index_status SET extract_offset = -1, extract_version = ?", memFactVersion)
 		if err := tx.Commit(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		// 清空所有 job，让运行中/暂停的任务从列表中消失
+		vecJobsMu.Lock()
+		for k := range vecJobs {
+			delete(vecJobs, k)
+		}
+		vecJobsMu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
@@ -294,8 +303,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		if body.Pinned {
 			val = 1
 		}
-		if _, err := db.Exec("UPDATE mem_facts SET pinned = ?, updated_at = ? WHERE id = ?",
-			val, time.Now().Unix(), id); err != nil {
+		if _, err := db.Exec("UPDATE mem_facts SET pinned = ?, updated_at = ? WHERE id = ? AND version = ?",
+			val, time.Now().Unix(), id, memFactVersion); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -316,11 +325,29 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		var contactKey string
 		var sourceFrom, sourceTo int
-		err = db.QueryRow("SELECT contact_key, source_from, source_to FROM mem_facts WHERE id = ?", id).
+		err = db.QueryRow("SELECT contact_key, source_from, source_to FROM mem_facts WHERE id = ? AND version = ?", id, memFactVersion).
 			Scan(&contactKey, &sourceFrom, &sourceTo)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
 			return
+		}
+
+		// 查找同一段聊天记录（相同 source_from / source_to）的所有事实，
+		// 用于截图标题展示完整记忆集（不受搜索结果 limit 限制）。
+		relatedRows, relErr := db.Query(
+			"SELECT fact FROM mem_facts WHERE contact_key = ? AND source_from = ? AND source_to = ? AND version = ? ORDER BY id",
+			contactKey, sourceFrom, sourceTo, memFactVersion)
+		var relatedFacts []string
+		if relErr == nil {
+			for relatedRows.Next() {
+				var f string
+				relatedRows.Scan(&f)
+				relatedFacts = append(relatedFacts, f)
+			}
+			relatedRows.Close()
+		}
+		if relatedFacts == nil {
+			relatedFacts = []string{}
 		}
 		// source_from / source_to 是 vec_messages 按 seq 排序后的索引
 		if sourceFrom < 0 || sourceTo < sourceFrom {
@@ -350,7 +377,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		if msgs == nil {
 			msgs = []SrcMsg{}
 		}
-		c.JSON(http.StatusOK, gin.H{"messages": msgs, "range": gin.H{"from": sourceFrom, "to": sourceTo}})
+		c.JSON(http.StatusOK, gin.H{"messages": msgs, "range": gin.H{"from": sourceFrom, "to": sourceTo}, "related_facts": relatedFacts})
 	})
 }
 
@@ -372,11 +399,11 @@ func GetPinnedMemFacts(contactKey string) ([]MemFact, error) {
 	var err error
 	if contactKey != "" {
 		rows, err = db.Query(
-			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND contact_key = ? ORDER BY updated_at DESC",
-			contactKey)
+			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND contact_key = ? AND version = ? ORDER BY updated_at DESC",
+			contactKey, memFactVersion)
 	} else {
 		rows, err = db.Query(
-			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 ORDER BY updated_at DESC")
+			"SELECT id, contact_key, fact, source_from, source_to, created_at, updated_at FROM mem_facts WHERE pinned = 1 AND version = ? ORDER BY updated_at DESC", memFactVersion)
 	}
 	if err != nil {
 		return nil, err

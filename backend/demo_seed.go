@@ -259,7 +259,7 @@ func seedDemoMemFacts(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare("INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)")
+	stmt, err := tx.Prepare("INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -274,7 +274,7 @@ func seedDemoMemFacts(db *sql.DB) error {
 			if i == 0 {
 				pinned = 1 // 每人第一条置顶
 			}
-			if _, err := stmt.Exec(key, f, 0, 0, encodeVec(hashedMockEmbedding(f, embDim)), pinned, now, now); err != nil {
+			if _, err := stmt.Exec(key, f, 0, 0, encodeVec(hashedMockEmbedding(f, embDim)), pinned, memFactVersion, now, now); err != nil {
 				tx.Rollback()
 				return err
 			}
