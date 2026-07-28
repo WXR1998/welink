@@ -52,6 +52,20 @@ function colorForName(name: string): string {
   return `hsl(${Math.abs(hash) % 360}, 60%, 55%)`;
 }
 
+// 首字默认头像：无头像时显示名称首字
+function FallbackAvatar({ name, size = 32, rounded = 'rounded-xl' }: { name: string; size?: number; rounded?: string }) {
+  const bg = colorForName(name);
+  const ch = name.charAt(0) || '?';
+  return (
+    <div
+      className={`${rounded} flex items-center justify-center shrink-0`}
+      style={{ width: size, height: size, backgroundColor: bg }}
+    >
+      <span className="text-white font-bold" style={{ fontSize: size * 0.45 }}>{ch}</span>
+    </div>
+  );
+}
+
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const lines: string[] = [];
   let current = '';
@@ -1055,10 +1069,10 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                     active ? 'bg-[#07c160]/10 text-[#07c160]' : 'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300'
                   }`}
                 >
-                  {info ? (
+                  {info?.avatar ? (
                     <img src={info.avatar} alt="" className="w-6 h-6 rounded-lg object-cover shrink-0" />
                   ) : (
-                    <div className="w-6 h-6 rounded-lg bg-gray-200 dark:bg-white/10 shrink-0" />
+                    <FallbackAvatar name={info?.name || stripKey(s.contact_key)} size={24} rounded="rounded-lg" />
                   )}
                   <span className="truncate flex-1">{info?.name || stripKey(s.contact_key)}</span>
                   {s.pinned_count > 0 && (
@@ -1135,10 +1149,10 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                           {isSelected && <Check size={12} className="text-white" />}
                         </div>
                       )}
-                      {info ? (
+                      {info?.avatar ? (
                         <img src={info.avatar} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0" title={info.name} />
                       ) : (
-                        <div className="w-8 h-8 rounded-xl bg-gray-200 dark:bg-white/10 shrink-0" />
+                        <FallbackAvatar name={info?.name || stripKey(f.contact_key)} size={32} />
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -1244,7 +1258,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                     <div className="flex items-center gap-2 min-w-0">
                       {info?.avatar
                         ? <img src={info.avatar} alt="" className="w-6 h-6 rounded-lg object-cover" />
-                        : <div className="w-6 h-6 rounded-lg bg-gray-200 dark:bg-white/10" />}
+                        : <FallbackAvatar name={info?.name || stripKey(addContact)} size={24} rounded="rounded-lg" />}
                       <span className="text-sm dk-text truncate">{info?.name || stripKey(addContact)}</span>
                     </div>
                   );
