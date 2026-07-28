@@ -44,6 +44,7 @@ var (
 	batchQueueMu       sync.Mutex
 	batchWorkerRunning  bool
 	batchSvc            func() *service.ContactService
+	batchAbortCh        chan struct{}
 )
 
 // initBatchTaskTable 创建 batch_tasks 表（在 aiDBMu 持有期间调用）
@@ -164,11 +165,14 @@ func ensureBatchWorker() {
 func batchWorkerLoop() {
 	batchQueueMu.Lock()
 	batchWorkerRunning = true
+	batchAbortCh = make(chan struct{})
+	abortCh := batchAbortCh
 	batchQueueMu.Unlock()
 
 	defer func() {
 		batchQueueMu.Lock()
 		batchWorkerRunning = false
+		batchAbortCh = nil
 		batchQueueMu.Unlock()
 		if r := recover(); r != nil {
 			log.Printf("[BATCH] worker panic: %v", r)
@@ -187,7 +191,7 @@ func batchWorkerLoop() {
 		}
 
 		log.Printf("[BATCH] 开始处理: %s (%s)", task.ContactKey, task.Username)
-		err = processBatchTask(task)
+		err = processBatchTask(task, abortCh)
 		if err != nil {
 			log.Printf("[BATCH] 任务失败 %s: %v", task.ContactKey, err)
 			updateBatchTaskStatus(task.ID, BatchTaskError, err.Error())
@@ -305,9 +309,18 @@ func StopAllBatchTasks() error {
 	if db == nil {
 		return fmt.Errorf("AI DB 未就绪")
 	}
-	// 停止 worker
+	// 关闭 abort channel，中断正在运行的提炼
 	batchQueueMu.Lock()
 	batchWorkerRunning = false
+	if batchAbortCh != nil {
+		// safe close pattern
+		select {
+		case <-batchAbortCh:
+		default:
+			close(batchAbortCh)
+		}
+	}
+	batchAbortCh = nil
 	batchQueueMu.Unlock()
 	// 中止所有正在运行的 vec jobs
 	vecJobsMu.Lock()
@@ -324,7 +337,7 @@ func StopAllBatchTasks() error {
 // ── Pipeline ─────────────────────────────────────────────────────────────────
 
 // processBatchTask 处理单个任务：FTS → 向量索引 → 记忆提炼
-func processBatchTask(task *BatchTask) error {
+func processBatchTask(task *BatchTask, abortCh <-chan struct{}) error {
 	svc := batchSvc()
 	if svc == nil {
 		return fmt.Errorf("服务不可用")
@@ -372,7 +385,7 @@ func processBatchTask(task *BatchTask) error {
 	progressCb := func(done, total int) {
 		updateBatchTaskProgress(task.ID, done, total)
 	}
-	if err := runMemExtractionSyncWithProgress(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db, progressCb, nil); err != nil {
+	if err := runMemExtractionSyncWithProgress(task.ContactKey, task.Username, task.IsGroup, svc, prefs, db, progressCb, nil, abortCh); err != nil {
 		return fmt.Errorf("记忆提炼失败: %w", err)
 	}
 
@@ -464,10 +477,10 @@ func buildVecIndexSync(key, username string, isGroup bool, svc *service.ContactS
 
 // runMemExtractionSync 同步运行记忆提炼
 func runMemExtractionSync(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, db *sql.DB) error {
-	return runMemExtractionSyncWithProgress(key, username, isGroup, svc, prefs, db, nil, nil)
+	return runMemExtractionSyncWithProgress(key, username, isGroup, svc, prefs, db, nil, nil, nil)
 }
 
-func runMemExtractionSyncWithProgress(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, db *sql.DB, onProgress func(done, total int), onChunkDone func(chunkIdx int)) error {
+func runMemExtractionSyncWithProgress(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, db *sql.DB, onProgress func(done, total int), onChunkDone func(chunkIdx int), abortCh <-chan struct{}) error {
 	rows, err := db.Query(
 		`SELECT datetime, sender, content FROM vec_messages WHERE contact_key = ? ORDER BY seq`, key)
 	if err != nil {
@@ -489,7 +502,7 @@ func runMemExtractionSyncWithProgress(key, username string, isGroup bool, svc *s
 	_, err = extractAndStoreFacts(key, msgs, prefs, db, embConfigs,
 		isGroup, username,
 		0,
-		onProgress, onChunkDone, nil,
+		onProgress, onChunkDone, abortCh,
 	)
 	return err
 }
