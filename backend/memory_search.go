@@ -468,6 +468,14 @@ type MemorySearchResponse struct {
 	PinnedFacts      []MemFact           `json:"pinned_facts"`       // 置顶事实（始终注入）
 	TokenUsage       *StreamUsage        `json:"token_usage"`        // DecomposeQuery 消耗的 token
 	DecomposePrompt  []LLMMessage        `json:"decompose_prompt"`   // DecomposeQuery 发给 LLM 的原始 prompt
+	// 增强检索结果
+	VecMessages      []VecMessageHit     `json:"vec_messages"`       // 双路检索：原始消息命中
+	ExpandedQueries  []string            `json:"expanded_queries"`   // 查询改写：扩展的子查询
+	HyDEDocument     string              `json:"hyde_document"`      // 查询改写：HyDE 假想答案
+	RerankUsed       bool                `json:"rerank_used"`        // 是否使用了 rerank
+	VectorHits       int                 `json:"vector_hits"`        // 向量检索命中数
+	BM25Hits         int                 `json:"bm25_hits"`          // BM25 检索命中数
+	VecMessageHits   int                 `json:"vec_message_hits"`   // 原始消息检索命中数
 }
 
 // registerMemorySearchRoutes 注册 /api/ai/memory-search 端点。
@@ -610,17 +618,13 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			}
 		}
 
-		// Step 3: 搜索 mem_facts
+		// Step 3: 确定检索查询词
 		searchQ := body.Query
 		if decomp != nil && len(decomp.Concepts) > 0 {
 			searchQ = strings.Join(decomp.Concepts, " ")
 		}
-		sendProgress("search_facts", fmt.Sprintf("搜索记忆事实 (query: %s)", truncate(searchQ, 60)))
 
-		var allFacts []MemFact
-		var pinnedFacts []MemFact
-
-		// 检查是否有成功解析的实体
+		// 收集所有要搜索的 contact_key
 		hasResolvedEntity := false
 		for _, re := range resolvedEntities {
 			if re.ContactKey != "" {
@@ -628,8 +632,6 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				break
 			}
 		}
-
-		// 收集所有要搜索的 contact_key
 		var searchKeys []string
 		if hasResolvedEntity {
 			for _, re := range resolvedEntities {
@@ -638,63 +640,63 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				}
 			}
 		}
-		// 加上群聊 key
 		searchKeys = append(searchKeys, groupKeys...)
 
-		// 搜索策略：
-		// 1. 解析出的联系人私聊 facts（如果有）
-		// 2. 所有有记忆总结的群聊 facts（群成员会在群里讨论彼此的事）
-		// 3. 用户指定的群聊 facts
-		const maxFacts = 50
-		const perKeyTopK = 10
-
-		// 1. 搜索解析出的联系人私聊 facts
-		contactKeys := make([]string, 0, len(resolvedEntities))
-		for _, re := range resolvedEntities {
-			if re.ContactKey != "" && !strings.HasPrefix(re.ContactKey, "group:") {
-				contactKeys = append(contactKeys, re.ContactKey)
-			}
-		}
-		// 2. 搜索所有有记忆总结的群聊 facts
+		// 加上所有有记忆总结的群聊 facts
 		groupKeysWithFacts := GetGroupKeysWithFacts()
-
-		// 合并所有要搜索的 key
-		type searchTarget struct {
-			key     string
-			label   string
-		}
-		var targets []searchTarget
-		for _, ck := range contactKeys {
-			targets = append(targets, searchTarget{key: ck, label: resolveSourceName(ck, svc)})
-		}
 		for _, gk := range groupKeysWithFacts {
-			targets = append(targets, searchTarget{key: gk, label: resolveSourceName(gk, svc)})
-		}
-
-		totalTargets := len(targets)
-		for i, t := range targets {
-			if len(allFacts) >= maxFacts {
-				break
+			found := false
+			for _, ek := range searchKeys {
+				if ek == gk {
+					found = true
+					break
+				}
 			}
-			sendProgress("search_facts", fmt.Sprintf("搜索记忆事实 (%d/%d) %s", i+1, totalTargets, t.label))
-			facts, _ := SearchMemFactsFiltered(t.key, searchQ, perKeyTopK, decomp.TimeFrom, decomp.TimeTo, prefs)
-			allFacts = append(allFacts, facts...)
-			pf, _ := GetPinnedMemFacts(t.key)
-			pinnedFacts = append(pinnedFacts, pf...)
+			if !found {
+				searchKeys = append(searchKeys, gk)
+			}
 		}
 
-		// 3. 如果没有解析出实体，也没有群聊 facts，回退到全局搜索
-		if len(allFacts) == 0 {
-			sendProgress("search_facts", "全局搜索记忆事实...")
-			facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
-			allFacts = append(allFacts, facts...)
-			pf, _ := GetPinnedMemFacts("")
-			pinnedFacts = append(pinnedFacts, pf...)
+		// ── 增强检索：BM25 + 双路 + 查询改写 + Rerank ──
+		sendProgress("enhanced_search", fmt.Sprintf("增强检索中 (query: %s)...", truncate(searchQ, 60)))
+		enhancedResult, err := EnhancedRetrieval(searchQ, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs)
+
+		var allFacts []MemFact
+		var pinnedFacts []MemFact
+		var vecMessages []VecMessageHit
+
+		if err != nil || enhancedResult == nil {
+			// 降级：用原始向量检索逻辑
+			sendProgress("search_facts", "向量检索记忆事实...")
+			for _, key := range searchKeys {
+				facts, _ := SearchMemFactsFiltered(key, searchQ, 10, decomp.TimeFrom, decomp.TimeTo, prefs)
+				allFacts = append(allFacts, facts...)
+				pf, _ := GetPinnedMemFacts(key)
+				pinnedFacts = append(pinnedFacts, pf...)
+			}
+			if len(allFacts) == 0 {
+				facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
+				allFacts = append(allFacts, facts...)
+				pf, _ := GetPinnedMemFacts("")
+				pinnedFacts = append(pinnedFacts, pf...)
+			}
+		} else {
+			allFacts = enhancedResult.Facts
+			vecMessages = enhancedResult.VecMessages
+			// 收集 pinnedFacts
+			for _, key := range searchKeys {
+				pf, _ := GetPinnedMemFacts(key)
+				pinnedFacts = append(pinnedFacts, pf...)
+			}
+			if len(pinnedFacts) == 0 {
+				pf, _ := GetPinnedMemFacts("")
+				pinnedFacts = append(pinnedFacts, pf...)
+			}
 		}
 
-		// 截断到 maxFacts
-		if len(allFacts) > maxFacts {
-			allFacts = allFacts[:maxFacts]
+		// 截断到 50
+		if len(allFacts) > 50 {
+			allFacts = allFacts[:50]
 		}
 
 		// Step 4: 提取源聊天记录
@@ -708,7 +710,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 
 		// 推送最终结果
 		close(keepaliveDone)
-		sendResult(MemorySearchResponse{
+		resp := MemorySearchResponse{
 			Decomposition:    decomp,
 			ResolvedEntities: resolvedEntities,
 			Facts:            allFacts,
@@ -716,7 +718,17 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			PinnedFacts:      pinnedFacts,
 			TokenUsage:       decompUsage,
 			DecomposePrompt:  decompPrompt,
-		})
+			VecMessages:      vecMessages,
+		}
+		if enhancedResult != nil {
+			resp.ExpandedQueries = enhancedResult.ExpandedQueries
+			resp.HyDEDocument = enhancedResult.HyDEDocument
+			resp.RerankUsed = enhancedResult.RerankUsed
+			resp.VectorHits = enhancedResult.VectorHits
+			resp.BM25Hits = enhancedResult.BM25Hits
+			resp.VecMessageHits = enhancedResult.VecMessageHits
+		}
+		sendResult(resp)
 		sendDone()
 	})
 }

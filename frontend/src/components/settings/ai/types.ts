@@ -84,3 +84,16 @@ export function newEmbeddingProfile(index: number): EmbeddingProfile {
 export function newMemLLMProfile(index: number): MemLLMProfile {
   return { id: genId(), name: `记忆模型 ${index}`, provider: 'deepseek', api_key: '', base_url: '', model: '' };
 }
+
+export interface RerankProfile {
+  id: string;
+  name: string;
+  provider: string;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+}
+
+export function newRerankProfile(index: number): RerankProfile {
+  return { id: genId(), name: `Rerank ${index}`, provider: 'jina', api_key: '', base_url: '', model: '' };
+}

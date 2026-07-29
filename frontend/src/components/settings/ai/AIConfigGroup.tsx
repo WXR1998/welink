@@ -4,8 +4,9 @@ import { LLMSection } from './LLMSection';
 import { EmbeddingSection } from './EmbeddingSection';
 import { MemorySection } from './MemorySection';
 import { ImageSection } from './ImageSection';
+import { RerankSection } from './RerankSection';
 
-type AITab = 'llm' | 'embedding' | 'memory' | 'image';
+type AITab = 'llm' | 'embedding' | 'memory' | 'image' | 'rerank';
 
 export const AIConfigGroup: React.FC = () => {
   const [tab, setTab] = useState<AITab>('llm');
@@ -15,6 +16,7 @@ export const AIConfigGroup: React.FC = () => {
     { key: 'embedding', label: '向量 Embedding' },
     { key: 'memory',    label: '记忆提炼' },
     { key: 'image',     label: 'AI 生图' },
+    { key: 'rerank',    label: '重排 Rerank' },
   ];
 
   return (
@@ -56,6 +58,9 @@ export const AIConfigGroup: React.FC = () => {
       </div>
       <div className={tab === 'image' ? '' : 'hidden'}>
         <ImageSection />
+      </div>
+      <div className={tab === 'rerank' ? '' : 'hidden'}>
+        <RerankSection />
       </div>
     </section>
   );

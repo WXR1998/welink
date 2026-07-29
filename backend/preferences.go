@@ -110,6 +110,16 @@ type MemLLMProfile struct {
 	Model    string `json:"model,omitempty"`
 }
 
+// RerankProfile 是单个 Rerank（重排）提供商配置，支持多提供商 fallback。
+type RerankProfile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"` // jina/cohere/siliconflow/custom
+	APIKey   string `json:"api_key,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
 // LLMProfile 单个 LLM 配置项，支持多 provider 并行配置与一键切换。
 type LLMProfile struct {
 	ID       string `json:"id"`
@@ -237,6 +247,15 @@ type Preferences struct {
 	// 多记忆提炼 LLM 提供商（fallback）：数组顺序即为优先级。
 	// 为空时回退到上面的单字段配置。
 	MemLLMProfiles []MemLLMProfile `json:"mem_llm_profiles,omitempty"`
+
+	// Rerank（重排）配置：对向量检索召回的候选做 cross-encoder 精排
+	RerankProvider string `json:"rerank_provider,omitempty"` // jina/cohere/siliconflow/custom；空=不启用 rerank
+	RerankAPIKey   string `json:"rerank_api_key,omitempty"`
+	RerankBaseURL  string `json:"rerank_base_url,omitempty"`
+	RerankModel    string `json:"rerank_model,omitempty"`
+	// 多 Rerank 提供商（fallback）：数组顺序即为优先级。
+	// 为空时回退到上面的单字段配置。
+	RerankProfiles []RerankProfile `json:"rerank_profiles,omitempty"`
 
 	// 自定义纪念日
 	CustomAnniversaries []CustomAnniversary `json:"custom_anniversaries,omitempty"`
@@ -404,6 +423,11 @@ func sanitizeForExport(p Preferences, stripSecrets bool) Preferences {
 		p.MemLLMProfiles[i].APIKey = ""
 	}
 
+	p.RerankAPIKey = ""
+	for i := range p.RerankProfiles {
+		p.RerankProfiles[i].APIKey = ""
+	}
+
 	// 云笔记
 	p.NotionToken = ""
 	p.FeishuAppSecret = ""
@@ -465,6 +489,9 @@ func collectSecrets(p Preferences) []string {
 		candidates = append(candidates, prof.APIKey)
 	}
 	for _, prof := range p.MemLLMProfiles {
+		candidates = append(candidates, prof.APIKey)
+	}
+	for _, prof := range p.RerankProfiles {
 		candidates = append(candidates, prof.APIKey)
 	}
 	out := make([]string, 0, len(candidates))
@@ -585,6 +612,7 @@ func sanitizeForResponse(p Preferences) Preferences {
 	out.OneDriveRefreshToken = ""
 	out.PodcastTTSAPIKey = redact(out.PodcastTTSAPIKey)
 	out.MemLLMAPIKey = redact(out.MemLLMAPIKey)
+	out.RerankAPIKey = redact(out.RerankAPIKey)
 	out.MobilePairingToken = redact(out.MobilePairingToken)
 	if len(out.LLMProfiles) > 0 {
 		sanitized := make([]LLMProfile, len(out.LLMProfiles))
@@ -609,6 +637,15 @@ func sanitizeForResponse(p Preferences) Preferences {
 			sanitized[i].APIKey = redact(sanitized[i].APIKey)
 		}
 		out.MemLLMProfiles = sanitized
+	}
+
+	if len(out.RerankProfiles) > 0 {
+		sanitized := make([]RerankProfile, len(out.RerankProfiles))
+		copy(sanitized, out.RerankProfiles)
+		for i := range sanitized {
+			sanitized[i].APIKey = redact(sanitized[i].APIKey)
+		}
+		out.RerankProfiles = sanitized
 	}
 	if len(out.ImageProfiles) > 0 {
 		sanitized := make([]ImageProfile, len(out.ImageProfiles))

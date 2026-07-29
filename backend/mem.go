@@ -42,6 +42,43 @@ func initMemTables() error {
 	if err := addColumnIfMissing("mem_facts", "version", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return fmt.Errorf("mem: version col: %w", err)
 	}
+
+	// FTS5 虚拟表：对 mem_facts.fact 做 BM25 关键词检索（混合检索用）
+	if _, err := aiDB.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS mem_facts_fts USING fts5(
+		fact,
+		contact_key UNINDEXED,
+		content='mem_facts',
+		content_rowid='id',
+		tokenize = 'trigram'
+	)`); err != nil {
+		return fmt.Errorf("mem: mem_facts_fts: %w", err)
+	}
+	// 触发器：保持 mem_facts_fts 与 mem_facts 同步
+	for _, t := range []string{
+		`CREATE TRIGGER IF NOT EXISTS mem_facts_ai AFTER INSERT ON mem_facts BEGIN
+			INSERT INTO mem_facts_fts(rowid, fact, contact_key) VALUES (new.id, new.fact, new.contact_key);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS mem_facts_ad AFTER DELETE ON mem_facts BEGIN
+			INSERT INTO mem_facts_fts(mem_facts_fts, rowid, fact, contact_key) VALUES ('delete', old.id, old.fact, old.contact_key);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS mem_facts_au AFTER UPDATE ON mem_facts BEGIN
+			INSERT INTO mem_facts_fts(mem_facts_fts, rowid, fact, contact_key) VALUES ('delete', old.id, old.fact, old.contact_key);
+			INSERT INTO mem_facts_fts(rowid, fact, contact_key) VALUES (new.id, new.fact, new.contact_key);
+		END`,
+	} {
+		if _, err := aiDB.Exec(t); err != nil {
+			return fmt.Errorf("mem: trigger: %w", err)
+		}
+	}
+	// 回填：把已有的 mem_facts 行灌入 FTS 表（首次创建时）
+	var ftsCount int
+	if err := aiDB.QueryRow("SELECT COUNT(*) FROM mem_facts_fts").Scan(&ftsCount); err == nil && ftsCount == 0 {
+		var srcCount int
+		if err := aiDB.QueryRow("SELECT COUNT(*) FROM mem_facts").Scan(&srcCount); err == nil && srcCount > 0 {
+			aiDB.Exec(`INSERT INTO mem_facts_fts(rowid, fact, contact_key) SELECT id, fact, contact_key FROM mem_facts`)
+		}
+	}
+
 	return nil
 }
 

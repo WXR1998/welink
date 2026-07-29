@@ -998,6 +998,11 @@ func serverMain() {
 			MemLLMModel        string            `json:"mem_llm_model"`
 			MemLLMAPIKey       string            `json:"mem_llm_api_key"`
 			MemLLMProfiles     []MemLLMProfile   `json:"mem_llm_profiles"`
+			RerankProfiles     []RerankProfile   `json:"rerank_profiles"`
+			RerankProvider     string            `json:"rerank_provider"`
+			RerankAPIKey       string            `json:"rerank_api_key"`
+			RerankBaseURL      string            `json:"rerank_base_url"`
+			RerankModel        string            `json:"rerank_model"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1082,6 +1087,24 @@ func serverMain() {
 			}
 		}
 		existing.MemLLMProfiles = incoming.MemLLMProfiles
+		// 多 Rerank 提供商：保护未修改的 API Key
+		for i, rp := range incoming.RerankProfiles {
+			if keepOld(rp.APIKey) {
+				for _, old := range existing.RerankProfiles {
+					if old.ID == rp.ID && old.Provider == rp.Provider {
+						incoming.RerankProfiles[i].APIKey = old.APIKey
+						break
+					}
+				}
+			}
+		}
+		existing.RerankProfiles = incoming.RerankProfiles
+		existing.RerankProvider = incoming.RerankProvider
+		if !keepOld(incoming.RerankAPIKey) {
+			existing.RerankAPIKey = incoming.RerankAPIKey
+		}
+		existing.RerankBaseURL = incoming.RerankBaseURL
+		existing.RerankModel = incoming.RerankModel
 		existing.EmbeddingProvider = incoming.EmbeddingProvider
 		if !keepOld(incoming.EmbeddingAPIKey) {
 			existing.EmbeddingAPIKey = incoming.EmbeddingAPIKey
@@ -2769,6 +2792,27 @@ func serverMain() {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model})
+	})
+
+	// POST /api/ai/rerank/test — 验证 rerank 配置是否可用
+	api.POST("/ai/rerank/test", func(c *gin.Context) {
+		if isDemoMode && DemoAIDisabled() {
+			demoBlockLLMWrite(c)
+			return
+		}
+		prefs := loadPreferences()
+		configs := rerankConfigs(prefs)
+		if len(configs) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 rerank 提供商"})
+			return
+		}
+		testDocs := []string{"今天天气很好", "张三说他明天来", "李四去北京出差了"}
+		results, err := RerankCandidates("张三来不来", testDocs, configs[0])
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model, "results": results})
 	})
 
 	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
