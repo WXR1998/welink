@@ -69,10 +69,31 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		// 直接按它排序在不同联系人之间没有时间意义。
 		// 需要通过子查询从 vec_messages 取实际 datetime 来排序。
 		var query string
+		var rows *sql.Rows
+		var err error
 		if sort == "source_from" {
+			// Build WHERE with mf. prefix for the aliased query
+			mfWhereParts := []string{"mf.version = ?"}
+			mfArgs := []interface{}{memFactVersion}
+			if contact != "" {
+				mfWhereParts = append(mfWhereParts, "mf.contact_key = ?")
+				mfArgs = append(mfArgs, contact)
+			}
+			if pinnedFilter == "1" {
+				mfWhereParts = append(mfWhereParts, "mf.pinned = 1")
+			} else if pinnedFilter == "exclude" {
+				mfWhereParts = append(mfWhereParts, "mf.pinned = 0")
+			}
+			if q != "" {
+				mfWhereParts = append(mfWhereParts, `mf.fact LIKE ? ESCAPE '\\'`)
+				mfArgs = append(mfArgs, "%"+escapeLikePattern(q)+"%")
+			}
+			mfWhere := " WHERE " + strings.Join(mfWhereParts, " AND ")
 			query = `SELECT mf.id, mf.contact_key, mf.fact, mf.source_from, mf.source_to, mf.pinned, mf.created_at, mf.updated_at,
 				COALESCE((SELECT vm.datetime FROM vec_messages vm WHERE vm.contact_key = mf.contact_key ORDER BY vm.seq LIMIT 1 OFFSET mf.source_from), '') AS chat_time
-				FROM mem_facts mf` + where + " ORDER BY mf.pinned DESC, chat_time " + orderDir + ", mf.id DESC LIMIT ? OFFSET ?"
+				FROM mem_facts mf` + mfWhere + " ORDER BY mf.pinned DESC, chat_time " + orderDir + ", mf.id DESC LIMIT ? OFFSET ?"
+			args = append(mfArgs, limit, offset)
+			rows, err = db.Query(query, args...)
 		} else {
 			sortCol := "id"
 			switch sort {
@@ -83,9 +104,9 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			}
 			query = "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
 				where + " ORDER BY pinned DESC, " + sortCol + " " + orderDir + ", id DESC LIMIT ? OFFSET ?"
+			args = append(args, limit, offset)
+			rows, err = db.Query(query, args...)
 		}
-		args = append(args, limit, offset)
-		rows, err := db.Query(query, args...)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
