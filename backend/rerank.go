@@ -98,9 +98,8 @@ type rerankRequestPayload struct {
 	TopN      int      `json:"top_n,omitempty"`
 }
 
-// rerankAPIResponse 支持 Jina/Cohere/SiliconFlow 和 TEI 两种响应格式。
+// rerankAPIResponse 支持 Jina/Cohere/SiliconFlow 格式。
 // Jina/Cohere: {"results": [{"index": 0, "relevance_score": 0.95}]}
-// TEI: [{"index": 0, "score": 0.95}]
 type rerankAPIResponse struct {
 	Results []struct {
 		Index          int     `json:"index"`
@@ -108,7 +107,7 @@ type rerankAPIResponse struct {
 	} `json:"results"`
 }
 
-// teiRerankResponse 是 TEI 格式的裸数组响应。
+// teiRerankResult 是 TEI 格式的裸数组响应。
 type teiRerankResult struct {
 	Index int     `json:"index"`
 	Score float64 `json:"score"`
@@ -125,6 +124,7 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 
 	// Demo 模式：返回原始顺序（不做真实 rerank）
 	if DemoMockActive() {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.BaseURL + "/rerank", Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: `{"note":"demo mock, no real request"}`, Status: 200, ResponseBody: `{"note":"demo mock returned fake results"}`, DurationMs: 0})
 		results := make([]RerankResult, len(documents))
 		for i := range documents {
 			results[i] = RerankResult{Index: i, Score: 1.0 - float32(i)*0.01}
@@ -133,7 +133,9 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 	}
 
 	if err := guardOutboundURL(cfg.BaseURL); err != nil {
-		return nil, fmt.Errorf("rerank: URL 安全检查失败 (BaseURL: %s): %w", cfg.BaseURL, err)
+		errMsg := fmt.Sprintf("rerank: URL 安全检查失败 (BaseURL: %s): %v", cfg.BaseURL, err)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.BaseURL + "/rerank", Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", DurationMs: 0, Error: errMsg})
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	payload := rerankRequestPayload{
@@ -151,7 +153,9 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 	url := cfg.BaseURL + "/rerank"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("rerank: request: %w", err)
+		errMsg := fmt.Sprintf("rerank: 构造请求失败 (URL: %s): %v", url, err)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", DurationMs: 0, Error: errMsg})
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if cfg.APIKey != "" {
