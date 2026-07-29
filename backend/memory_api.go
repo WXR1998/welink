@@ -60,21 +60,30 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		// 排序：sort 决定字段，order 决定方向；置顶始终优先
 		sort := c.DefaultQuery("sort", "id")          // id | contact_key | created_at | source_from
 		order := c.DefaultQuery("order", "desc")       // asc | desc
-		sortCol := "id"
-		switch sort {
-		case "contact_key":
-			sortCol = "contact_key"
-		case "created_at":
-			sortCol = "created_at"
-		case "source_from":
-			sortCol = "source_from"
-		}
 		orderDir := "DESC"
 		if order == "asc" {
 			orderDir = "ASC"
 		}
-		query := "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
-			where + " ORDER BY pinned DESC, " + sortCol + " " + orderDir + ", id DESC LIMIT ? OFFSET ?"
+
+		// source_from 是 vec_messages 的 seq 偏移量（每个联系人从 0 开始），
+		// 直接按它排序在不同联系人之间没有时间意义。
+		// 需要通过子查询从 vec_messages 取实际 datetime 来排序。
+		var query string
+		if sort == "source_from" {
+			query = `SELECT mf.id, mf.contact_key, mf.fact, mf.source_from, mf.source_to, mf.pinned, mf.created_at, mf.updated_at,
+				COALESCE((SELECT vm.datetime FROM vec_messages vm WHERE vm.contact_key = mf.contact_key ORDER BY vm.seq LIMIT 1 OFFSET mf.source_from), '') AS chat_time
+				FROM mem_facts mf` + where + " ORDER BY mf.pinned DESC, chat_time " + orderDir + ", mf.id DESC LIMIT ? OFFSET ?"
+		} else {
+			sortCol := "id"
+			switch sort {
+			case "contact_key":
+				sortCol = "contact_key"
+			case "created_at":
+				sortCol = "created_at"
+			}
+			query = "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
+				where + " ORDER BY pinned DESC, " + sortCol + " " + orderDir + ", id DESC LIMIT ? OFFSET ?"
+		}
 		args = append(args, limit, offset)
 		rows, err := db.Query(query, args...)
 		if err != nil {
