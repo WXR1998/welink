@@ -110,9 +110,12 @@ export const LLMSection: React.FC = () => {
     setTestMsgs(prev => { const n = { ...prev }; delete n[profileId]; return n; });
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      await loadPreferences(); // 重新加载确保 key 标记正确
-      const r = await axios.post<{ ok: boolean; provider: string; model: string }>('/api/ai/llm/test', { profile_id: profileId });
-      setTestMsgs(prev => ({ ...prev, [profileId]: { ok: true, text: `连接成功（${r.data.provider} · ${r.data.model}）` } }));
+      await loadPreferences();
+      const r = await axios.post<{ ok: boolean; provider: string; model: string; latency_ms: number; tokens_per_second: number }>('/api/ai/llm/test', { profile_id: profileId });
+      const parts = [`${r.data.provider} · ${r.data.model}`];
+      if (r.data.latency_ms > 0) parts.push(`${r.data.latency_ms}ms`);
+      if (r.data.tokens_per_second > 0) parts.push(`${r.data.tokens_per_second.toFixed(1)} tok/s`);
+      setTestMsgs(prev => ({ ...prev, [profileId]: { ok: true, text: parts.join(' · ') } }));
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setTestMsgs(prev => ({ ...prev, [profileId]: { ok: false, text: msg } }));
@@ -129,14 +132,17 @@ export const LLMSection: React.FC = () => {
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
       await loadPreferences();
-      const r = await axios.post<{ results: { profile_id: string; name: string; provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/llm/test', { profile_id: '__all__' });
+      const r = await axios.post<{ results: { profile_id: string; name: string; provider: string; model: string; ok: boolean; latency_ms: number; tokens_per_second: number; error?: string }[] }>('/api/ai/llm/test', { profile_id: '__all__' });
       const results = r.data.results ?? [];
       const newMsgs: Record<string, { ok: boolean; text: string }> = {};
       const okCount = results.filter(r => r.ok).length;
       const failCount = results.length - okCount;
       for (const res of results) {
         if (res.ok) {
-          newMsgs[res.profile_id] = { ok: true, text: `连接成功（${res.provider} · ${res.model}）` };
+          const parts = [`${res.provider} · ${res.model}`];
+          if (res.latency_ms > 0) parts.push(`${res.latency_ms}ms`);
+          if (res.tokens_per_second > 0) parts.push(`${res.tokens_per_second.toFixed(1)} tok/s`);
+          newMsgs[res.profile_id] = { ok: true, text: parts.join(' · ') };
         } else {
           newMsgs[res.profile_id] = { ok: false, text: res.error || '连接失败' };
         }

@@ -61,14 +61,20 @@ export const MemorySection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/mem/test');
+      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; tokens_per_second: number; error?: string }[] }>('/api/ai/mem/test');
       const results = r.data.results ?? [];
       const okCount = results.filter(r => r.ok).length;
       const failCount = results.length - okCount;
+      const detail = results.map(r => {
+        if (!r.ok) return `${r.provider}: ${r.error ?? '失败'}`;
+        const parts = [`${r.provider}: ${r.latency_ms}ms`];
+        if (r.tokens_per_second > 0) parts.push(`${r.tokens_per_second.toFixed(1)} tok/s`);
+        return parts.join(' · ');
+      }).join('；');
       if (failCount === 0) {
-        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功` });
+        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功 · ${detail}` });
       } else {
-        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
+        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败 · ${detail}` });
       }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';

@@ -2797,10 +2797,11 @@ func serverMain() {
 			return
 		}
 		type testResult struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
-			OK       bool   `json:"ok"`
-			Error    string `json:"error,omitempty"`
+			Provider  string `json:"provider"`
+			Model     string `json:"model"`
+			OK        bool   `json:"ok"`
+			LatencyMs int64  `json:"latency_ms"`
+			Error     string `json:"error,omitempty"`
 		}
 		results := make([]testResult, len(configs))
 		var wg sync.WaitGroup
@@ -2808,11 +2809,13 @@ func serverMain() {
 			wg.Add(1)
 			go func(idx int, ec EmbeddingConfig) {
 				defer wg.Done()
+				start := time.Now()
 				_, err := GetEmbeddingsBatch([]string{"测试"}, ec)
+				latencyMs := time.Since(start).Milliseconds()
 				if err != nil {
-					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: false, Error: err.Error()}
+					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: false, LatencyMs: latencyMs, Error: err.Error()}
 				} else {
-					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: true}
+					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: true, LatencyMs: latencyMs}
 				}
 			}(i, cfg)
 		}
@@ -2869,16 +2872,18 @@ func serverMain() {
 		_ = c.ShouldBindJSON(&body) // 允许空 body
 		prefs := loadPreferences()
 
-		// profile_id == "__all__" → 并行测试所有 LLM profile
+		// profile_id == "__all__" → 并行测试所有 LLM profile，带时延和 token 速度
 		if body.ProfileID == "__all__" {
 			profiles := prefs.LLMProfiles
 			type testResult struct {
-				ProfileID string `json:"profile_id"`
-				Name      string `json:"name"`
-				Provider  string `json:"provider"`
-				Model     string `json:"model"`
-				OK        bool   `json:"ok"`
-				Error     string `json:"error,omitempty"`
+				ProfileID       string  `json:"profile_id"`
+				Name            string  `json:"name"`
+				Provider        string  `json:"provider"`
+				Model           string  `json:"model"`
+				OK              bool    `json:"ok"`
+				LatencyMs       int64   `json:"latency_ms"`
+				TokensPerSecond float64 `json:"tokens_per_second"`
+				Error           string  `json:"error,omitempty"`
 			}
 			results := make([]testResult, len(profiles))
 			var wg sync.WaitGroup
@@ -2887,11 +2892,11 @@ func serverMain() {
 				go func(idx int, prof LLMProfile) {
 					defer wg.Done()
 					cfg := llmConfigForProfile(prof.ID, prefs)
-					model, err := testLLMConnProfile(prof.ID, prefs)
+					stats, err := testLLMConnProfileStats(prof.ID, prefs)
 					if err != nil {
-						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: model, OK: false, Error: err.Error()}
+						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: cfg.model, OK: false, Error: err.Error()}
 					} else {
-						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: model, OK: true}
+						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
 					}
 				}(i, p)
 			}
@@ -2900,17 +2905,18 @@ func serverMain() {
 			return
 		}
 
-		// 测试单个 profile（向后兼容）
-		model, err := testLLMConnProfile(body.ProfileID, prefs)
+		// 测试单个 profile，带时延和 token 速度
+		stats, err := testLLMConnProfileStats(body.ProfileID, prefs)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			cfg := llmConfigForProfile(body.ProfileID, prefs)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "provider": cfg.provider, "model": cfg.model})
 			return
 		}
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.provider, "model": model})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.provider, "model": stats.Model, "latency_ms": stats.LatencyMs, "tokens_per_second": stats.TokensPerSecond})
 	})
 
-	// POST /api/ai/mem/test — 并行验证所有记忆提炼模型配置
+	// POST /api/ai/mem/test — 并行验证所有记忆提炼模型配置，带时延和 token 速度
 	api.POST("/ai/mem/test", func(c *gin.Context) {
 		prefs := loadPreferences()
 		configs := memLLMConfigs(prefs)
@@ -2919,10 +2925,12 @@ func serverMain() {
 			return
 		}
 		type testResult struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
-			OK       bool   `json:"ok"`
-			Error    string `json:"error,omitempty"`
+			Provider        string  `json:"provider"`
+			Model           string  `json:"model"`
+			OK              bool    `json:"ok"`
+			LatencyMs       int64   `json:"latency_ms"`
+			TokensPerSecond float64 `json:"tokens_per_second"`
+			Error           string  `json:"error,omitempty"`
 		}
 		results := make([]testResult, len(configs))
 		var wg sync.WaitGroup
@@ -2930,11 +2938,11 @@ func serverMain() {
 			wg.Add(1)
 			go func(idx int, mc Preferences) {
 				defer wg.Done()
-				model, err := testLLMConn(mc)
+				stats, err := testLLMConnStats(mc)
 				if err != nil {
-					results[idx] = testResult{Provider: mc.LLMProvider, Model: model, OK: false, Error: err.Error()}
+					results[idx] = testResult{Provider: mc.LLMProvider, Model: mc.LLMModel, OK: false, Error: err.Error()}
 				} else {
-					results[idx] = testResult{Provider: mc.LLMProvider, Model: model, OK: true}
+					results[idx] = testResult{Provider: mc.LLMProvider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
 				}
 			}(i, cfg)
 		}

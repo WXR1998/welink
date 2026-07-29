@@ -73,14 +73,15 @@ export const EmbeddingSection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/vec/test-embedding');
+      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; error?: string }[] }>('/api/ai/vec/test-embedding');
       const results = r.data.results ?? [];
       const okCount = results.filter(r => r.ok).length;
       const failCount = results.length - okCount;
+      const detail = results.map(r => r.ok ? `${r.provider}: ${r.latency_ms}ms` : `${r.provider}: ${r.error ?? '失败'}`).join('；');
       if (failCount === 0) {
-        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功` });
+        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功 · ${detail}` });
       } else {
-        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
+        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败 · ${detail}` });
       }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';

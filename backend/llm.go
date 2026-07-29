@@ -1184,3 +1184,149 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// LLMTestStats 携带 LLM 连接测试的统计数据。
+type LLMTestStats struct {
+	Model           string  `json:"model"`
+	LatencyMs       int64   `json:"latency_ms"`        // 首 token 时延
+	OutputTokens    int     `json:"output_tokens"`     // 生成 token 数
+	TokensPerSecond float64 `json:"tokens_per_second"`  // 生成速度
+}
+
+// testLLMConnStats 与 testLLMConn 相同，但返回时延和 token 速度统计。
+func testLLMConnStats(prefs Preferences) (*LLMTestStats, error) {
+	if prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "" {
+		if token, err := geminiValidToken(&prefs); err == nil {
+			prefs.LLMAPIKey = token
+		}
+	}
+	cfg := llmConfig{
+		provider: prefs.LLMProvider,
+		apiKey:   prefs.LLMAPIKey,
+		baseURL:  prefs.LLMBaseURL,
+		model:    prefs.LLMModel,
+	}
+	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
+		cfg.noThink = true
+	}
+	defaultsFor(&cfg)
+
+	if cfg.baseURL == "" || cfg.model == "" {
+		return nil, fmt.Errorf("未配置 Base URL 或模型")
+	}
+	if cfg.apiKey == "" && cfg.provider != "ollama" {
+		return nil, fmt.Errorf("未配置 API Key")
+	}
+
+	start := time.Now()
+
+	// Bedrock / Vertex 走专用测试路径
+	if cfg.provider == "bedrock" {
+		result, err := completBedrockSync([]LLMMessage{{Role: "user", Content: "Hi"}}, cfg)
+		if err != nil {
+			return nil, err
+		}
+		latencyMs := time.Since(start).Milliseconds()
+		tokens := estimateTokens(result)
+		var tps float64
+		if latencyMs > 0 {
+			tps = float64(tokens) / float64(latencyMs) * 1000
+		}
+		return &LLMTestStats{Model: cfg.model, LatencyMs: latencyMs, OutputTokens: tokens, TokensPerSecond: tps}, nil
+	}
+	if cfg.provider == "vertex" {
+		_, err := testVertexConn(cfg)
+		if err != nil {
+			return nil, err
+		}
+		latencyMs := time.Since(start).Milliseconds()
+		return &LLMTestStats{Model: cfg.model, LatencyMs: latencyMs, OutputTokens: 0, TokensPerSecond: 0}, nil
+	}
+
+	body, _ := json.Marshal(openAIRequest{Model: cfg.model, Messages: []LLMMessage{{Role: "user", Content: "Hi"}}, Stream: true})
+	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+
+	resp, err := httpClientFast.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败：%w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
+	}
+
+	// 读取完整流，统计 token 数和生成速度
+	scanner := bufio.NewScanner(resp.Body)
+	firstTokenMs := int64(0)
+	totalTokens := 0
+	var allContent strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if payload == "[DONE]" {
+			break
+		}
+		var event struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			continue
+		}
+		if len(event.Choices) > 0 && event.Choices[0].Delta.Content != "" {
+			if firstTokenMs == 0 {
+				firstTokenMs = time.Since(start).Milliseconds()
+			}
+			allContent.WriteString(event.Choices[0].Delta.Content)
+			totalTokens = estimateTokens(allContent.String())
+		}
+	}
+
+	totalMs := time.Since(start).Milliseconds()
+	if firstTokenMs == 0 {
+		firstTokenMs = totalMs
+	}
+
+	// tokens_per_second = output_tokens / generation_time
+	genMs := totalMs - firstTokenMs
+	var tps float64
+	if genMs > 0 && totalTokens > 0 {
+		tps = float64(totalTokens) / float64(genMs) * 1000
+	}
+
+	return &LLMTestStats{
+		Model:           cfg.model,
+		LatencyMs:       firstTokenMs,
+		OutputTokens:    totalTokens,
+		TokensPerSecond: tps,
+	}, nil
+}
+
+// testLLMConnProfileStats 与 testLLMConnProfile 相同，但返回时延和 token 速度统计。
+func testLLMConnProfileStats(profileID string, prefs Preferences) (*LLMTestStats, error) {
+	cfg := llmConfigForProfile(profileID, prefs)
+	if cfg.baseURL == "" || cfg.model == "" {
+		return nil, fmt.Errorf("未配置 Base URL 或模型")
+	}
+	tmp := Preferences{
+		LLMProvider: cfg.provider,
+		LLMAPIKey:   cfg.apiKey,
+		LLMBaseURL:  cfg.baseURL,
+		LLMModel:    cfg.model,
+	}
+	return testLLMConnStats(tmp)
+}
