@@ -22,6 +22,7 @@ type LLMApiLogEntry struct {
 	URL          string    `json:"url"`
 	Provider     string    `json:"provider"`
 	Model        string    `json:"model"`
+	Feature      string    `json:"feature"` // chat / query_expansion / hyde / rerank / memory_extraction / query_decomposition
 	RequestBody  string    `json:"request_body"`
 	Status       int       `json:"status"`
 	ResponseBody string    `json:"response_body"`

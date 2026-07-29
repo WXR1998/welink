@@ -226,7 +226,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLM(llmMsgs, prefs)
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_decomposition")
 		ch <- llmResult{text, err}
 	}()
 

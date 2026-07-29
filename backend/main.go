@@ -1500,9 +1500,20 @@ func serverMain() {
 				}
 			}
 
-			// 加载记忆：置顶事实（手工编写，始终注入）+ 语义检索 top-10（从聊天记录提炼）
+			// 加载记忆：置顶事实（手工编写，始终注入）+ 增强检索（BM25+向量+Rerank）
 			pinnedFacts, _ := GetPinnedMemFacts(contactKey)
-			searchedFacts, _ := SearchMemFacts(contactKey, searchQ, 10, prefs)
+			var searchedFacts []MemFact
+			searchKeys := []string{contactKey}
+			if contactKey == "" {
+				searchKeys = nil
+			}
+			enhancedResult, enhancedErr := EnhancedRetrieval(searchQ, nil, searchKeys, "", "", prefs)
+			if enhancedErr == nil && enhancedResult != nil {
+				searchedFacts = enhancedResult.Facts
+			} else {
+				// 降级：用原始向量检索
+				searchedFacts, _ = SearchMemFacts(contactKey, searchQ, 10, prefs)
+			}
 
 			// 去重：置顶事实不再出现在检索结果中
 			seen := make(map[string]bool, len(pinnedFacts)+len(searchedFacts))

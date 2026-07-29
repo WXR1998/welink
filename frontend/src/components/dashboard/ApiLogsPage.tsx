@@ -21,6 +21,7 @@ interface LLMApiLogEntry {
   url: string;
   provider: string;
   model: string;
+  feature: string;
   request_body: string;
   status: number;
   response_body: string;
@@ -45,6 +46,7 @@ interface UnifiedLogEntry {
   nonJsonResponse: boolean;
   provider?: string;
   model?: string;
+  feature?: string;
 }
 
 const LEVEL_CONFIG: Record<LogLevel, { icon: React.ReactNode; color: string; bg: string }> = {
@@ -176,6 +178,7 @@ export const ApiLogsPage: React.FC = () => {
       nonJsonResponse: false,
       provider: e.provider,
       model: e.model,
+      feature: e.feature,
     })),
   ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
@@ -315,6 +318,7 @@ export const ApiLogsPage: React.FC = () => {
                     <div className="text-[10px] text-gray-500">
                       Provider: <span className="font-mono">{entry.provider}</span>
                       {entry.model && <> · Model: <span className="font-mono">{entry.model}</span></>}
+                      {entry.feature && <> · <span className="font-mono text-[#07c160]">{entry.feature}</span></>}
                     </div>
                   )}
                   {entry.error && (

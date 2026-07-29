@@ -305,7 +305,7 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences) ([
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLM(llmMsgs, prefs)
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_expansion")
 		ch <- llmResult{text, err}
 	}()
 
@@ -369,7 +369,7 @@ func GenerateHyDE(query string, prefs Preferences) (string, error) {
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLM(llmMsgs, prefs)
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "hyde")
 		ch <- llmResult{text, err}
 	}()
 

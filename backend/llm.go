@@ -75,6 +75,7 @@ type llmConfig struct {
 	reasoningEffort   string // off / low / medium / high；空字符串 = off
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
 	compressThreshold int    // 上下文压缩阈值，0 = contextWindow - 4000
+	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
 // reasoningBudgetTokens 把档位映射到 Claude thinking.budget_tokens
@@ -634,7 +635,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	resp, err := httpClientLLMStream.Do(req)
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
 	}
 
@@ -642,7 +643,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
@@ -743,13 +744,13 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 检测流是否被意外中断（没收到 [DONE] 就结束了）
 	if !gotDone {
 		if err := scanner.Err(); err != nil {
-			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
 			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", err)
 		}
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
 		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
 	}
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	return scanner.Err()
 }
 
@@ -870,6 +871,12 @@ func streamClaude(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) erro
 
 // CompleteLLM 发起非流式请求，返回完整响应文本（用于分段摘要）
 func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
+	return CompleteLLMFeature(msgs, prefs, "")
+}
+
+// CompleteLLMFeature 与 CompleteLLM 相同，但接受一个 feature 标签用于 API 日志。
+// feature 值如 "query_expansion"、"hyde"、"memory_extraction" 等，空字符串 = 普通调用。
+func CompleteLLMFeature(msgs []LLMMessage, prefs Preferences, feature string) (string, error) {
 	// Demo 模式：AI 被锁死时直接返回 canned 响应，不走真实 provider
 	if DemoMockActive() {
 		return demoLLMComplete(msgs), nil
@@ -885,6 +892,7 @@ func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
 		apiKey:   prefs.LLMAPIKey,
 		baseURL:  prefs.LLMBaseURL,
 		model:    prefs.LLMModel,
+		feature:  feature,
 	}
 	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
 	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
@@ -962,7 +970,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	})
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
 
@@ -970,7 +978,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
@@ -986,10 +994,10 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	respBuf.max = snippetLen
 	teeReader := io.TeeReader(resp.Body, &respBuf)
 	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("响应为空")
 	}
@@ -1039,7 +1047,7 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 	resp, err := httpClientLLMSync.Do(req)
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
 
@@ -1047,7 +1055,7 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
@@ -1062,10 +1070,10 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 	respBuf.max = snippetLen
 	teeReader := io.TeeReader(resp.Body, &respBuf)
 	if err := json.NewDecoder(teeReader).Decode(&result); err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
 		return "", fmt.Errorf("解析响应失败：%w", err)
 	}
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
 	for _, block := range result.Content {
 		if block.Type == "text" && block.Text != "" {
 			return block.Text, nil
