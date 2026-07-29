@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -58,70 +59,110 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		_ = db.QueryRow("SELECT COUNT(*) FROM mem_facts"+where, args...).Scan(&total)
 
 		// 排序：sort 决定字段，order 决定方向；置顶始终优先
-		sort := c.DefaultQuery("sort", "id")          // id | contact_key | created_at | source_from
+		sortKey := c.DefaultQuery("sort", "id")          // id | contact_key | created_at | source_from
 		order := c.DefaultQuery("order", "desc")       // asc | desc
 		orderDir := "DESC"
 		if order == "asc" {
 			orderDir = "ASC"
 		}
 
-		// source_from 是 vec_messages 的 seq 偏移量（每个联系人从 0 开始），
-		// 直接按它排序在不同联系人之间没有时间意义。
-		// 需要通过子查询从 vec_messages 取实际 datetime 来排序。
-		var query string
 		var rows *sql.Rows
 		var err error
-		if sort == "source_from" {
-			// Build WHERE with mf. prefix for the aliased query
-			mfWhereParts := []string{"mf.version = ?"}
-			mfArgs := []interface{}{memFactVersion}
-			if contact != "" {
-				mfWhereParts = append(mfWhereParts, "mf.contact_key = ?")
-				mfArgs = append(mfArgs, contact)
-			}
-			if pinnedFilter == "1" {
-				mfWhereParts = append(mfWhereParts, "mf.pinned = 1")
-			} else if pinnedFilter == "exclude" {
-				mfWhereParts = append(mfWhereParts, "mf.pinned = 0")
-			}
-			if q != "" {
-				mfWhereParts = append(mfWhereParts, `mf.fact LIKE ? ESCAPE '\\'`)
-				mfArgs = append(mfArgs, "%"+escapeLikePattern(q)+"%")
-			}
-			mfWhere := " WHERE " + strings.Join(mfWhereParts, " AND ")
-			query = `SELECT mf.id, mf.contact_key, mf.fact, mf.source_from, mf.source_to, mf.pinned, mf.created_at, mf.updated_at,
-				COALESCE((SELECT vm.datetime FROM vec_messages vm WHERE vm.contact_key = mf.contact_key AND vm.seq = mf.source_from), '') AS chat_time
-				FROM mem_facts mf` + mfWhere + " ORDER BY mf.pinned DESC, chat_time " + orderDir + ", mf.id DESC LIMIT ? OFFSET ?"
-			args = append(mfArgs, limit, offset)
+		if sortKey == "source_from" {
+			// source_from 是 vec_messages 的 seq 偏移量（每个联系人从 0 开始），
+			// 直接按它排序在不同联系人之间没有时间意义。
+			// 先查全部 mem_facts（不加 LIMIT/OFFSET），再批量查 datetime，在 Go 层排序后分页。
+			query := "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
+				where + " ORDER BY pinned DESC, id DESC"
+			args = append(args[:0], args...)
 			rows, err = db.Query(query, args...)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			var allFacts []MemFact
+			for rows.Next() {
+				var f MemFact
+				var pinned int
+				rows.Scan(&f.ID, &f.ContactKey, &f.Fact, &f.SourceFrom, &f.SourceTo, &pinned, &f.CreatedAt, &f.UpdatedAt)
+				f.Pinned = pinned != 0
+				allFacts = append(allFacts, f)
+			}
+			rows.Close()
+
+			// 批量查 datetime：收集所有 (contact_key, source_from) 对
+			type keySeq struct{ key string; seq int }
+			keySeqs := make(map[keySeq]string)
+			for _, f := range allFacts {
+				keySeqs[keySeq{key: f.ContactKey, seq: f.SourceFrom}] = ""
+			}
+			// 一次性查所有需要的 datetime
+			for ks := range keySeqs {
+				var dt string
+				err := db.QueryRow("SELECT datetime FROM vec_messages WHERE contact_key = ? AND seq = ? LIMIT 1", ks.key, ks.seq).Scan(&dt)
+				if err == nil {
+					keySeqs[ks] = dt
+				}
+			}
+			// 给每条 fact 附上 chat_time 并排序
+			type factWithTime struct {
+				fact    MemFact
+				chatTime string
+			}
+			var fwt []factWithTime
+			for _, f := range allFacts {
+				fwt = append(fwt, factWithTime{fact: f, chatTime: keySeqs[keySeq{key: f.ContactKey, seq: f.SourceFrom}]})
+			}
+			if orderDir == "ASC" {
+				sort.Slice(fwt, func(i, j int) bool {
+					if fwt[i].fact.Pinned != fwt[j].fact.Pinned { return fwt[i].fact.Pinned }
+					if fwt[i].chatTime != fwt[j].chatTime { return fwt[i].chatTime < fwt[j].chatTime }
+					return fwt[i].fact.ID < fwt[j].fact.ID
+				})
+			} else {
+				sort.Slice(fwt, func(i, j int) bool {
+					if fwt[i].fact.Pinned != fwt[j].fact.Pinned { return fwt[i].fact.Pinned }
+					if fwt[i].chatTime != fwt[j].chatTime { return fwt[i].chatTime > fwt[j].chatTime }
+					return fwt[i].fact.ID > fwt[j].fact.ID
+				})
+			}
+			// 分页
+			start := offset
+			if start > len(fwt) { start = len(fwt) }
+			end := start + limit
+			if end > len(fwt) { end = len(fwt) }
+			facts := make([]MemFact, 0, end-start)
+			for _, f := range fwt[start:end] {
+				facts = append(facts, f.fact)
+			}
+			c.JSON(http.StatusOK, gin.H{"facts": facts, "total": total})
 		} else {
 			sortCol := "id"
-			switch sort {
+			switch sortKey {
 			case "contact_key":
 				sortCol = "contact_key"
 			case "created_at":
 				sortCol = "created_at"
 			}
-			query = "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
+			query := "SELECT id, contact_key, fact, source_from, source_to, pinned, created_at, updated_at FROM mem_facts" +
 				where + " ORDER BY pinned DESC, " + sortCol + " " + orderDir + ", id DESC LIMIT ? OFFSET ?"
 			args = append(args, limit, offset)
 			rows, err = db.Query(query, args...)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			defer rows.Close()
+			facts := []MemFact{}
+			for rows.Next() {
+				var f MemFact
+				var pinned int
+				rows.Scan(&f.ID, &f.ContactKey, &f.Fact, &f.SourceFrom, &f.SourceTo, &pinned, &f.CreatedAt, &f.UpdatedAt)
+				f.Pinned = pinned != 0
+				facts = append(facts, f)
+			}
+			c.JSON(http.StatusOK, gin.H{"facts": facts, "total": total})
 		}
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		defer rows.Close()
-
-		facts := []MemFact{}
-		for rows.Next() {
-			var f MemFact
-			var pinned int
-			rows.Scan(&f.ID, &f.ContactKey, &f.Fact, &f.SourceFrom, &f.SourceTo, &pinned, &f.CreatedAt, &f.UpdatedAt)
-			f.Pinned = pinned != 0
-			facts = append(facts, f)
-		}
-		c.JSON(http.StatusOK, gin.H{"facts": facts, "total": total})
 	})
 
 	// 每个 contact 的事实数量统计（填充左侧筛选面板）

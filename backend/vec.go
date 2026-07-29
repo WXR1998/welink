@@ -32,6 +32,10 @@ func initVecTables() error {
 	if err != nil {
 		return fmt.Errorf("vec: idx_vec_contact: %w", err)
 	}
+	_, err = aiDB.Exec(`CREATE INDEX IF NOT EXISTS idx_vec_contact_seq ON vec_messages(contact_key, seq)`)
+	if err != nil {
+		return fmt.Errorf("vec: idx_vec_contact_seq: %w", err)
+	}
 	_, err = aiDB.Exec(`CREATE TABLE IF NOT EXISTS vec_index_status (
 		contact_key    TEXT    PRIMARY KEY,
 		msg_count      INTEGER NOT NULL DEFAULT 0,
