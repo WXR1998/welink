@@ -87,6 +87,20 @@ type RerankResult struct {
 	Score float32 `json:"relevance_score"`
 }
 
+// rerankRequestPayload 是发给 rerank API 的请求体。
+// 同时包含 documents（Jina/Cohere/SiliconFlow 格式）和 texts（TEI 格式），
+// 兼容主流 rerank API。大多数 API 会忽略不认识的字段。
+type rerankRequestPayload struct {
+	Model     string   `json:"model,omitempty"`
+	Query     string   `json:"query"`
+	Documents []string `json:"documents,omitempty"`
+	Texts     []string `json:"texts,omitempty"`
+	TopN      int      `json:"top_n,omitempty"`
+}
+
+// rerankAPIResponse 支持 Jina/Cohere/SiliconFlow 和 TEI 两种响应格式。
+// Jina/Cohere: {"results": [{"index": 0, "relevance_score": 0.95}]}
+// TEI: [{"index": 0, "score": 0.95}]
 type rerankAPIResponse struct {
 	Results []struct {
 		Index          int     `json:"index"`
@@ -94,13 +108,10 @@ type rerankAPIResponse struct {
 	} `json:"results"`
 }
 
-// rerankRequestPayload 是发给 rerank API 的请求体。
-// 兼容 Jina / Cohere / SiliconFlow / TEI 等主流 rerank API。
-type rerankRequestPayload struct {
-	Model     string   `json:"model"`
-	Query     string   `json:"query"`
-	Documents []string `json:"documents"`
-	TopN      int      `json:"top_n,omitempty"`
+// teiRerankResponse 是 TEI 格式的裸数组响应。
+type teiRerankResult struct {
+	Index int     `json:"index"`
+	Score float64 `json:"score"`
 }
 
 // RerankCandidates 调用 rerank API 对 documents 做精排，返回按分数降序的结果。
@@ -129,6 +140,7 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 		Model:     cfg.Model,
 		Query:     query,
 		Documents: documents,
+		Texts:     documents,
 		TopN:      len(documents),
 	}
 	body, err := json.Marshal(payload)
@@ -162,23 +174,48 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 		return nil, fmt.Errorf("rerank: API 错误 %d", resp.StatusCode)
 	}
 
-	var apiResp rerankAPIResponse
-	if err := json.Unmarshal(raw, &apiResp); err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", err)})
-		return nil, fmt.Errorf("rerank: 解析响应失败: %w", err)
-	}
-
-	results := make([]RerankResult, 0, len(apiResp.Results))
-	for _, r := range apiResp.Results {
-		results = append(results, RerankResult{
-			Index: r.Index,
-			Score: float32(r.RelevanceScore),
-		})
+	results, parseErr := parseRerankResponse(raw)
+	if parseErr != nil {
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", parseErr)})
+		return nil, fmt.Errorf("rerank: 解析响应失败: %w", parseErr)
 	}
 
 	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs})
 
 	return results, nil
+}
+
+// parseRerankResponse 解析 rerank API 的响应，支持两种格式：
+// 1. Jina/Cohere/SiliconFlow: {"results": [{"index": 0, "relevance_score": 0.95}]}
+// 2. TEI: [{"index": 0, "score": 0.95}]
+func parseRerankResponse(raw []byte) ([]RerankResult, error) {
+	// 尝试 Jina/Cohere 格式
+	var apiResp rerankAPIResponse
+	if err := json.Unmarshal(raw, &apiResp); err == nil && len(apiResp.Results) > 0 {
+		results := make([]RerankResult, 0, len(apiResp.Results))
+		for _, r := range apiResp.Results {
+			results = append(results, RerankResult{
+				Index: r.Index,
+				Score: float32(r.RelevanceScore),
+			})
+		}
+		return results, nil
+	}
+
+	// 尝试 TEI 格式（裸数组）
+	var teiResults []teiRerankResult
+	if err := json.Unmarshal(raw, &teiResults); err == nil && len(teiResults) > 0 {
+		results := make([]RerankResult, 0, len(teiResults))
+		for _, r := range teiResults {
+			results = append(results, RerankResult{
+				Index: r.Index,
+				Score: float32(r.Score),
+			})
+		}
+		return results, nil
+	}
+
+	return nil, fmt.Errorf("无法解析 rerank 响应，原始内容: %s", truncateStr(string(raw), 200))
 }
 
 // RerankCandidatesWithFallback 尝试多个 rerank 配置，直到成功或全部失败。
