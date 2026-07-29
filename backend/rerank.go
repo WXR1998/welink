@@ -133,7 +133,7 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 	}
 
 	if err := guardOutboundURL(cfg.BaseURL); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rerank: URL 安全检查失败 (BaseURL: %s): %w", cfg.BaseURL, err)
 	}
 
 	payload := rerankRequestPayload{
@@ -163,21 +163,24 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 	resp, err := client.Do(req)
 	durMs := time.Since(start).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
-		return nil, fmt.Errorf("rerank: %w", err)
+		errMsg := fmt.Sprintf("rerank: 请求失败 (URL: %s): %v", url, err)
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: errMsg})
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
-		return nil, fmt.Errorf("rerank: API 错误 %d", resp.StatusCode)
+		errMsg := fmt.Sprintf("rerank: API 错误 %d, URL: %s, 响应: %s", resp.StatusCode, url, truncateStr(string(raw), 500))
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: errMsg})
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	results, parseErr := parseRerankResponse(raw)
 	if parseErr != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("解析响应失败：%v", parseErr)})
-		return nil, fmt.Errorf("rerank: 解析响应失败: %w", parseErr)
+		errMsg := fmt.Sprintf("rerank: 解析响应失败: %v, 原始响应: %s", parseErr, truncateStr(string(raw), 500))
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: errMsg})
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.Provider, Model: cfg.Model, Feature: "rerank", RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs})
