@@ -2839,7 +2839,7 @@ func serverMain() {
 	})
 
 	// POST /api/ai/rerank/test — 并行验证所有 rerank 配置
-	api.POST("/api/ai/rerank/test", func(c *gin.Context) {
+	api.POST("/ai/rerank/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
 			return
