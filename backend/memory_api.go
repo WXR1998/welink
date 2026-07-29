@@ -90,7 +90,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			}
 			mfWhere := " WHERE " + strings.Join(mfWhereParts, " AND ")
 			query = `SELECT mf.id, mf.contact_key, mf.fact, mf.source_from, mf.source_to, mf.pinned, mf.created_at, mf.updated_at,
-				COALESCE((SELECT vm.datetime FROM vec_messages vm WHERE vm.contact_key = mf.contact_key ORDER BY vm.seq LIMIT 1 OFFSET mf.source_from), '') AS chat_time
+				COALESCE((SELECT vm.datetime FROM vec_messages vm WHERE vm.contact_key = mf.contact_key AND vm.seq = mf.source_from), '') AS chat_time
 				FROM mem_facts mf` + mfWhere + " ORDER BY mf.pinned DESC, chat_time " + orderDir + ", mf.id DESC LIMIT ? OFFSET ?"
 			args = append(mfArgs, limit, offset)
 			rows, err = db.Query(query, args...)
