@@ -2784,7 +2784,7 @@ func serverMain() {
 		})
 	})
 
-	// POST /api/ai/vec/test-embedding — 验证 embedding 配置是否可用
+	// POST /api/ai/vec/test-embedding — 并行验证所有 embedding 配置
 	api.POST("/ai/vec/test-embedding", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
@@ -2796,17 +2796,32 @@ func serverMain() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置 embedding 提供商"})
 			return
 		}
-		// 测试第一个（优先级最高的）提供商
-		_, err := GetEmbeddingsBatch([]string{"测试"}, configs[0])
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		type testResult struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+			OK       bool   `json:"ok"`
+			Error    string `json:"error,omitempty"`
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model})
+		results := make([]testResult, len(configs))
+		var wg sync.WaitGroup
+		for i, cfg := range configs {
+			wg.Add(1)
+			go func(idx int, ec EmbeddingConfig) {
+				defer wg.Done()
+				_, err := GetEmbeddingsBatch([]string{"测试"}, ec)
+				if err != nil {
+					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: false, Error: err.Error()}
+				} else {
+					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: true}
+				}
+			}(i, cfg)
+		}
+		wg.Wait()
+		c.JSON(http.StatusOK, gin.H{"results": results})
 	})
 
-	// POST /api/ai/rerank/test — 验证 rerank 配置是否可用
-	api.POST("/ai/rerank/test", func(c *gin.Context) {
+	// POST /api/ai/rerank/test — 并行验证所有 rerank 配置
+	api.POST("/api/ai/rerank/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
 			return
@@ -2817,13 +2832,29 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 rerank 提供商"})
 			return
 		}
-		testDocs := []string{"今天天气很好", "张三说他明天来", "李四去北京出差了"}
-		results, err := RerankCandidates("张三来不来", testDocs, configs[0])
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		type testResult struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+			OK       bool   `json:"ok"`
+			Error    string `json:"error,omitempty"`
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].Provider, "model": configs[0].Model, "results": results})
+		results := make([]testResult, len(configs))
+		testDocs := []string{"今天天气很好", "张三说他明天来", "李四去北京出差了"}
+		var wg sync.WaitGroup
+		for i, cfg := range configs {
+			wg.Add(1)
+			go func(idx int, rc RerankConfig) {
+				defer wg.Done()
+				_, err := RerankCandidates("张三来不来", testDocs, rc)
+				if err != nil {
+					results[idx] = testResult{Provider: rc.Provider, Model: rc.Model, OK: false, Error: err.Error()}
+				} else {
+					results[idx] = testResult{Provider: rc.Provider, Model: rc.Model, OK: true}
+				}
+			}(i, cfg)
+		}
+		wg.Wait()
+		c.JSON(http.StatusOK, gin.H{"results": results})
 	})
 
 	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
@@ -2837,6 +2868,39 @@ func serverMain() {
 		}
 		_ = c.ShouldBindJSON(&body) // 允许空 body
 		prefs := loadPreferences()
+
+		// profile_id == "__all__" → 并行测试所有 LLM profile
+		if body.ProfileID == "__all__" {
+			profiles := prefs.LLMProfiles
+			type testResult struct {
+				ProfileID string `json:"profile_id"`
+				Name      string `json:"name"`
+				Provider  string `json:"provider"`
+				Model     string `json:"model"`
+				OK        bool   `json:"ok"`
+				Error     string `json:"error,omitempty"`
+			}
+			results := make([]testResult, len(profiles))
+			var wg sync.WaitGroup
+			for i, p := range profiles {
+				wg.Add(1)
+				go func(idx int, prof LLMProfile) {
+					defer wg.Done()
+					cfg := llmConfigForProfile(prof.ID, prefs)
+					model, err := testLLMConnProfile(prof.ID, prefs)
+					if err != nil {
+						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: model, OK: false, Error: err.Error()}
+					} else {
+						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: model, OK: true}
+					}
+				}(i, p)
+			}
+			wg.Wait()
+			c.JSON(http.StatusOK, gin.H{"results": results})
+			return
+		}
+
+		// 测试单个 profile（向后兼容）
 		model, err := testLLMConnProfile(body.ProfileID, prefs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2846,7 +2910,7 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.provider, "model": model})
 	})
 
-	// POST /api/ai/mem/test — 验证记忆提炼本地模型配置是否可用
+	// POST /api/ai/mem/test — 并行验证所有记忆提炼模型配置
 	api.POST("/ai/mem/test", func(c *gin.Context) {
 		prefs := loadPreferences()
 		configs := memLLMConfigs(prefs)
@@ -2854,12 +2918,28 @@ func serverMain() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置记忆提炼模型"})
 			return
 		}
-		model, err := testLLMConn(configs[0])
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		type testResult struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+			OK       bool   `json:"ok"`
+			Error    string `json:"error,omitempty"`
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": configs[0].LLMProvider, "model": model})
+		results := make([]testResult, len(configs))
+		var wg sync.WaitGroup
+		for i, cfg := range configs {
+			wg.Add(1)
+			go func(idx int, mc Preferences) {
+				defer wg.Done()
+				model, err := testLLMConn(mc)
+				if err != nil {
+					results[idx] = testResult{Provider: mc.LLMProvider, Model: model, OK: false, Error: err.Error()}
+				} else {
+					results[idx] = testResult{Provider: mc.LLMProvider, Model: model, OK: true}
+				}
+			}(i, cfg)
+		}
+		wg.Wait()
+		c.JSON(http.StatusOK, gin.H{"results": results})
 	})
 
 	// GET /api/ai/mem/status?key=...

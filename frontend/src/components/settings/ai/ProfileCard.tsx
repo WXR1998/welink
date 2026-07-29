@@ -305,7 +305,7 @@ export const ProfileCard: React.FC<{
         <button onClick={() => onSaveAndTest(profile.id)} disabled={testing}
           className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 text-xs font-bold rounded-lg hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-50 transition-colors">
           {testing ? <Loader2 size={12} className="animate-spin" /> : <AlertCircle size={12} />}
-          测试连接
+          {testing ? '测试中...' : '测试连接'}
         </button>
         {testMsg && (
           <span className={`text-xs font-semibold ${testMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>

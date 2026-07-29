@@ -73,8 +73,15 @@ export const EmbeddingSection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ ok: boolean; provider: string; model: string }>('/api/ai/vec/test-embedding');
-      setSaveMsg({ ok: true, text: `连接成功（${r.data.provider} · ${r.data.model}）` });
+      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/vec/test-embedding');
+      const results = r.data.results ?? [];
+      const okCount = results.filter(r => r.ok).length;
+      const failCount = results.length - okCount;
+      if (failCount === 0) {
+        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功` });
+      } else {
+        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
+      }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -256,7 +263,7 @@ export const EmbeddingSection: React.FC = () => {
             className="flex items-center gap-1.5 px-4 py-2.5 border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-bold rounded-xl hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-50 transition-colors"
           >
             {testing ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
-            测试连接
+            {testing ? '测试中...' : '测试连接'}
           </button>
           {saveMsg && (
             <span className={`text-sm font-semibold ${saveMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>

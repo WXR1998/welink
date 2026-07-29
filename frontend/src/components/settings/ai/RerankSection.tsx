@@ -59,8 +59,15 @@ export const RerankSection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ ok: boolean; provider: string; model: string }>('/api/ai/rerank/test');
-      setSaveMsg({ ok: true, text: `连接成功（${r.data.provider} · ${r.data.model}）` });
+      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/rerank/test');
+      const results = r.data.results ?? [];
+      const okCount = results.filter(r => r.ok).length;
+      const failCount = results.length - okCount;
+      if (failCount === 0) {
+        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功` });
+      } else {
+        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
+      }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });

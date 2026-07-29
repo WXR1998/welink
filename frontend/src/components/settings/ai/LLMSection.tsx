@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Plus, Loader2, Check } from 'lucide-react';
+import { Plus, Loader2, Check, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
 import { genId, newProfile, type LLMProfile, type ProviderValue } from './types';
@@ -10,6 +10,7 @@ export const LLMSection: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [testingAll, setTestingAll] = useState(false);
   // per-profile test state
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testMsgs, setTestMsgs] = useState<Record<string, { ok: boolean; text: string }>>({});
@@ -121,6 +122,40 @@ export const LLMSection: React.FC = () => {
     }
   };
 
+  const handleTestAll = async () => {
+    setTestingAll(true);
+    setSaveMsg(null);
+    setTestMsgs({});
+    try {
+      await axios.put('/api/preferences/llm', await buildPayload());
+      await loadPreferences();
+      const r = await axios.post<{ results: { profile_id: string; name: string; provider: string; model: string; ok: boolean; error?: string }[] }>('/api/ai/llm/test', { profile_id: '__all__' });
+      const results = r.data.results ?? [];
+      const newMsgs: Record<string, { ok: boolean; text: string }> = {};
+      const okCount = results.filter(r => r.ok).length;
+      const failCount = results.length - okCount;
+      for (const res of results) {
+        if (res.ok) {
+          newMsgs[res.profile_id] = { ok: true, text: `连接成功（${res.provider} · ${res.model}）` };
+        } else {
+          newMsgs[res.profile_id] = { ok: false, text: res.error || '连接失败' };
+        }
+      }
+      setTestMsgs(newMsgs);
+      if (failCount === 0) {
+        setSaveMsg({ ok: true, text: `全部 ${okCount} 个配置连接成功` });
+      } else {
+        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
+      }
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
+      setSaveMsg({ ok: false, text: msg });
+    } finally {
+      setTestingAll(false);
+      setTimeout(() => setSaveMsg(null), 5000);
+    }
+  };
+
   const handleGeminiAuth = async () => {
     if (!geminiClientID || !geminiClientSecret) {
       setSaveMsg({ ok: false, text: '请先填写 Client ID 和 Client Secret' });
@@ -206,8 +241,8 @@ export const LLMSection: React.FC = () => {
           <p className="text-[10px] text-gray-400">Docker 建议设为挂载目录下的路径，确保容器重启后分析记录不丢失。</p>
         </div>
 
-        {/* 保存所有 */}
-        <div className="flex items-center gap-3">
+        {/* 保存所有 + 测试所有 */}
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={handleSave}
             disabled={saving}
@@ -215,6 +250,14 @@ export const LLMSection: React.FC = () => {
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
             保存所有配置
+          </button>
+          <button
+            onClick={handleTestAll}
+            disabled={testingAll || saving || profiles.length === 0}
+            className="flex items-center gap-1.5 px-4 py-2.5 border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-bold rounded-xl hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-50 transition-colors"
+          >
+            {testingAll ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+            {testingAll ? '测试中...' : '测试所有配置'}
           </button>
           {saveMsg && (
             <span className={`text-sm font-semibold ${saveMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>
