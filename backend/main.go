@@ -2823,6 +2823,21 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"results": results})
 	})
 
+	// GET /api/ai/rerank/debug — 诊断 rerank 配置加载状态
+	api.GET("/ai/rerank/debug", func(c *gin.Context) {
+		prefs := loadPreferences()
+		configs := rerankConfigs(prefs)
+		c.JSON(http.StatusOK, gin.H{
+			"rerank_profiles_count": len(prefs.RerankProfiles),
+			"rerank_provider":       prefs.RerankProvider,
+			"rerank_base_url":       prefs.RerankBaseURL,
+			"rerank_model":          prefs.RerankModel,
+			"rerank_api_key_set":    prefs.RerankAPIKey != "",
+			"configs_count":         len(configs),
+			"configs":               configs,
+		})
+	})
+
 	// POST /api/ai/rerank/test — 并行验证所有 rerank 配置
 	api.POST("/api/ai/rerank/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
