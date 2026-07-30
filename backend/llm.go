@@ -460,6 +460,11 @@ func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamC
 		keepTokens += msgTokens
 		keepCount++
 	}
+	// 至少保留最后一条对话消息，否则压缩后只剩 system 消息，
+	// GLM 等模型会报 "messages 参数非法"
+	if keepCount == 0 && len(convMsgs) > 0 {
+		keepCount = 1
+	}
 
 	// 需要压缩的旧消息
 	toCompress := convMsgs[:len(convMsgs)-keepCount]
