@@ -571,7 +571,10 @@ func EnhancedRetrieval(
 		for i, f := range fusedFacts {
 			docs[i] = formatFactForRerank(f.Fact)
 		}
-		rerankResults, err := RerankCandidatesWithFallback(query, docs, rerankCfgs)
+		// 在 rerank query 前加上当前日期，让 reranker 理解相对时间词（如"最近"）
+		today := time.Now().Format("2006-01-02")
+		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", today, query)
+		rerankResults, err := RerankCandidatesWithFallback(rerankQuery, docs, rerankCfgs)
 		if err == nil && len(rerankResults) > 0 {
 			type indexed struct {
 				idx   int
