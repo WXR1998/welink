@@ -113,7 +113,12 @@ type teiRerankResult struct {
 	Score float64 `json:"score"`
 }
 
+// maxRerankBatchSize 是单次 rerank API 请求的最大文档数。
+// TEI 默认 max-batch-size=32；Jina/Cohere/SiliconFlow 通常允许更大。
+const maxRerankBatchSize = 32
+
 // RerankCandidates 调用 rerank API 对 documents 做精排，返回按分数降序的结果。
+// 当文档数超过 API 的批次限制时，自动分批发送并合并结果。
 func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]RerankResult, error) {
 	if cfg.Provider == "" {
 		return nil, fmt.Errorf("rerank: provider 未配置")
@@ -138,6 +143,32 @@ func RerankCandidates(query string, documents []string, cfg RerankConfig) ([]Rer
 		return nil, fmt.Errorf("%s", errMsg)
 	}
 
+	// 分批处理，避免超过 API 的 batch size 限制
+	var allResults []RerankResult
+	for batchStart := 0; batchStart < len(documents); batchStart += maxRerankBatchSize {
+		batchEnd := batchStart + maxRerankBatchSize
+		if batchEnd > len(documents) {
+			batchEnd = len(documents)
+		}
+		batchDocs := documents[batchStart:batchEnd]
+
+		batchResults, err := rerankSingleBatch(query, batchDocs, cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		// 将批次内索引调整为全局索引
+		for i := range batchResults {
+			batchResults[i].Index += batchStart
+		}
+		allResults = append(allResults, batchResults...)
+	}
+
+	return allResults, nil
+}
+
+// rerankSingleBatch 发送单批文档到 rerank API 并返回结果。
+func rerankSingleBatch(query string, documents []string, cfg RerankConfig) ([]RerankResult, error) {
 	payload := rerankRequestPayload{
 		Model:     cfg.Model,
 		Query:     query,

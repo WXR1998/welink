@@ -12,10 +12,26 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
 )
+
+// stripFactTimePrefix 去掉 fact 文本开头的 [时间范围] 前缀。
+// 例如 "[2026-05-10 23:46 ~ 2026-05-11 00:28] 陈舒汀表示..." → "陈舒汀表示..."
+// reranker 只需语义内容，时间戳是噪声。
+func stripFactTimePrefix(fact string) string {
+	if len(fact) == 0 {
+		return fact
+	}
+	if fact[0] == '[' {
+		if idx := strings.Index(fact, "]"); idx >= 0 {
+			return strings.TrimSpace(fact[idx+1:])
+		}
+	}
+	return fact
+}
 
 // ─── 方案 1: BM25 混合检索 ─────────────────────────────────────────────────────
 
@@ -520,10 +536,12 @@ func EnhancedRetrieval(
 
 	// ── Step 4: Rerank 精排（可选）──
 	rerankCfgs := rerankConfigs(prefs)
+	log.Printf("[enhanced] rerank configs=%d, fusedFacts=%d, vecHits=%d, bm25Hits=%d, vecMsgHits=%d",
+		len(rerankCfgs), len(fusedFacts), result.VectorHits, result.BM25Hits, result.VecMessageHits)
 	if len(rerankCfgs) > 0 && len(fusedFacts) > 1 {
 		docs := make([]string, len(fusedFacts))
 		for i, f := range fusedFacts {
-			docs[i] = f.Fact
+			docs[i] = stripFactTimePrefix(f.Fact)
 		}
 		rerankResults, err := RerankCandidatesWithFallback(query, docs, rerankCfgs)
 		if err == nil && len(rerankResults) > 0 {
