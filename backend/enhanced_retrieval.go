@@ -393,18 +393,17 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 // HyDE 核心思路：用"假想答案"的 embedding 去检索，
 // 因为"答案"和"文档"的语义距离比"问题"和"文档"更近。
 func GenerateHyDE(query string, prefs Preferences, profileID string) (string, error) {
-	prompt := `你是聊天记录分析助手。请根据以下问题，生成一段简短的假想答案。
+	systemPrompt := `你是聊天记录分析助手。请根据用户的问题，生成一段简短的假想答案。
 这段假想答案将用于语义检索，所以请包含可能出现在聊天记录中的关键词和表述。
 
 要求：
 - 不超过 150 字
 - 用陈述句，不要用疑问句
-- 包含具体的关键词和可能的细节
-
-问题：` + query
+- 包含具体的关键词和可能的细节`
 
 	llmMsgs := []LLMMessage{
-		{Role: "system", Content: prompt},
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: query},
 	}
 
 	type llmResult struct {
