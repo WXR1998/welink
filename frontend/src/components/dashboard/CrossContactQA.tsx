@@ -104,6 +104,12 @@ interface MemorySearchResponse {
   vector_hits?: number;
   bm25_hits?: number;
   vec_message_hits?: number;
+  rerank_results?: RerankScoreItem[];
+}
+
+interface RerankScoreItem {
+  score: number;
+  text: string;
 }
 
 interface Message {
@@ -759,6 +765,22 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           <div>Rerank 精排: {msg.memorySearchData.rerank_used ? '✅ 已使用' : '❌ 未使用'}</div>
                         </div>
                       </div>
+                    )}
+                    {/* Rerank 精排结果 */}
+                    {msg.memorySearchData?.rerank_results && msg.memorySearchData.rerank_results.length > 0 && (
+                      <details className="mt-1" open>
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          Rerank 精排结果（{msg.memorySearchData.rerank_results.length} 条，按得分降序）
+                        </summary>
+                        <div className="mt-1 space-y-0.5 text-xs text-gray-500 font-mono">
+                          {msg.memorySearchData.rerank_results.map((rr, idx) => (
+                            <div key={idx} className="flex gap-2">
+                              <span className="text-gray-400 tabular-nums">{rr.score.toFixed(5)}</span>
+                              <span className="text-gray-600 dark:text-gray-300 break-all">{rr.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     )}
                     {/* 查询改写：扩展子查询 */}
                     {msg.memorySearchData?.expanded_queries && msg.memorySearchData.expanded_queries.length > 0 && (

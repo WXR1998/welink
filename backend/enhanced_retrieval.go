@@ -436,14 +436,21 @@ func GenerateHyDE(query string, prefs Preferences) (string, error) {
 
 // EnhancedRetrievalResult 是增强检索的结果。
 type EnhancedRetrievalResult struct {
-	Facts           []MemFact       // RRF 融合 + rerank 后的 top-K 事实
-	VecMessages     []VecMessageHit // 双路检索：原始消息命中
-	ExpandedQueries []string        // 查询改写：扩展的子查询
-	HyDEDocument    string          // 查询改写：HyDE 假想答案
-	RerankUsed      bool            // 是否使用了 rerank
-	VectorHits      int             // 向量检索命中数
-	BM25Hits        int             // BM25 检索命中数
-	VecMessageHits  int             // 原始消息检索命中数
+	Facts           []MemFact         // RRF 融合 + rerank 后的 top-K 事实
+	VecMessages     []VecMessageHit   // 双路检索：原始消息命中
+	ExpandedQueries []string          // 查询改写：扩展的子查询
+	HyDEDocument    string            // 查询改写：HyDE 假想答案
+	RerankUsed      bool              // 是否使用了 rerank
+	RerankResults   []RerankScoreItem // rerank 精排结果（按分数降序）
+	VectorHits      int               // 向量检索命中数
+	BM25Hits        int               // BM25 检索命中数
+	VecMessageHits  int               // 原始消息检索命中数
+}
+
+// RerankScoreItem 是 rerank 精排的单条结果（分数 + 对应文本）。
+type RerankScoreItem struct {
+	Score float32 `json:"score"`
+	Text  string  `json:"text"`
 }
 
 // EnhancedRetrieval 整合 BM25 + 双路检索 + 查询改写 + Rerank 的增强检索。
@@ -588,13 +595,19 @@ func EnhancedRetrieval(
 				return order[i].score > order[j].score
 			})
 			reranked := make([]MemFact, 0, len(order))
+			rerankScoreItems := make([]RerankScoreItem, 0, len(order))
 			for _, o := range order {
 				if o.idx >= 0 && o.idx < len(fusedFacts) {
 					reranked = append(reranked, fusedFacts[o.idx])
+					rerankScoreItems = append(rerankScoreItems, RerankScoreItem{
+						Score: o.score,
+						Text:  docs[o.idx],
+					})
 				}
 			}
 			fusedFacts = reranked
 			result.RerankUsed = true
+			result.RerankResults = rerankScoreItems
 		}
 	}
 
