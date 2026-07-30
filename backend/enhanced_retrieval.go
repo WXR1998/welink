@@ -18,19 +18,47 @@ import (
 	"time"
 )
 
-// stripFactTimePrefix 去掉 fact 文本开头的 [时间范围] 前缀。
-// 例如 "[2026-05-10 23:46 ~ 2026-05-11 00:28] 陈舒汀表示..." → "陈舒汀表示..."
-// reranker 只需语义内容，时间戳是噪声。
-func stripFactTimePrefix(fact string) string {
-	if len(fact) == 0 {
+// formatFactForRerank 将 fact 开头的 [时间范围] 简化为只含日期的格式。
+// 例如 "[2026-05-10 23:46 ~ 2026-05-11 00:28] 陈舒汀表示..." → "[2026-05-10 ~ 2026-05-11] 陈舒汀表示..."
+// 同日范围简化为 "[2026-05-10] 陈舒汀表示..."
+// reranker 需要日期信息来响应时间相关查询（如"2025年7月"），但具体时间是噪声。
+func formatFactForRerank(fact string) string {
+	if len(fact) == 0 || fact[0] != '[' {
 		return fact
 	}
-	if fact[0] == '[' {
-		if idx := strings.Index(fact, "]"); idx >= 0 {
-			return strings.TrimSpace(fact[idx+1:])
-		}
+	closeIdx := strings.Index(fact, "]")
+	if closeIdx < 0 {
+		return fact
 	}
-	return fact
+	// inner 格式: "2026-05-10 23:46 ~ 2026-05-11 00:28"
+	inner := fact[1:closeIdx]
+	parts := strings.SplitN(inner, "~", 2)
+	if len(parts) != 2 {
+		return fact
+	}
+	startDate := extractDate(parts[0])
+	endDate := extractDate(parts[1])
+	if startDate == "" && endDate == "" {
+		return fact
+	}
+	var dateStr string
+	if startDate == endDate || endDate == "" {
+		dateStr = "[" + startDate + "]"
+	} else if startDate == "" {
+		dateStr = "[" + endDate + "]"
+	} else {
+		dateStr = "[" + startDate + " ~ " + endDate + "]"
+	}
+	return dateStr + strings.TrimSpace(fact[closeIdx+1:])
+}
+
+// extractDate 从 "2026-05-10 23:46" 中提取日期 "2026-05-10"
+func extractDate(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return ""
 }
 
 // ─── 方案 1: BM25 混合检索 ─────────────────────────────────────────────────────
@@ -541,7 +569,7 @@ func EnhancedRetrieval(
 	if len(rerankCfgs) > 0 && len(fusedFacts) > 1 {
 		docs := make([]string, len(fusedFacts))
 		for i, f := range fusedFacts {
-			docs[i] = stripFactTimePrefix(f.Fact)
+			docs[i] = formatFactForRerank(f.Fact)
 		}
 		rerankResults, err := RerankCandidatesWithFallback(query, docs, rerankCfgs)
 		if err == nil && len(rerankResults) > 0 {
