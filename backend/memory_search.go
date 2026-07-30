@@ -696,8 +696,8 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// 截断到 50
-		if len(allFacts) > 100 {
-			allFacts = allFacts[:100]
+		if len(allFacts) > 50 {
+			allFacts = allFacts[:50]
 		}
 
 		// Step 4: 提取源聊天记录

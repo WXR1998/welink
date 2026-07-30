@@ -498,7 +498,7 @@ func EnhancedRetrieval(
 	const perKeyBM25TopK = 50
 	const perKeyVecMsgTopK = 20
 	const maxFacts = 100
-	const finalTopK = 100
+	const finalTopK = 50
 
 	var allVecFacts []MemFact
 	var allBM25Facts []MemFact
