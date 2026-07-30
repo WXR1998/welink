@@ -331,7 +331,7 @@ func SearchVecMessagesFiltered(key, query string, topK int, timeFrom, timeTo str
 // ExpandQuery 用 LLM 将原始查询扩展为多个语义子查询。
 // 例如 "张三分手了" → ["张三分手的时间", "张三分手的原因", "张三分手后的状态"]
 // 每个子查询分别做向量+BM25检索，结果通过 RRF 融合。
-func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences) ([]string, error) {
+func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, profileID string) ([]string, error) {
 	prompt := `你是查询扩展助手。将用户的查询扩展为 3-5 个语义相关但表述不同的子查询，用于多路检索召回。
 每个子查询应从不同角度覆盖原始查询的意图。
 
@@ -349,7 +349,7 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences) ([
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_expansion")
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_expansion", profileID)
 		ch <- llmResult{text, err}
 	}()
 
@@ -392,7 +392,7 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences) ([
 // GenerateHyDE 用 LLM 生成假想答案（Hypothetical Document），用于 HyDE 检索。
 // HyDE 核心思路：用"假想答案"的 embedding 去检索，
 // 因为"答案"和"文档"的语义距离比"问题"和"文档"更近。
-func GenerateHyDE(query string, prefs Preferences) (string, error) {
+func GenerateHyDE(query string, prefs Preferences, profileID string) (string, error) {
 	prompt := `你是聊天记录分析助手。请根据以下问题，生成一段简短的假想答案。
 这段假想答案将用于语义检索，所以请包含可能出现在聊天记录中的关键词和表述。
 
@@ -413,7 +413,7 @@ func GenerateHyDE(query string, prefs Preferences) (string, error) {
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "hyde")
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "hyde", profileID)
 		ch <- llmResult{text, err}
 	}()
 
@@ -467,6 +467,7 @@ func EnhancedRetrieval(
 	searchKeys []string,
 	timeFrom, timeTo string,
 	prefs Preferences,
+	profileID string,
 ) (*EnhancedRetrievalResult, error) {
 	result := &EnhancedRetrievalResult{}
 
@@ -481,13 +482,13 @@ func EnhancedRetrieval(
 	hasLLM := prefs.LLMProvider != "" || len(prefs.LLMProfiles) > 0
 	if hasLLM {
 		// HyDE: 生成假想答案，用假想答案的 embedding 检索
-		hydeDoc, err := GenerateHyDE(query, prefs)
+		hydeDoc, err := GenerateHyDE(query, prefs, profileID)
 		if err == nil && hydeDoc != "" {
 			result.HyDEDocument = hydeDoc
 		}
 
 		// Query Expansion: 生成子查询
-		subQueries, err := ExpandQuery(query, decomp, prefs)
+		subQueries, err := ExpandQuery(query, decomp, prefs, profileID)
 		if err == nil && len(subQueries) > 0 {
 			result.ExpandedQueries = subQueries
 		}

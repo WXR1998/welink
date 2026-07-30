@@ -156,7 +156,7 @@ type QueryDecomposition struct {
 //
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
-func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
+func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences, profileID string) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
 
 	// 获取置顶记忆，用于 LLM 理解外号/简称与实体的映射关系
@@ -226,7 +226,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_decomposition")
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_decomposition", profileID)
 		ch <- llmResult{text, err}
 	}()
 
@@ -559,7 +559,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 
 		// Step 1: LLM 查询分解
 		sendProgress("decompose", "正在用 LLM 分解问题...")
-		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs)
+		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
@@ -660,7 +660,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 
 		// ── 增强检索：BM25 + 双路 + 查询改写 + Rerank ──
 		sendProgress("enhanced_search", fmt.Sprintf("增强检索中 (query: %s)...", truncate(searchQ, 60)))
-		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs)
+		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID)
 
 		var allFacts []MemFact
 		var pinnedFacts []MemFact

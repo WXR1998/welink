@@ -932,28 +932,29 @@ func streamClaude(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) erro
 
 // CompleteLLM 发起非流式请求，返回完整响应文本（用于分段摘要）
 func CompleteLLM(msgs []LLMMessage, prefs Preferences) (string, error) {
-	return CompleteLLMFeature(msgs, prefs, "")
+	return CompleteLLMFeature(msgs, prefs, "", "")
 }
 
 // CompleteLLMFeature 与 CompleteLLM 相同，但接受一个 feature 标签用于 API 日志。
 // feature 值如 "query_expansion"、"hyde"、"memory_extraction" 等，空字符串 = 普通调用。
-func CompleteLLMFeature(msgs []LLMMessage, prefs Preferences, feature string) (string, error) {
+func CompleteLLMFeature(msgs []LLMMessage, prefs Preferences, feature string, profileID ...string) (string, error) {
 	// Demo 模式：AI 被锁死时直接返回 canned 响应，不走真实 provider
 	if DemoMockActive() {
 		return demoLLMComplete(msgs), nil
 	}
-	// Gemini OAuth：若已授权则用 OAuth token 替代 API Key
-	if prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "" {
-		if token, err := geminiValidToken(&prefs); err == nil {
-			prefs.LLMAPIKey = token
-		}
+	pid := ""
+	if len(profileID) > 0 {
+		pid = profileID[0]
 	}
-	cfg := llmConfig{
-		provider: prefs.LLMProvider,
-		apiKey:   prefs.LLMAPIKey,
-		baseURL:  prefs.LLMBaseURL,
-		model:    prefs.LLMModel,
-		feature:  feature,
+	// 使用 llmConfigForProfile 解析用户选择的 provider，
+	// 而非默认的 prefs.LLMProvider 字段
+	cfg := llmConfigForProfile(pid, prefs)
+	cfg.feature = feature
+	// Gemini OAuth：若已授权则用 OAuth token 替代 API Key
+	if cfg.provider == "gemini" && cfg.apiKey == "" && prefs.GeminiAccessToken != "" {
+		if token, err := geminiValidToken(&prefs); err == nil {
+			cfg.apiKey = token
+		}
 	}
 	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
 	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
