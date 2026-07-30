@@ -504,9 +504,12 @@ func EnhancedRetrieval(
 	var allBM25Facts []MemFact
 	var allVecMessages []VecMessageHit
 
+	step2Start := time.Now()
+
 	// 如果有 HyDE 假想答案，用它做一路额外的向量检索
 	hydeFacts := []MemFact{}
 	if result.HyDEDocument != "" {
+		hydeStart := time.Now()
 		for _, key := range searchKeys {
 			facts, _ := SearchMemFactsFiltered(key, result.HyDEDocument, perKeyVecTopK, timeFrom, timeTo, prefs)
 			hydeFacts = append(hydeFacts, facts...)
@@ -515,10 +518,12 @@ func EnhancedRetrieval(
 			facts, _ := SearchMemFactsFiltered("", result.HyDEDocument, perKeyVecTopK, timeFrom, timeTo, prefs)
 			hydeFacts = append(hydeFacts, facts...)
 		}
+		log.Printf("[enhanced] HyDE retrieval: %d facts, %dms", len(hydeFacts), time.Since(hydeStart).Milliseconds())
 	}
 
 	// 对每个 searchKey 做三路检索
 	for _, key := range searchKeys {
+		keyStart := time.Now()
 		// 向量语义检索
 		vecFacts, _ := SearchMemFactsFiltered(key, searchQ, perKeyVecTopK, timeFrom, timeTo, prefs)
 		allVecFacts = append(allVecFacts, vecFacts...)
@@ -530,6 +535,7 @@ func EnhancedRetrieval(
 		// 双路检索：原始消息向量检索
 		vecMsgs, _ := SearchVecMessagesFiltered(key, searchQ, perKeyVecMsgTopK, timeFrom, timeTo, prefs)
 		allVecMessages = append(allVecMessages, vecMsgs...)
+		log.Printf("[enhanced] key=%s: vec=%d bm25=%d vecMsg=%d, %dms", key, len(vecFacts), len(bm25Facts), len(vecMsgs), time.Since(keyStart).Milliseconds())
 	}
 
 	// 无 searchKey 时做全局搜索
@@ -546,6 +552,7 @@ func EnhancedRetrieval(
 
 	// 对扩展子查询也做一路向量检索（结果合并到 allVecFacts）
 	if len(result.ExpandedQueries) > 0 {
+		expStart := time.Now()
 		for _, sq := range result.ExpandedQueries {
 			for _, key := range searchKeys {
 				facts, _ := SearchMemFactsFiltered(key, sq, 20, timeFrom, timeTo, prefs)
@@ -556,7 +563,11 @@ func EnhancedRetrieval(
 				allVecFacts = append(allVecFacts, facts...)
 			}
 		}
+		log.Printf("[enhanced] expanded queries retrieval: %d subQueries, %dms", len(result.ExpandedQueries), time.Since(expStart).Milliseconds())
 	}
+
+	log.Printf("[enhanced] Step 2 total: vec=%d bm25=%d vecMsg=%d, %dms",
+		len(allVecFacts), len(allBM25Facts), len(allVecMessages), time.Since(step2Start).Milliseconds())
 
 	result.VectorHits = len(allVecFacts)
 	result.BM25Hits = len(allBM25Facts)
