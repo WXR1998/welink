@@ -67,3 +67,14 @@ export const getContactDisplayName = (contact: {
 }): string => {
   return contact.remark || contact.nickname || contact.username || '未知';
 };
+
+/**
+ * 截断单条聊天记录内容，防止超长消息撑爆 prompt。
+ * 按字符数（rune）计算，中英文均算 1 个字符。
+ */
+export const truncateMsgContent = (content: string, maxChars = 200): string => {
+  if (!content) return '';
+  const chars = Array.from(content);
+  if (chars.length <= maxChars) return content;
+  return chars.slice(0, maxChars).join('') + '…';
+};

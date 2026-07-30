@@ -525,6 +525,62 @@ func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamC
 	return result
 }
 
+// maxPromptChars 限制单次 LLM 调用的 prompt 总字符数（≈ 50K tokens）。
+// 超过此上限时，从最长的 system 消息中间截断，保留开头和结尾。
+const maxPromptChars = 100000
+
+// truncatePromptChars 将整个 prompt 截断到 maxPromptChars 个字符以内。
+// 策略：找到最长的 system 消息，从中间截断，保留开头 1/3 和结尾 2/3。
+func truncatePromptChars(msgs []LLMMessage) []LLMMessage {
+	totalChars := 0
+	for _, m := range msgs {
+		totalChars += len([]rune(m.Content))
+	}
+	if totalChars <= maxPromptChars {
+		return msgs
+	}
+
+	log.Printf("[llm] prompt 超长（%d chars），开始截断", totalChars)
+
+	// 找到最长的 system 消息进行截断
+	largestIdx := -1
+	largestLen := 0
+	for i, m := range msgs {
+		if m.Role == "system" {
+			l := len([]rune(m.Content))
+			if l > largestLen {
+				largestLen = l
+				largestIdx = i
+			}
+		}
+	}
+
+	if largestIdx < 0 {
+		return msgs
+	}
+
+	excess := totalChars - maxPromptChars
+	runes := []rune(msgs[largestIdx].Content)
+
+	if excess >= len(runes) {
+		msgs[largestIdx].Content = "（因长度限制，聊天记录已截断）"
+		return msgs
+	}
+
+	// 从中间截断：保留开头 1/3 和结尾 2/3
+	keepTotal := len(runes) - excess
+	headLen := keepTotal / 3
+	tailLen := keepTotal - headLen
+
+	msgs[largestIdx].Content = string(runes[:headLen]) +
+		"\n…（因长度限制已截断部分聊天记录）…\n" +
+		string(runes[len(runes)-tailLen:])
+
+	log.Printf("[llm] prompt 截断完成：%d → %d chars", totalChars, totalChars-excess)
+
+	return msgs
+}
+
 // dispatchLLMStream 统一流式分发
 func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) error {
 	// Demo 模式下拒绝指向内网的 baseURL，防 SSRF（M2/L4）；本地部署不限制（Ollama 等走 localhost）

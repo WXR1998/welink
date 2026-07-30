@@ -14,6 +14,7 @@ import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage 
 import { contactsApi, groupsApi } from '../../services/api';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { isAIConfigError } from '../../utils/aiError';
+import { truncateMsgContent } from '../../utils/formatters';
 import { AIConfigNotice } from '../common/AIConfigNotice';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -648,12 +649,12 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
         if (item.kind === 'contact') {
           const msgs: ChatMessage[] = await contactsApi.exportMessages(item.data.username) ?? [];
           const recent = perItem && msgs.length > perItem ? msgs.slice(-perItem) : msgs;
-          const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.is_mine ? '我' : name}：${m.content}`);
+          const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.is_mine ? '我' : name}：${truncateMsgContent(m.content)}`);
           sections.push(`=== 与「${name}」的聊天记录 ===\n${lines.map(l => maskPrivacy(l, name)).join('\n')}`);
         } else {
           const msgs: GroupChatMessage[] = await groupsApi.exportMessages(item.data.username) ?? [];
           const recent = perItem && msgs.length > perItem ? msgs.slice(-perItem) : msgs;
-          const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.speaker || '成员'}：${m.content}`);
+          const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.speaker || '成员'}：${truncateMsgContent(m.content)}`);
           sections.push(`=== 「${name}」群聊记录 ===\n${lines.map(l => maskPrivacy(l)).join('\n')}`);
         }
       }

@@ -8,6 +8,7 @@ import { useToast } from '../../components/common/Toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
+import { truncateMsgContent } from '../../utils/formatters';
 import { RevealLink } from '../common/RevealLink';
 import { contactsApi, groupsApi } from '../../services/api';
 import { CalendarRangePicker } from './CalendarRangePicker';
@@ -185,13 +186,13 @@ async function loadMessages(
     const msgs = await groupsApi.exportMessages(username, fromTs || undefined, toTs || undefined) ?? [];
     if (msgs.length === 0) return { text: '（该时间范围内暂无聊天记录）', count: 0, lines: [] };
     const recent = limit && msgs.length > limit ? msgs.slice(-limit) : msgs;
-    const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.speaker}：${m.content}`);
+    const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.speaker}：${truncateMsgContent(m.content)}`);
     return { text: lines.join('\n'), count: lines.length, lines };
   } else {
     const msgs = await contactsApi.exportMessages(username, fromTs || undefined, toTs || undefined) ?? [];
     if (msgs.length === 0) return { text: '（该时间范围内暂无聊天记录）', count: 0, lines: [] };
     const recent = limit && msgs.length > limit ? msgs.slice(-limit) : msgs;
-    const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.is_mine ? '我' : displayName}：${m.content}`);
+    const lines = recent.map(m => `[${m.date ?? ''} ${m.time}] ${m.is_mine ? '我' : displayName}：${truncateMsgContent(m.content)}`);
     return { text: lines.join('\n'), count: lines.length, lines };
   }
 }

@@ -22,6 +22,7 @@ import type { CalendarDayEntry, ChatMessage, GroupChatMessage } from '../../type
 import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { isAIConfigError } from '../../utils/aiError';
+import { truncateMsgContent } from '../../utils/formatters';
 import { AIConfigNotice } from '../common/AIConfigNotice';
 import { PROVIDER_LABELS, consumeSSEStream } from './calendarUtils';
 
@@ -228,7 +229,7 @@ export const DayAIPanel: React.FC<DayAIPanelProps> = ({ date, contacts, groups, 
       allLines.push(`\n=== 与 ${entry.display_name} 的私聊 ===`);
       for (const m of msgs) {
         if (!m.content.startsWith('[')) {
-          allLines.push(`[${date} ${m.time}] ${m.is_mine ? '我' : entry.display_name}：${m.content}`);
+          allLines.push(`[${date} ${m.time}] ${m.is_mine ? '我' : entry.display_name}：${truncateMsgContent(m.content)}`);
         }
       }
     }
@@ -237,7 +238,7 @@ export const DayAIPanel: React.FC<DayAIPanelProps> = ({ date, contacts, groups, 
       allLines.push(`\n=== 群聊「${entry.display_name}」===`);
       for (const m of msgs) {
         if (!m.content.startsWith('[')) {
-          allLines.push(`[${date} ${m.time}] ${m.speaker}：${m.content}`);
+          allLines.push(`[${date} ${m.time}] ${m.speaker}：${truncateMsgContent(m.content)}`);
         }
       }
     }

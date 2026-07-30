@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { generateAIScreenshot } from '../../utils/shareImage';
+import { truncateMsgContent } from '../../utils/formatters';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { getPrompt, loadCustomPrompts } from '../../utils/promptTemplates';

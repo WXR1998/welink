@@ -8,6 +8,7 @@ import { Globe, Send, Loader2, Trash2, Bot, Search, Calendar, RotateCcw, Check, 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
+import { truncateMsgContent } from '../../utils/formatters';
 import type { ChatMessage } from '../../types';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { ConversationHistory } from './ConversationHistory';
@@ -276,7 +277,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             // 用 [说话人]: 文本 格式，每条一行，紧凑不浪费空间
             const lines = (src.messages || []).map(msg => {
               const senderLabel = privacyMode ? '***' : (msg.sender || '未知');
-              return `[${senderLabel}]: ${msg.content}`;
+              return `[${senderLabel}]: ${truncateMsgContent(msg.content)}`;
             });
             dataContext += lines.join('\n') + '\n';
           }
