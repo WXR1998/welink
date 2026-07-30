@@ -1561,13 +1561,14 @@ func serverMain() {
 			}
 
 			// 分两块构建 prompt 片段，让下游模型区分信息来源
+			// 对每条 fact 做敏感词脱敏（替换为 *），降低触发国内大模型风控的概率
 			var memSection string
 			if len(pinnedFacts) > 0 {
 				memSection += "\n\n【手工置顶的背景知识】\n"
 				memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
 				for _, p := range pinnedFacts {
 					src := resolveSource(p.ContactKey)
-					memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+					memSection += "- （来源：" + src + "）" + desensitizeText(p.Fact) + "\n"
 				}
 			}
 			if len(dedupSearched) > 0 {
@@ -1575,7 +1576,7 @@ func serverMain() {
 				memSection += "以下事实由 AI 从历史聊天记录中总结提取，每条前方的时间范围表示该记忆出自什么时段的聊天消息，请在回答时酌情提醒用户记忆的时间来源。\n"
 				for _, f := range dedupSearched {
 					src := resolveSource(f.ContactKey)
-					memSection += "- （来源：" + src + "）" + f.Fact + "\n"
+					memSection += "- （来源：" + src + "）" + desensitizeText(f.Fact) + "\n"
 				}
 			}
 

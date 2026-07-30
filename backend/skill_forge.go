@@ -721,6 +721,18 @@ func containsSensitive(s string) bool {
 	return false
 }
 
+// desensitizeText 把敏感词替换为等长的 *，而非丢弃整条消息。
+// 用于构造发给 LLM 的 prompt，降低触发国内大模型风控的概率。
+func desensitizeText(s string) string {
+	for _, w := range sensitivePatterns {
+		if strings.Contains(s, w) {
+			stars := strings.Repeat("*", len([]rune(w)))
+			s = strings.ReplaceAll(s, w, stars)
+		}
+	}
+	return s
+}
+
 // sanitizeForLLM 把消息处理得更"安全"，减少触发 LLM 内容风控的概率：
 //   - 移除所有 URL 和长串可疑字符（base64/加密内容）
 //   - 去掉过长的单条消息（>250 字往往是转发内容，风险高且对风格提炼无用）
