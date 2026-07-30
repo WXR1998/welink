@@ -79,6 +79,15 @@ interface LLMMessage {
   content: string;
 }
 
+interface VecMessageHit {
+  contact_key: string;
+  seq: number;
+  datetime: string;
+  sender: string;
+  content: string;
+  similarity: number;
+}
+
 interface MemorySearchResponse {
   decomposition: QueryDecomposition;
   resolved_entities: ResolvedEntity[];
@@ -87,6 +96,14 @@ interface MemorySearchResponse {
   pinned_facts: MemFact[];
   token_usage?: StreamUsage;
   decompose_prompt?: LLMMessage[];
+  // 增强检索结果
+  vec_messages?: VecMessageHit[];
+  expanded_queries?: string[];
+  hyde_document?: string;
+  rerank_used?: boolean;
+  vector_hits?: number;
+  bm25_hits?: number;
+  vec_message_hits?: number;
 }
 
 interface Message {
@@ -730,6 +747,56 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           ))}
                         </div>
                       </div>
+                    )}
+                    {/* 增强检索统计 */}
+                    {msg.memorySearchData && (msg.memorySearchData.vector_hits || msg.memorySearchData.bm25_hits || msg.memorySearchData.vec_message_hits || msg.memorySearchData.rerank_used !== undefined) && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">检索统计</div>
+                        <div className="space-y-0.5 text-gray-500">
+                          <div>向量检索: {msg.memorySearchData.vector_hits ?? 0} 条命中</div>
+                          <div>BM25 检索: {msg.memorySearchData.bm25_hits ?? 0} 条命中</div>
+                          <div>原始消息检索: {msg.memorySearchData.vec_message_hits ?? 0} 条命中</div>
+                          <div>Rerank 精排: {msg.memorySearchData.rerank_used ? '✅ 已使用' : '❌ 未使用'}</div>
+                        </div>
+                      </div>
+                    )}
+                    {/* 查询改写：扩展子查询 */}
+                    {msg.memorySearchData?.expanded_queries && msg.memorySearchData.expanded_queries.length > 0 && (
+                      <div>
+                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">查询改写（扩展子查询）</div>
+                        <div className="space-y-0.5 text-gray-500">
+                          {msg.memorySearchData.expanded_queries.map((q, idx) => (
+                            <div key={idx}>{idx + 1}. {q}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* 查询改写：HyDE 假想答案 */}
+                    {msg.memorySearchData?.hyde_document && (
+                      <details className="mt-1">
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          HyDE 假想答案
+                        </summary>
+                        <div className="mt-1 text-xs text-gray-500 whitespace-pre-wrap break-words">
+                          {msg.memorySearchData.hyde_document}
+                        </div>
+                      </details>
+                    )}
+                    {/* 双路检索：原始消息命中 */}
+                    {msg.memorySearchData?.vec_messages && msg.memorySearchData.vec_messages.length > 0 && (
+                      <details className="mt-1">
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          原始消息检索命中（{msg.memorySearchData.vec_messages.length} 条）
+                        </summary>
+                        <div className="mt-1 space-y-1">
+                          {msg.memorySearchData.vec_messages.map((vm, idx) => (
+                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                              <span className="text-gray-500 text-[10px]">{vm.datetime} {vm.sender}</span>
+                              <div className="text-gray-600 dark:text-gray-300 text-xs">{vm.content}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     )}
                     {/* 嵌套下拉框：查询分解 prompt */}
                     {msg.memorySearchData?.decompose_prompt && msg.memorySearchData.decompose_prompt.length > 0 && (
