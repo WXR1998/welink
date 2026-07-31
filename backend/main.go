@@ -1476,6 +1476,39 @@ func serverMain() {
 			return
 		}
 
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式响应"})
+			return
+		}
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		sendChunk := func(chunk StreamChunk) {
+			data, _ := json.Marshal(chunk)
+			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		// SSE keepalive：防止 nginx 反向代理在等待 LLM 首 token 时超时（504）
+		// 发送 SSE 注释行（以 : 开头），客户端会自动忽略，但能保持连接活跃
+		fmt.Fprintf(c.Writer, ": keepalive\n\n")
+		flusher.Flush()
+		keepaliveDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					fmt.Fprintf(c.Writer, ": keepalive\n\n")
+					flusher.Flush()
+				case <-keepaliveDone:
+					return
+				}
+			}
+		}()
+
 		// ── 注入记忆库事实 ──
 		// 构造 contact_key（与 RAG 端点保持一致）
 		// username 为空或为 __cross_contact__ 时（如 AI 首页跨联系人问答），
@@ -1590,38 +1623,6 @@ func serverMain() {
 			}
 		}
 
-		flusher, ok := c.Writer.(http.Flusher)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式响应"})
-			return
-		}
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("X-Accel-Buffering", "no")
-		sendChunk := func(chunk StreamChunk) {
-			data, _ := json.Marshal(chunk)
-			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
-			flusher.Flush()
-		}
-
-		// SSE keepalive：防止 nginx 反向代理在等待 LLM 首 token 时超时（504）
-		// 发送 SSE 注释行（以 : 开头），客户端会自动忽略，但能保持连接活跃
-		fmt.Fprintf(c.Writer, ": keepalive\n\n")
-		flusher.Flush()
-		keepaliveDone := make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(15 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					fmt.Fprintf(c.Writer, ": keepalive\n\n")
-					flusher.Flush()
-				case <-keepaliveDone:
-					return
-				}
-			}
-		}()
 
 		// 截断过长的 prompt（最多 100K chars）
 		body.Messages = truncatePromptChars(body.Messages)
