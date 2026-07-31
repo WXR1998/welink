@@ -1507,7 +1507,7 @@ func serverMain() {
 			if contactKey == "" {
 				searchKeys = nil
 			}
-			enhancedResult, enhancedErr := EnhancedRetrieval(searchQ, nil, searchKeys, "", "", prefs, body.ProfileID)
+			enhancedResult, enhancedErr := EnhancedRetrieval(searchQ, nil, searchKeys, "", "", prefs, body.ProfileID, nil)
 			if enhancedErr == nil && enhancedResult != nil {
 				searchedFacts = enhancedResult.Facts
 			} else {

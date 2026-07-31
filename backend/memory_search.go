@@ -658,8 +658,9 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// ── 增强检索：BM25 + 双路 + 查询改写 + Rerank ──
-		sendProgress("enhanced_search", fmt.Sprintf("增强检索中 (query: %s)...", truncate(searchQ, 60)))
-		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID)
+		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID, func(step, detail string) {
+			sendProgress(step, detail)
+		})
 
 		var allFacts []MemFact
 		var pinnedFacts []MemFact

@@ -111,6 +111,12 @@ interface RerankScoreItem {
   text: string;
 }
 
+interface ProgressStep {
+  step: string;
+  detail: string;
+  timestamp: number;
+}
+
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -121,6 +127,7 @@ interface Message {
   elapsedMs?: number; // 本次提问+回答的耗时（毫秒）
   memorySearchData?: MemorySearchResponse; // 记忆检索详情（下拉框展示）
   llmPrompt?: LLMMessage[]; // 最终发给 LLM API 的原始 prompt
+  progressSteps?: ProgressStep[]; // 思考过程步骤列表
 }
 
 function formatTokens(n: number): string {
@@ -251,8 +258,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             if (evt.type === 'progress' && evt.detail) {
               setMessages(prev => {
                 const next = [...prev];
-                if (next[next.length - 1]?.searching) {
-                  next[next.length - 1] = { ...next[next.length - 1], content: evt.detail! };
+                const last = next[next.length - 1];
+                if (last?.searching) {
+                  const step: ProgressStep = {
+                    step: evt.step || '',
+                    detail: evt.detail!,
+                    timestamp: Date.now(),
+                  };
+                  const steps = last.progressSteps ? [...last.progressSteps, step] : [step];
+                  next[next.length - 1] = { ...last, content: evt.detail!, progressSteps: steps };
                 }
                 return next;
               });
@@ -260,6 +274,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             }
             if (evt.type === 'result' && evt.data) {
               memData = evt.data;
+              // 尽早设置 memorySearchData，让检索详情在后续步骤中立即可见
+              setMessages(prev => {
+                const next = [...prev];
+                if (next[next.length - 1]?.searching) {
+                  next[next.length - 1] = { ...next[next.length - 1], memorySearchData: memData || undefined };
+                }
+                return next;
+              });
             }
           } catch {
             continue;
@@ -624,10 +646,22 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content || '...'}</ReactMarkdown>
                   </div>
                 ) : msg.searching ? (
-                  <span className="flex items-center gap-1.5">
-                    <Loader2 size={12} className="animate-spin" />
-                    {msg.content}
-                  </span>
+                  <div className="space-y-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" />
+                      {msg.content}
+                    </span>
+                    {msg.progressSteps && msg.progressSteps.length > 1 && (
+                      <div className="mt-1.5 pl-1 space-y-0.5 text-[10px] text-gray-400 max-h-32 overflow-y-auto">
+                        {msg.progressSteps.slice(0, -1).map((ps, idx) => (
+                          <div key={idx} className="flex items-start gap-1">
+                            <span className="text-gray-300 mt-0.5">✓</span>
+                            <span className="break-all">{ps.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   msg.content
                 )}

@@ -432,7 +432,13 @@ func EnhancedRetrieval(
 	timeFrom, timeTo string,
 	prefs Preferences,
 	profileID string,
+	onProgress func(step, detail string),
 ) (*EnhancedRetrievalResult, error) {
+	progress := func(step, detail string) {
+		if onProgress != nil {
+			onProgress(step, detail)
+		}
+	}
 	result := &EnhancedRetrievalResult{}
 
 	// 确定检索用的查询词
@@ -445,10 +451,12 @@ func EnhancedRetrieval(
 	// 只有配置了 LLM 时才做查询改写
 	hasLLM := prefs.LLMProvider != "" || len(prefs.LLMProfiles) > 0
 	if hasLLM {
+		progress("query_expansion", "正在用 LLM 扩展子查询...")
 		// Query Expansion: 生成子查询
 		subQueries, err := ExpandQuery(query, decomp, prefs, profileID)
 		if err == nil && len(subQueries) > 0 {
 			result.ExpandedQueries = subQueries
+			progress("query_expansion", fmt.Sprintf("生成了 %d 个子查询", len(subQueries)))
 		}
 	}
 
@@ -466,22 +474,26 @@ func EnhancedRetrieval(
 	step2Start := time.Now()
 
 	// 对每个 searchKey 做多路检索
-	for _, key := range searchKeys {
+	for ki, key := range searchKeys {
 		keyStart := time.Now()
+		progress("vector_search", fmt.Sprintf("[%d/%d] 向量检索 (concepts: %s)", ki+1, len(searchKeys), truncate(searchQ, 40)))
 		// 向量语义检索（concepts）
 		vecFacts, _ := SearchMemFactsFiltered(key, searchQ, perKeyVecTopK, timeFrom, timeTo, prefs)
 		allVecFacts = append(allVecFacts, vecFacts...)
 
 		// 向量语义检索（原始 query，补充关键词维度）
 		if query != searchQ {
+			progress("vector_search", fmt.Sprintf("[%d/%d] 向量检索 (原始query: %s)", ki+1, len(searchKeys), truncate(query, 40)))
 			origVecFacts, _ := SearchMemFactsFiltered(key, query, perKeyVecTopK, timeFrom, timeTo, prefs)
 			allVecFacts = append(allVecFacts, origVecFacts...)
 		}
 
+		progress("bm25_search", fmt.Sprintf("[%d/%d] BM25 关键词检索 (query: %s)", ki+1, len(searchKeys), truncate(query, 40)))
 		// BM25 关键词检索（原始 query，保留专有名词/数字）
 		bm25Facts, _ := SearchMemFactsBM25(key, query, perKeyBM25TopK, timeFrom, timeTo)
 		allBM25Facts = append(allBM25Facts, bm25Facts...)
 
+		progress("vecmsg_search", fmt.Sprintf("[%d/%d] 原始消息向量检索 (query: %s)", ki+1, len(searchKeys), truncate(searchQ, 40)))
 		// 双路检索：原始消息向量检索
 		vecMsgs, _ := SearchVecMessagesFiltered(key, searchQ, perKeyVecMsgTopK, timeFrom, timeTo, prefs)
 		allVecMessages = append(allVecMessages, vecMsgs...)
@@ -508,7 +520,8 @@ func EnhancedRetrieval(
 	// 对扩展子查询也做一路向量检索（结果合并到 allVecFacts）
 	if len(result.ExpandedQueries) > 0 {
 		expStart := time.Now()
-		for _, sq := range result.ExpandedQueries {
+		for si, sq := range result.ExpandedQueries {
+			progress("expanded_search", fmt.Sprintf("[%d/%d] 扩展子查询检索: %s", si+1, len(result.ExpandedQueries), truncate(sq, 40)))
 			for _, key := range searchKeys {
 				facts, _ := SearchMemFactsFiltered(key, sq, 20, timeFrom, timeTo, prefs)
 				allVecFacts = append(allVecFacts, facts...)
@@ -529,6 +542,7 @@ func EnhancedRetrieval(
 	result.VecMessageHits = len(allVecMessages)
 
 	// ── Step 3: RRF 融合 ──
+	progress("rrf_fusion", fmt.Sprintf("RRF 融合 %d 条向量 + %d 条BM25 候选...", len(allVecFacts), len(allBM25Facts)))
 	// 融合两路结果：向量检索 + BM25 检索
 	fusedFacts := FuseRRF([][]MemFact{allVecFacts, allBM25Facts}, 60)
 	if len(fusedFacts) > maxFacts {
@@ -540,6 +554,7 @@ func EnhancedRetrieval(
 	log.Printf("[enhanced] rerank configs=%d, fusedFacts=%d, vecHits=%d, bm25Hits=%d, vecMsgHits=%d",
 		len(rerankCfgs), len(fusedFacts), result.VectorHits, result.BM25Hits, result.VecMessageHits)
 	if len(rerankCfgs) > 0 && len(fusedFacts) > 1 {
+		progress("rerank", fmt.Sprintf("正在用 rerank 精排 %d 条候选...", len(fusedFacts)))
 		docs := make([]string, len(fusedFacts))
 		for i, f := range fusedFacts {
 			docs[i] = formatFactForRerank(f.Fact)
