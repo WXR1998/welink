@@ -694,6 +694,25 @@ func factTimeStart(fact string) string {
 	return strings.TrimSpace(inner[:tilde])
 }
 
+// factTimeEnd 从事实文本中提取时间范围的终点。
+// 事实文本格式: "[2026-02-08 00:25 ~ 2026-02-08 10:30] 实际事实内容"
+// 返回 "2026-02-08 10:30" 或空字符串（无法解析时）。
+func factTimeEnd(fact string) string {
+	if !strings.HasPrefix(fact, "[") {
+		return ""
+	}
+	end := strings.Index(fact, "]")
+	if end < 0 {
+		return ""
+	}
+	inner := fact[1:end]
+	tilde := strings.Index(inner, "~")
+	if tilde < 0 {
+		return ""
+	}
+	return strings.TrimSpace(inner[tilde+1:])
+}
+
 func SearchMemFacts(key, query string, topK int, prefs Preferences) ([]MemFact, error) {
 	return SearchMemFactsFiltered(key, query, topK, "", "", prefs)
 }
@@ -746,15 +765,20 @@ func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string
 		}
 		s.sim = cosineSimilarity(queryVec, vec)
 
-		// 时间过滤：如果指定了时间范围，跳过不在范围内的事实
+		// 时间过滤：区间重叠判断，只有 fact 整个时间范围都在查询范围之外时才跳过
 		if timeFrom != "" || timeTo != "" {
 			factStart := factTimeStart(s.fact)
-			if factStart == "" {
-				// 无法解析时间，保留（宁多勿少）
-			} else if timeFrom != "" && factStart < timeFrom+" 00:00" {
-				continue
-			} else if timeTo != "" && factStart > timeTo+" 23:59" {
-				continue
+			if factStart != "" {
+				factEnd := factTimeEnd(s.fact)
+				if factEnd == "" {
+					factEnd = factStart
+				}
+				if timeFrom != "" && factEnd < timeFrom+" 00:00" {
+					continue
+				}
+				if timeTo != "" && factStart > timeTo+" 23:59" {
+					continue
+				}
 			}
 		}
 

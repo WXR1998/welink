@@ -118,11 +118,15 @@ func SearchMemFactsBM25(key, query string, topK int, timeFrom, timeTo string) ([
 				// bm25() 返回负值（越小越好），取反使越大越好
 				s.score = -s.score
 
-				// 时间过滤
+				// 时间过滤：区间重叠判断
 				if timeFrom != "" || timeTo != "" {
 					factStart := factTimeStart(s.fact)
 					if factStart != "" {
-						if timeFrom != "" && factStart < timeFrom+" 00:00" {
+						factEnd := factTimeEnd(s.fact)
+						if factEnd == "" {
+							factEnd = factStart
+						}
+						if timeFrom != "" && factEnd < timeFrom+" 00:00" {
 							continue
 						}
 						if timeTo != "" && factStart > timeTo+" 23:59" {
@@ -157,7 +161,11 @@ func SearchMemFactsBM25(key, query string, topK int, timeFrom, timeTo string) ([
 				if timeFrom != "" || timeTo != "" {
 					factStart := factTimeStart(s.fact)
 					if factStart != "" {
-						if timeFrom != "" && factStart < timeFrom+" 00:00" {
+						factEnd := factTimeEnd(s.fact)
+						if factEnd == "" {
+							factEnd = factStart
+						}
+						if timeFrom != "" && factEnd < timeFrom+" 00:00" {
 							continue
 						}
 						if timeTo != "" && factStart > timeTo+" 23:59" {
