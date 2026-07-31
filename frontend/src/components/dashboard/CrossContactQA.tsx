@@ -99,7 +99,6 @@ interface MemorySearchResponse {
   // 增强检索结果
   vec_messages?: VecMessageHit[];
   expanded_queries?: string[];
-  hyde_document?: string;
   rerank_used?: boolean;
   vector_hits?: number;
   bm25_hits?: number;
@@ -800,17 +799,6 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           ))}
                         </div>
                       </div>
-                    )}
-                    {/* 查询改写：HyDE 假想答案 */}
-                    {msg.memorySearchData?.hyde_document && (
-                      <details className="mt-1">
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          HyDE 假想答案
-                        </summary>
-                        <div className="mt-1 text-xs text-gray-500 whitespace-pre-wrap break-words">
-                          {msg.memorySearchData.hyde_document}
-                        </div>
-                      </details>
                     )}
                     {/* 双路检索：原始消息命中 */}
                     {msg.memorySearchData?.vec_messages && msg.memorySearchData.vec_messages.length > 0 && (

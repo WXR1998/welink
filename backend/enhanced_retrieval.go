@@ -6,7 +6,7 @@ package main
 //   方案 1: BM25 混合检索 — 向量语义检索 + FTS5 关键词检索，RRF 融合
 //   方案 2: Rerank 重排 — cross-encoder 对候选精排（见 rerank.go）
 //   方案 3: 双路检索 — mem_facts（压缩事实）+ vec_messages（原始消息）
-//   方案 4: 查询改写 — HyDE 假想答案 + Query Expansion 多子查询
+//   方案 4: 查询改写 — Query Expansion 多子查询
 
 import (
 	"database/sql"
@@ -326,7 +326,7 @@ func SearchVecMessagesFiltered(key, query string, topK int, timeFrom, timeTo str
 	return out, nil
 }
 
-// ─── 方案 4: 查询改写 (HyDE / Query Expansion) ──────────────────────────────────
+// ─── 方案 4: 查询改写 (Query Expansion) ──────────────────────────────────
 
 // ExpandQuery 用 LLM 将原始查询扩展为多个语义子查询。
 // 例如 "张三分手了" → ["张三分手的时间", "张三分手的原因", "张三分手后的状态"]
@@ -389,48 +389,6 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 	return out, nil
 }
 
-// GenerateHyDE 用 LLM 生成假想答案（Hypothetical Document），用于 HyDE 检索。
-// HyDE 核心思路：用"假想答案"的 embedding 去检索，
-// 因为"答案"和"文档"的语义距离比"问题"和"文档"更近。
-func GenerateHyDE(query string, prefs Preferences, profileID string) (string, error) {
-	systemPrompt := `你是聊天记录分析助手。请根据用户的问题，生成一段简短的假想答案。
-这段假想答案将用于语义检索，所以请包含可能出现在聊天记录中的关键词和表述。
-
-要求：
-- 不超过 150 字
-- 用陈述句，不要用疑问句
-- 包含具体的关键词和可能的细节`
-
-	llmMsgs := []LLMMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: query},
-	}
-
-	type llmResult struct {
-		text string
-		err  error
-	}
-	ch := make(chan llmResult, 1)
-	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "hyde", profileID)
-		ch <- llmResult{text, err}
-	}()
-
-	var result string
-	var llmErr error
-	select {
-	case r := <-ch:
-		result = r.text
-		llmErr = r.err
-	case <-time.After(15 * time.Second):
-		return "", fmt.Errorf("HyDE 生成超时")
-	}
-	if llmErr != nil {
-		return "", llmErr
-	}
-	return strings.TrimSpace(result), nil
-}
-
 // ─── 整合：增强检索 ─────────────────────────────────────────────────────────────
 
 // EnhancedRetrievalResult 是增强检索的结果。
@@ -438,7 +396,6 @@ type EnhancedRetrievalResult struct {
 	Facts           []MemFact         // RRF 融合 + rerank 后的 top-K 事实
 	VecMessages     []VecMessageHit   // 双路检索：原始消息命中
 	ExpandedQueries []string          // 查询改写：扩展的子查询
-	HyDEDocument    string            // 查询改写：HyDE 假想答案
 	RerankUsed      bool              // 是否使用了 rerank
 	RerankResults   []RerankScoreItem // rerank 精排结果（按分数降序）
 	VectorHits      int               // 向量检索命中数
@@ -455,7 +412,7 @@ type RerankScoreItem struct {
 // EnhancedRetrieval 整合 BM25 + 双路检索 + 查询改写 + Rerank 的增强检索。
 //
 // 流程：
-//   1. 查询改写（可选）：ExpandQuery 生成子查询 + GenerateHyDE 生成假想答案
+//   1. 查询改写（可选）：ExpandQuery 生成子查询
 //   2. 多路检索：对每个 searchKey，同时做向量语义检索 + BM25 关键词检索 + 原始消息检索
 //   3. RRF 融合：将向量+BM25 两路结果融合
 //   4. Rerank 精排（可选）：对融合后的 top-50 偙选做 cross-encoder 精排
@@ -480,12 +437,6 @@ func EnhancedRetrieval(
 	// 只有配置了 LLM 时才做查询改写
 	hasLLM := prefs.LLMProvider != "" || len(prefs.LLMProfiles) > 0
 	if hasLLM {
-		// HyDE: 生成假想答案，用假想答案的 embedding 检索
-		hydeDoc, err := GenerateHyDE(query, prefs, profileID)
-		if err == nil && hydeDoc != "" {
-			result.HyDEDocument = hydeDoc
-		}
-
 		// Query Expansion: 生成子查询
 		subQueries, err := ExpandQuery(query, decomp, prefs, profileID)
 		if err == nil && len(subQueries) > 0 {
@@ -505,21 +456,6 @@ func EnhancedRetrieval(
 	var allVecMessages []VecMessageHit
 
 	step2Start := time.Now()
-
-	// 如果有 HyDE 假想答案，用它做一路额外的向量检索
-	hydeFacts := []MemFact{}
-	if result.HyDEDocument != "" {
-		hydeStart := time.Now()
-		for _, key := range searchKeys {
-			facts, _ := SearchMemFactsFiltered(key, result.HyDEDocument, perKeyVecTopK, timeFrom, timeTo, prefs)
-			hydeFacts = append(hydeFacts, facts...)
-		}
-		if len(searchKeys) == 0 {
-			facts, _ := SearchMemFactsFiltered("", result.HyDEDocument, perKeyVecTopK, timeFrom, timeTo, prefs)
-			hydeFacts = append(hydeFacts, facts...)
-		}
-		log.Printf("[enhanced] HyDE retrieval: %d facts, %dms", len(hydeFacts), time.Since(hydeStart).Milliseconds())
-	}
 
 	// 对每个 searchKey 做多路检索
 	for _, key := range searchKeys {
@@ -585,8 +521,8 @@ func EnhancedRetrieval(
 	result.VecMessageHits = len(allVecMessages)
 
 	// ── Step 3: RRF 融合 ──
-	// 融合三路结果：向量检索 + BM25 检索 + HyDE 检索
-	fusedFacts := FuseRRF([][]MemFact{allVecFacts, allBM25Facts, hydeFacts}, 60)
+	// 融合两路结果：向量检索 + BM25 检索
+	fusedFacts := FuseRRF([][]MemFact{allVecFacts, allBM25Facts}, 60)
 	if len(fusedFacts) > maxFacts {
 		fusedFacts = fusedFacts[:maxFacts]
 	}

@@ -471,7 +471,6 @@ type MemorySearchResponse struct {
 	// 增强检索结果
 	VecMessages      []VecMessageHit     `json:"vec_messages"`       // 双路检索：原始消息命中
 	ExpandedQueries  []string            `json:"expanded_queries"`   // 查询改写：扩展的子查询
-	HyDEDocument     string              `json:"hyde_document"`      // 查询改写：HyDE 假想答案
 	RerankUsed       bool                `json:"rerank_used"`        // 是否使用了 rerank
 	RerankResults    []RerankScoreItem   `json:"rerank_results"`     // rerank 精排结果（按分数降序）
 	VectorHits       int                 `json:"vector_hits"`        // 向量检索命中数
@@ -723,8 +722,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 		if enhancedResult != nil {
 			resp.ExpandedQueries = enhancedResult.ExpandedQueries
-			resp.HyDEDocument = enhancedResult.HyDEDocument
-			resp.RerankUsed = enhancedResult.RerankUsed
+				resp.RerankUsed = enhancedResult.RerankUsed
 			resp.RerankResults = enhancedResult.RerankResults
 			resp.VectorHits = enhancedResult.VectorHits
 			resp.BM25Hits = enhancedResult.BM25Hits
