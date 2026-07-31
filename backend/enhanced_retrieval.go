@@ -521,15 +521,21 @@ func EnhancedRetrieval(
 		log.Printf("[enhanced] HyDE retrieval: %d facts, %dms", len(hydeFacts), time.Since(hydeStart).Milliseconds())
 	}
 
-	// 对每个 searchKey 做三路检索
+	// 对每个 searchKey 做多路检索
 	for _, key := range searchKeys {
 		keyStart := time.Now()
-		// 向量语义检索
+		// 向量语义检索（concepts）
 		vecFacts, _ := SearchMemFactsFiltered(key, searchQ, perKeyVecTopK, timeFrom, timeTo, prefs)
 		allVecFacts = append(allVecFacts, vecFacts...)
 
-		// BM25 关键词检索
-		bm25Facts, _ := SearchMemFactsBM25(key, searchQ, perKeyBM25TopK, timeFrom, timeTo)
+		// 向量语义检索（原始 query，补充关键词维度）
+		if query != searchQ {
+			origVecFacts, _ := SearchMemFactsFiltered(key, query, perKeyVecTopK, timeFrom, timeTo, prefs)
+			allVecFacts = append(allVecFacts, origVecFacts...)
+		}
+
+		// BM25 关键词检索（原始 query，保留专有名词/数字）
+		bm25Facts, _ := SearchMemFactsBM25(key, query, perKeyBM25TopK, timeFrom, timeTo)
 		allBM25Facts = append(allBM25Facts, bm25Facts...)
 
 		// 双路检索：原始消息向量检索
@@ -543,7 +549,12 @@ func EnhancedRetrieval(
 		vecFacts, _ := SearchMemFactsFiltered("", searchQ, perKeyVecTopK, timeFrom, timeTo, prefs)
 		allVecFacts = append(allVecFacts, vecFacts...)
 
-		bm25Facts, _ := SearchMemFactsBM25("", searchQ, perKeyBM25TopK, timeFrom, timeTo)
+		if query != searchQ {
+			origVecFacts, _ := SearchMemFactsFiltered("", query, perKeyVecTopK, timeFrom, timeTo, prefs)
+			allVecFacts = append(allVecFacts, origVecFacts...)
+		}
+
+		bm25Facts, _ := SearchMemFactsBM25("", query, perKeyBM25TopK, timeFrom, timeTo)
 		allBM25Facts = append(allBM25Facts, bm25Facts...)
 
 		vecMsgs, _ := SearchVecMessagesFiltered("", searchQ, perKeyVecMsgTopK, timeFrom, timeTo, prefs)
