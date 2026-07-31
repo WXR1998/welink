@@ -496,7 +496,7 @@ func EnhancedRetrieval(
 	// ── Step 2: 多路检索 ──
 	const perKeyVecTopK = 50
 	const perKeyBM25TopK = 50
-	const perKeyVecMsgTopK = 20
+	const perKeyVecMsgTopK = 100
 	const maxFacts = 100
 	const finalTopK = 50
 
@@ -627,6 +627,15 @@ func EnhancedRetrieval(
 	}
 
 	result.Facts = fusedFacts
+
+	// vec_messages 按 similarity 取 top-100
+	const maxVecMessages = 100
+	if len(allVecMessages) > maxVecMessages {
+		sort.Slice(allVecMessages, func(i, j int) bool {
+			return allVecMessages[i].Similarity > allVecMessages[j].Similarity
+		})
+		allVecMessages = allVecMessages[:maxVecMessages]
+	}
 	result.VecMessages = allVecMessages
 
 	return result, nil

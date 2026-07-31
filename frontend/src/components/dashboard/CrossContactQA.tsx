@@ -305,6 +305,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             dataContext += lines.join('\n') + '\n';
           }
         }
+        const vecMsgs = memData.vec_messages;
+        if (vecMsgs && vecMsgs.length > 0) {
+          dataContext += '\n【从原始消息向量检索到的相关聊天记录】\n';
+          for (const vm of vecMsgs) {
+            const senderLabel = privacyMode ? '***' : (vm.sender || '未知');
+            dataContext += `[${vm.datetime} ${senderLabel}]: ${truncateMsgContent(vm.content)}\n`;
+          }
+        }
         if (!dataContext.trim()) {
           dataContext = '【未找到相关记忆】';
         }
