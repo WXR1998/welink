@@ -117,6 +117,31 @@ interface ProgressStep {
   timestamp: number;
 }
 
+// 进度步骤映射：将后端的 step 名称映射为可读的步骤编号和标签
+const STEP_MAP: Record<string, { index: number; total: number; label: string }> = {
+  decompose:        { index: 1, total: 4, label: '分解问题' },
+  resolve_entities: { index: 1, total: 4, label: '解析实体' },
+  query_expansion:  { index: 2, total: 4, label: '扩展查询' },
+  vector_search:    { index: 2, total: 4, label: '向量检索记忆' },
+  bm25_search:      { index: 2, total: 4, label: 'BM25关键词检索' },
+  vecmsg_search:    { index: 2, total: 4, label: '搜索原始聊天记录embedding' },
+  expanded_search:  { index: 2, total: 4, label: '扩展子查询检索' },
+  search_facts:     { index: 2, total: 4, label: '向量检索记忆事实' },
+  rrf_fusion:       { index: 3, total: 4, label: '融合排序' },
+  rerank:           { index: 3, total: 4, label: '精排候选' },
+  extract_sources:  { index: 3, total: 4, label: '提取源聊天记录' },
+};
+
+// 将 ProgressStep 格式化为 "Step [1/4] 标签 | [2/5]" 的形式
+function formatProgressStep(ps: ProgressStep): string {
+  const meta = STEP_MAP[ps.step];
+  if (!meta) return ps.detail;
+  // 从 detail 中提取 [current/total] 子进度
+  const subMatch = ps.detail.match(/^\[(\d+)\/(\d+)\]/);
+  const subProgress = subMatch ? ` | ${subMatch[0]}` : '';
+  return `Step [${meta.index}/${meta.total}] ${meta.label}${subProgress}`;
+}
+
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -128,6 +153,7 @@ interface Message {
   memorySearchData?: MemorySearchResponse; // 记忆检索详情（下拉框展示）
   llmPrompt?: LLMMessage[]; // 最终发给 LLM API 的原始 prompt
   progressSteps?: ProgressStep[]; // 思考过程步骤列表
+  thinking?: string; // LLM 思考过程（思考型模型）
 }
 
 function formatTokens(n: number): string {
@@ -160,6 +186,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
 
   const collapseAllDetails = useCallback(() => {
     // 收起消息区域内所有展开的 <details> 元素
@@ -194,7 +221,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   }, []);
 
   const scrollToBottom = useCallback(() => {
+    if (!isAtBottomRef.current) return;
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 50);
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const threshold = 60;
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
   const askQuestion = useCallback(async (question: string) => {
@@ -405,13 +440,24 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           try {
-            const chunk = JSON.parse(line.slice(6)) as { delta?: string; done?: boolean; error?: string; usage?: StreamUsage };
+            const chunk = JSON.parse(line.slice(6)) as { delta?: string; thinking?: string; done?: boolean; error?: string; usage?: StreamUsage };
             if (chunk.error) {
               streamError = chunk.error;
               break;
             }
             if (chunk.usage) {
               totalTokens += chunk.usage.total_tokens ?? 0;
+            }
+            if (chunk.thinking) {
+              setMessages(prev => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last) {
+                  next[next.length - 1] = { ...last, thinking: (last.thinking || '') + chunk.thinking };
+                }
+                return next;
+              });
+              scrollToBottom();
             }
             if (chunk.delta) {
               full += chunk.delta;
@@ -586,7 +632,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       />
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 min-h-0 mb-3">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto space-y-3 min-h-0 mb-3">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <Globe size={40} className="text-gray-200" />
@@ -642,9 +688,16 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                     : 'bg-[#f0f0f0] dark:bg-white/10 rounded-bl-sm'
               }`}>
                 {msg.role === 'assistant' && !msg.searching ? (
-                  <div data-msg-idx={i} className="prose prose-sm dark:prose-invert max-w-none prose-strong:text-[#07c160]">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content || '...'}</ReactMarkdown>
-                  </div>
+                  msg.content ? (
+                    <div data-msg-idx={i} className="prose prose-sm dark:prose-invert max-w-none prose-strong:text-[#07c160]">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                      <Loader2 size={12} className="animate-spin" />
+                      正在生成回答…
+                    </span>
+                  )
                 ) : msg.searching ? (
                   <div className="space-y-1.5">
                     <span className="flex items-center gap-1.5">
@@ -656,7 +709,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                         {msg.progressSteps.slice(0, -1).map((ps, idx) => (
                           <div key={idx} className="flex items-start gap-1">
                             <span className="text-gray-300 mt-0.5">✓</span>
-                            <span className="break-all">{ps.detail}</span>
+                            <span className="break-all">{formatProgressStep(ps)}</span>
                           </div>
                         ))}
                       </div>
