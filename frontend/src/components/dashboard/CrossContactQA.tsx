@@ -152,6 +152,72 @@ function formatProgressStep(ps: ProgressStep): string {
   return `Step [${meta.index}/${meta.total}] ${meta.label}${subProgress}`;
 }
 
+// 最新 3 条的滚动进度条：
+// 窗口固定 3 行，当第 4 条出现时，整体上移一行、最老一条淡出，
+// 最新一条从下方淡入。内部用 FLIP 式过渡（先记录上一长度，再在渲染后
+// 把轨道从 -20px 平移到 0），让滑动/淡入淡出连贯。
+const MAX_VISIBLE_STEPS = 3;
+function ProgressTicker({ steps }: { steps: ProgressStep[] }) {
+  const id = React.useId().replace(/:/g, '');
+  const trackRef = React.useRef<HTMLDivElement>(null);
+  const prevLenRef = React.useRef(steps.length);
+
+  // 渲染“最后 4 条”，其中第 1 条在溢出时淡出（被顶出顶部），
+  // 其余 3 条为当前可见区，最新条从下方进入。
+  const raw = steps.slice(-(MAX_VISIBLE_STEPS + 1));
+  const overflow = steps.length > MAX_VISIBLE_STEPS;
+
+  React.useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    // 有新增条目且当前超过 3 条：先把轨道下移一行（露出即将离场条），
+    // 下一帧再移回 0，制造“整体上移一格”的过渡。
+    if (steps.length > 1 && steps.length > prevLenRef.current) {
+      track.style.transition = 'none';
+      track.style.transform = 'translateY(0px)';
+      // 强制重排
+      void track.offsetHeight;
+      track.style.transition = 'transform 0.32s ease';
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          track.style.transform = 'translateY(-20px)';
+        });
+      });
+    }
+    prevLenRef.current = steps.length;
+  }, [steps.length]);
+
+  return (
+    <div className="mt-1.5 pl-1">
+      <style>{`
+        .ticker-${id} { position: relative; height: ${MAX_VISIBLE_STEPS * 20}px; overflow: hidden; }
+        .ticker-${id} .ticker-track { display: flex; flex-direction: column; will-change: transform; }
+        .ticker-${id} .row { display: flex; align-items: center; gap: 6px; height: 20px; line-height: 20px;
+          opacity: 0; transform: translateY(0); }
+        .ticker-${id} .row.enter { animation: ticker-in-${id} 0.3s ease forwards; }
+        .ticker-${id} .row.leave { opacity: 0; transition: opacity 0.28s ease; }
+        @keyframes ticker-in-${id} { from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+      <div className={`ticker-${id}`}>
+        <div className="ticker-track" ref={trackRef}>
+          {raw.map((ps, idx) => {
+            const isOldest = idx === 0 && overflow && steps.length > 1;
+            const isNewest = idx === raw.length - 1;
+            return (
+              <div key={ps.timestamp + '-' + idx}
+                   className={`row ${isOldest ? 'leave' : ''} ${isNewest ? 'enter' : ''}`}>
+                <span className="text-gray-300 text-[9px]">✓</span>
+                <span className="break-all text-[10px] text-gray-400">{formatProgressStep(ps)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -814,15 +880,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       <Loader2 size={12} className="animate-spin" />
                       {msg.content}
                     </span>
-                    {msg.progressSteps && msg.progressSteps.length > 1 && (
-                      <div className="mt-1.5 pl-1 space-y-0.5 text-[10px] text-gray-400 max-h-32 overflow-y-auto">
-                        {msg.progressSteps.slice(0, -1).map((ps, idx) => (
-                          <div key={idx} className="flex items-start gap-1">
-                            <span className="text-gray-300 mt-0.5">✓</span>
-                            <span className="break-all">{formatProgressStep(ps)}</span>
-                          </div>
-                        ))}
-                      </div>
+                    {msg.progressSteps && msg.progressSteps.length >= 1 && (
+                      <ProgressTicker steps={msg.progressSteps} />
                     )}
                   </div>
                 ) : (
