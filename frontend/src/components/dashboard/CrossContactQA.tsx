@@ -186,7 +186,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [conversationKey, setConversationKey] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isAtBottomRef = useRef(true);
+  const followStreamRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
 
   const collapseAllDetails = useCallback(() => {
     // 收起消息区域内所有展开的 <details> 元素
@@ -220,16 +221,35 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     }).catch(() => {});
   }, []);
 
+  // 流式回复时跟随到底部；用户主动向上滚动则暂停跟随，
+  // 回到底部附近后自动恢复跟随。
   const scrollToBottom = useCallback(() => {
-    if (!isAtBottomRef.current) return;
-    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 50);
+    if (!followStreamRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    setTimeout(() => {
+      const target = el;
+      if (!target) return;
+      target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
+    }, 0);
   }, []);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const threshold = 60;
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const prevTop = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 24) {
+      // 已经回到底部附近，恢复跟随
+      followStreamRef.current = true;
+      return;
+    }
+    const isScrollingUp = el.scrollTop < prevTop;
+    if (isScrollingUp && distFromBottom > 48) {
+      // 明确向上滚动，暂停跟随，避免用户翻看历史时被拉回底部
+      followStreamRef.current = false;
+    }
   }, []);
 
   const askQuestion = useCallback(async (question: string) => {
