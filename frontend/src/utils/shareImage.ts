@@ -903,7 +903,7 @@ export async function generateAIScreenshot(options: AIScreenshotOptions): Promis
     ctx.fill();
 
     // Draw markdown content canvas on top
-    ctx.drawImage(answerCanvas, (bx + BUBBLE_PAD) * S, (y + BUBBLE_PAD - 4) * S);
+    ctx.drawImage(answerCanvas, (bx + BUBBLE_PAD) * S, (y + BUBBLE_PAD - 7) * S);
 
     y += bubbleH;
   }
