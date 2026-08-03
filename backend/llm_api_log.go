@@ -32,14 +32,37 @@ type LLMApiLogEntry struct {
 
 const (
 	maxLLMApiLogs = 200
-	snippetLen    = 200000
+	snippetLen    = 8192
+	// maxLLMLogBytes 限制整个缓冲区占用的字节数（按下限近似），
+	// 防止 AI 使用量大时日志缓冲区和 /api/ai/llm-logs 响应体无限膨胀，
+	// 拖慢后端序列化与前端每 3 秒的轮询。
+	maxLLMLogBytes = 1 << 20
 )
 
 var (
-	llmApiLogMu  sync.Mutex
+	llmApiLogMu  sync.RWMutex
 	llmApiLogs   []LLMApiLogEntry
 	llmApiLogSeq int
 )
+
+// llmLogEntryBytes 估算一条日志占用的字节数，用于总容量控制。
+func llmLogEntryBytes(e LLMApiLogEntry) int {
+	return len(e.RequestBody) + len(e.ResponseBody) + len(e.Error) + len(e.URL) +
+		len(e.Provider) + len(e.Model) + len(e.Feature) + 512
+}
+
+// trimLLMApiLogs 在持有写锁的情况下，把日志压到条目上限和字节上限以内。
+func trimLLMApiLogs() {
+	total := 0
+	for i := range llmApiLogs {
+		total += llmLogEntryBytes(llmApiLogs[i])
+	}
+	for len(llmApiLogs) > maxLLMApiLogs || (total > maxLLMLogBytes && len(llmApiLogs) > 1) {
+		removed := llmApiLogs[0]
+		llmApiLogs = llmApiLogs[1:]
+		total -= llmLogEntryBytes(removed)
+	}
+}
 
 // logLLMApiCall 追加一条 LLM API 调用日志，返回它的 ID。
 func logLLMApiCall(entry LLMApiLogEntry) int {
@@ -50,16 +73,14 @@ func logLLMApiCall(entry LLMApiLogEntry) int {
 	entry.ID = llmApiLogSeq
 
 	llmApiLogs = append(llmApiLogs, entry)
-	if len(llmApiLogs) > maxLLMApiLogs {
-		llmApiLogs = llmApiLogs[len(llmApiLogs)-maxLLMApiLogs:]
-	}
+	trimLLMApiLogs()
 	return entry.ID
 }
 
 // getLLMApiLogs 返回最近的 LLM API 调用日志（最新在前）。
 func getLLMApiLogs() []LLMApiLogEntry {
-	llmApiLogMu.Lock()
-	defer llmApiLogMu.Unlock()
+	llmApiLogMu.RLock()
+	defer llmApiLogMu.RUnlock()
 
 	out := make([]LLMApiLogEntry, len(llmApiLogs))
 	// 反转：最新的放最前面
