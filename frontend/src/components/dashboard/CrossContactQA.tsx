@@ -193,8 +193,8 @@ function ProgressTicker({ steps }: { steps: ProgressStep[] }) {
         .ticker-${id} { position: relative; height: ${MAX_VISIBLE_STEPS * 20}px; overflow: hidden; }
         .ticker-${id} .ticker-track { display: flex; flex-direction: column; will-change: transform; }
         .ticker-${id} .row { display: flex; align-items: center; gap: 6px; height: 20px; line-height: 20px;
-          opacity: 0; transform: translateY(0); }
-        .ticker-${id} .row.enter { animation: ticker-in-${id} 0.3s ease forwards; }
+          opacity: 1; transform: translateY(0); }
+        .ticker-${id} .row.enter { opacity: 0; animation: ticker-in-${id} 0.3s ease forwards; }
         .ticker-${id} .row.leave { opacity: 0; transition: opacity 0.28s ease; }
         @keyframes ticker-in-${id} { from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); } }
