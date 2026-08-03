@@ -237,6 +237,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const scrollRef = useRef<HTMLDivElement>(null);
   const followStreamRef = useRef(true);
   const lastScrollTopRef = useRef(0);
+  const autoScrollingRef = useRef(false);
+  const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const collapseAllDetails = useCallback(() => {
     // 收起消息区域内所有展开的 <details> 元素
@@ -252,7 +254,10 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (autoScrollTimerRef.current) clearTimeout(autoScrollTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -276,11 +281,20 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     if (!followStreamRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
-    setTimeout(() => {
-      const target = el;
-      if (!target) return;
-      target.scrollTo({ top: target.scrollHeight, behavior: 'auto' });
-    }, 0);
+    autoScrollingRef.current = true;
+    if (autoScrollTimerRef.current) clearTimeout(autoScrollTimerRef.current);
+    autoScrollTimerRef.current = setTimeout(() => {
+      autoScrollingRef.current = false;
+      autoScrollTimerRef.current = null;
+    }, 400);
+    // 等到下一帧（并且再等一帧）让新消息高度完成渲染后再贴底，
+    // 避免 setTimeout 读到旧 scrollHeight 导致滚动停留在旧高度。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!scrollRef.current) return;
+        scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      });
+    });
   }, []);
 
   const handleScroll = useCallback(() => {
@@ -289,15 +303,32 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     const prevTop = lastScrollTopRef.current;
     lastScrollTopRef.current = el.scrollTop;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+
+    // 程序性滚动（smooth 跟随）进行中不改变用户跟随状态。
+    if (autoScrollingRef.current) {
+      if (distFromBottom < 24) {
+        // 已到达底部，跟随恢复
+        followStreamRef.current = true;
+        autoScrollingRef.current = false;
+        lastScrollTopRef.current = el.scrollTop;
+      }
+      return;
+    }
+
     if (distFromBottom < 24) {
       // 已经回到底部附近，恢复跟随
       followStreamRef.current = true;
       return;
     }
-    const isScrollingUp = el.scrollTop < prevTop;
+    const isScrollingUp = el.scrollTop < prevTop - 2;
     if (isScrollingUp && distFromBottom > 48) {
       // 明确向上滚动，暂停跟随，避免用户翻看历史时被拉回底部
       followStreamRef.current = false;
+      return;
+    }
+    // 向下滚动且接近底部时保持跟随
+    if (distFromBottom < 120) {
+      followStreamRef.current = true;
     }
   }, []);
 
