@@ -51,6 +51,215 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxPriorExcerpts 与 maxPriorExcerptChars 限制前序对话原文批量注入的上限，
+// 避免整轮对话全量塞入导致上下文膨胀。
+const (
+	maxPriorExcerpts      = 8
+	maxPriorExcerptChars  = 6000
+	maxCandidateChars     = 12000
+	maxCandidateSelection = 40
+)
+
+// selectRelevantSources 从前序对话已检索到的原文候选中，挑选与当前问题相关的片段。
+// 优先级：LLM 选择 → rerank 精排 → 关键词重合兜底。
+// 返回值已经过条数与字符数上限裁剪。
+func selectRelevantSources(query string, candidates []RawExcerpt, prefs Preferences, profileID string, rerankCfgs []RerankConfig) []RawExcerpt {
+	if len(candidates) == 0 || strings.TrimSpace(query) == "" {
+		return nil
+	}
+
+	// 先做总量上限与每段截断，避免判断/注入时撑爆上下文
+	const perExcerptChars = 200
+	limited := candidates[:0]
+	totalIncluded := 0
+	totalChars := 0
+	for _, c := range candidates {
+		content := c.Content
+		if len([]rune(content)) > perExcerptChars {
+			content = string([]rune(content)[:perExcerptChars]) + "...[截断]"
+		}
+		if totalChars+len(content) > maxCandidateChars && len(limited) >= maxCandidateSelection {
+			break
+		}
+		c.Content = content
+		limited = append(limited, c)
+		totalIncluded++
+		totalChars += len(content)
+	}
+	candidates = limited
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// ── 主链路：LLM 选择 ──
+	pickIdx := pickRelevantByLLM(query, candidates, prefs, profileID)
+	if pickIdx != nil {
+		return trimExcerpts(pickSelected(candidates, pickIdx))
+	}
+
+	// ── 降级 1：rerank 精排 ──
+	if len(rerankCfgs) > 0 {
+		docs := make([]string, len(candidates))
+		for i, c := range candidates {
+			docs[i] = c.Content
+		}
+		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", time.Now().Format("2006-01-02"), query)
+		results, err := RerankCandidatesWithFallback(rerankQuery, docs, rerankCfgs)
+		if err == nil && len(results) > 0 {
+			type scored struct {
+				idx   int
+				score float32
+			}
+			order := make([]scored, 0, len(results))
+			for _, r := range results {
+				if r.Index >= 0 && r.Index < len(candidates) {
+					order = append(order, scored{idx: r.Index, score: r.Score})
+				}
+			}
+			sort.Slice(order, func(i, j int) bool { return order[i].score > order[j].score })
+			var picked []int
+			for _, o := range order {
+				picked = append(picked, o.idx)
+				if len(picked) >= maxPriorExcerpts {
+					break
+				}
+			}
+			return trimExcerpts(pickSelected(candidates, picked))
+		}
+	}
+
+	// ── 降级 2：关键词重合 ──
+	return trimExcerpts(pickByKeyword(query, candidates))
+}
+
+// pickRelevantByLLM 让 LLM 从候选中选出与当前问题最相关的索引。
+// 失败返回 nil（由调用方降级）。
+func pickRelevantByLLM(query string, candidates []RawExcerpt, prefs Preferences, profileID string) []int {
+	var sb strings.Builder
+	for i, c := range candidates {
+		fmt.Fprintf(&sb, "%d. [%s] %s %s: %s\n", i, c.SourceName, c.Datetime, c.Sender, c.Content)
+	}
+	prompt := fmt.Sprintf(`你是检索片段筛选助手。当前用户问题是：
+%s
+
+以下是来自同一轮/前序对话的候选聊天记录原文（带索引）：
+%s
+
+请选出与当前问题最相关、最可能被用户要求"找原文"的片段索引。输出严格 JSON 数组，例如 [0, 3]。若都不相关输出 []。不要输出解释。`, query, sb.String())
+	msgs := []LLMMessage{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: "输出相关索引 JSON 数组"},
+	}
+	type llmResult struct {
+		text string
+		err  error
+	}
+	ch := make(chan llmResult, 1)
+	go func() {
+		text, err := CompleteLLMFeature(msgs, prefs, "prior_excerpt_selection", profileID)
+		ch <- llmResult{text, err}
+	}()
+	var result string
+	var llmErr error
+	select {
+	case r := <-ch:
+		result = r.text
+		llmErr = r.err
+	case <-time.After(15 * time.Second):
+		llmErr = fmt.Errorf("前序原文选择超时")
+	}
+	if llmErr != nil {
+		return nil
+	}
+	raw := strings.TrimSpace(result)
+	if start := strings.Index(raw, "["); start >= 0 {
+		if end := strings.LastIndex(raw, "]"); end > start {
+			raw = raw[start : end+1]
+		}
+	}
+	var idx []int
+	if err := json.Unmarshal([]byte(raw), &idx); err != nil {
+		return nil
+	}
+	return idx
+}
+
+// pickSelected 根据索引列表返回候选，裁剪越界与重复。
+func pickSelected(candidates []RawExcerpt, idx []int) []RawExcerpt {
+	seen := make(map[int]bool)
+	var out []RawExcerpt
+	for _, i := range idx {
+		if i < 0 || i >= len(candidates) || seen[i] {
+			continue
+		}
+		seen[i] = true
+		out = append(out, candidates[i])
+	}
+	return out
+}
+
+// pickByKeyword 用关键词重合度选候选（最终兜底）。
+func pickByKeyword(query string, candidates []RawExcerpt) []RawExcerpt {
+	lower := strings.ToLower(query)
+	type scored struct {
+		excerpt RawExcerpt
+		count   int
+	}
+	var scoredList []scored
+	for _, c := range candidates {
+		cl := strings.ToLower(c.Content)
+		// 统计 query 中连续汉字词/数字与原文是否包含
+		count := 0
+		fields := strings.Fields(lower)
+		for _, f := range fields {
+			if len([]rune(f)) < 2 {
+				continue
+			}
+			if strings.Contains(cl, f) {
+				count++
+			}
+		}
+		// 人名倾向整词匹配：把 query 中每个人名/关键词拆开比较
+		for _, name := range strings.Split(lower, " ") {
+			if name != "" && strings.Contains(cl, name) {
+				count += 2
+			}
+		}
+		scoredList = append(scoredList, scored{excerpt: c, count: count})
+	}
+	sort.Slice(scoredList, func(i, j int) bool { return scoredList[i].count > scoredList[j].count })
+	var out []RawExcerpt
+	for i, s := range scoredList {
+		if len(out) >= maxPriorExcerpts {
+			break
+		}
+		if i > 0 && scoredList[i-1].count > 0 && s.count == 0 {
+			break
+		}
+		if s.count > 0 {
+			out = append(out, s.excerpt)
+		}
+	}
+	return out
+}
+
+// trimExcerpts 对上注入的片段做最后的条数/字符数裁剪。
+func trimExcerpts(excerpts []RawExcerpt) []RawExcerpt {
+	if len(excerpts) > maxPriorExcerpts {
+		excerpts = excerpts[:maxPriorExcerpts]
+	}
+	total := 0
+	var out []RawExcerpt
+	for _, e := range excerpts {
+		if total+len(e.Content) > maxPriorExcerptChars {
+			break
+		}
+		total += len(e.Content)
+		out = append(out, e)
+	}
+	return out
+}
+
 // safePercent 安全计算百分比，避免除零
 func safePercent(part, total int) int {
 	if total == 0 {
@@ -1453,13 +1662,15 @@ func serverMain() {
 	// 后端拉取聊天记录 → 构造 prompt → 流式转发 LLM 响应
 	api.POST("/ai/analyze", func(c *gin.Context) {
 		var body struct {
-			Username   string       `json:"username"`
-			IsGroup    bool         `json:"is_group"`
-			From       int64        `json:"from"`
-			To         int64        `json:"to"`
-			Messages   []LLMMessage `json:"messages"`
-			ProfileID  string       `json:"profile_id"`
-			SkipMemory bool         `json:"skip_memory"` // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
+			Username         string       `json:"username"`
+			IsGroup          bool         `json:"is_group"`
+			From             int64        `json:"from"`
+			To               int64        `json:"to"`
+			Messages         []LLMMessage `json:"messages"`
+			ProfileID        string       `json:"profile_id"`
+			SkipMemory       bool         `json:"skip_memory"`        // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
+			Query            string       `json:"query"`              // 当前用户问题（用于找原文/选择候选）
+			CandidateSources []RawExcerpt `json:"candidate_sources"`  // 前序对话中已检索到的原文候选
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1522,6 +1733,68 @@ func serverMain() {
 			}
 		}
 
+		// ── 前序对话原文候选：整轮对话已检索到的原文，视情况挑选注入 ──
+		// 无论 skip_memory 是否开启，只要前端传来了候选原文就处理。
+		query := strings.TrimSpace(body.Query)
+		if query == "" {
+			// 兜底：从 messages 最后一条 user 提取
+			for i := len(body.Messages) - 1; i >= 0; i-- {
+				if body.Messages[i].Role == "user" {
+					query = strings.TrimSpace(body.Messages[i].Content)
+					break
+				}
+			}
+		}
+		rerankCfgs := rerankConfigs(prefs)
+		// 仅在"找原文"类意图时，才用额外 LLM/rerank 从前序候选里挑选相关原文注入，
+		// 避免普通问题也触发一次无关的额外调用。
+		var selected []RawExcerpt
+		if looksLikeRawLookup(query) && len(body.CandidateSources) > 0 {
+			selected = selectRelevantSources(query, body.CandidateSources, prefs, body.ProfileID, rerankCfgs)
+		}
+		if len(selected) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n【本轮之前对话中已检索到的相关原文（来自前序检索，可直接引用）】\n")
+			for _, e := range selected {
+				sender := e.Sender
+				if sender == "" {
+					sender = "未知"
+				}
+				fmt.Fprintf(&sb, "- [%s] %s %s: %s\n", e.SourceName, e.Datetime, sender, e.Content)
+			}
+			sb.WriteString("\n请优先直接引用以上原文，并在引用时标注来源；这些是已经确认检索到的聊天记录原文。\n")
+			injected := sb.String()
+			foundSys := false
+			for i := range body.Messages {
+				if body.Messages[i].Role == "system" {
+					body.Messages[i].Content += injected
+					foundSys = true
+					break
+				}
+			}
+			if !foundSys {
+				body.Messages = append([]LLMMessage{{Role: "system", Content: injected}}, body.Messages...)
+			}
+		}
+
+		// 找原文约束：只能在确认拿到原文时逐字引用，否则如实说明。
+		{
+			foundSys := false
+			rule := "\n\n如实引用约束：如果用户要求找原文/原话/原句，只有当对话或检索结果里确实存在原始聊天记录片段时，才直接引用原文并标注来源与时间；不要根据记忆 summary 逐字转述成原文；若未定位到原文，明确说明“未能在聊天记录中定位到原文”，不要编造。\n"
+			for i := range body.Messages {
+				if body.Messages[i].Role == "system" {
+					if !strings.Contains(body.Messages[i].Content, "如实引用约束") {
+						body.Messages[i].Content += rule
+					}
+					foundSys = true
+					break
+				}
+			}
+			if !foundSys {
+				body.Messages = append([]LLMMessage{{Role: "system", Content: rule}}, body.Messages...)
+			}
+		}
+
 		// skip_memory=true 时跳过后端记忆注入（前端已通过 memory-search 注入）
 		if !body.SkipMemory {
 			// 提取用户最后一条问题作为语义检索词
@@ -1540,7 +1813,7 @@ func serverMain() {
 			if contactKey == "" {
 				searchKeys = nil
 			}
-			enhancedResult, enhancedErr := EnhancedRetrieval(searchQ, nil, searchKeys, "", "", prefs, body.ProfileID, nil)
+			enhancedResult, enhancedErr := EnhancedRetrieval(searchQ, nil, searchKeys, "", "", prefs, body.ProfileID, getSvc(), nil)
 			if enhancedErr == nil && enhancedResult != nil {
 				searchedFacts = enhancedResult.Facts
 			} else {

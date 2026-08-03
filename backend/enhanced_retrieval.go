@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"welink/backend/service"
 )
 
 // formatFactForRerank 将 fact 开头的 [时间范围] 简化为只含日期的格式。
@@ -399,10 +401,20 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 
 // ─── 整合：增强检索 ─────────────────────────────────────────────────────────────
 
+// RawExcerpt 是从原始聊天记录精确检索到的一条原文（找原文场景）。
+type RawExcerpt struct {
+	SourceName string `json:"source_name"` // 联系人/群聊可读名或 contact_key
+	Datetime   string `json:"datetime"`
+	Sender     string `json:"sender"`
+	Content    string `json:"content"`
+	Seq        int    `json:"seq,omitempty"`
+}
+
 // EnhancedRetrievalResult 是增强检索的结果。
 type EnhancedRetrievalResult struct {
 	Facts           []MemFact         // RRF 融合 + rerank 后的 top-K 事实
 	VecMessages     []VecMessageHit   // 双路检索：原始消息命中
+	RawHits         []RawExcerpt      // 找原文场景：原始消息精确命中
 	ExpandedQueries []string          // 查询改写：扩展的子查询
 	RerankUsed      bool              // 是否使用了 rerank
 	RerankResults   []RerankScoreItem // rerank 精排结果（按分数降序）
@@ -416,6 +428,134 @@ type RerankScoreItem struct {
 	Score float32 `json:"score"`
 	Text  string  `json:"text"`
 }
+
+// searchRawMessages 在原始聊天记录中精确查找 query 出现的原文（找原文场景）。
+// 联系人走 svc.SearchMessages（含自己发的消息），群聊走 svc.SearchGroupMessages。
+func searchRawMessages(query string, searchKeys []string, svc *service.ContactService) []RawExcerpt {
+	if svc == nil || strings.TrimSpace(query) == "" {
+		return nil
+	}
+	var out []RawExcerpt
+	seen := make(map[string]bool)
+	for _, key := range searchKeys {
+		var excerpt RawExcerpt
+		sourceName := key
+		if strings.HasPrefix(key, "contact:") {
+			uname := strings.TrimPrefix(key, "contact:")
+			sourceName = resolveSourceName(key, svc)
+			for _, m := range svc.SearchMessages(uname, query, true) {
+				if m.Content == "" {
+					continue
+				}
+				excerpt = RawExcerpt{SourceName: sourceName, Datetime: m.Date + " " + m.Time, Sender: "我"}
+				if !m.IsMine {
+					excerpt.Sender = resolveContactName(svc, uname)
+				}
+				excerpt.Content = m.Content
+				dedupe := excerpt.SourceName + "|" + excerpt.Datetime + "|" + excerpt.Content
+				if seen[dedupe] {
+					continue
+				}
+				seen[dedupe] = true
+				out = append(out, excerpt)
+			}
+		}
+		if strings.HasPrefix(key, "group:") {
+			uname := strings.TrimPrefix(key, "group:")
+			sourceName = resolveSourceName(key, svc)
+			for _, m := range svc.SearchGroupMessages(uname, query, "") {
+				if m.Content == "" {
+					continue
+				}
+				excerpt = RawExcerpt{SourceName: sourceName, Datetime: m.Date + " " + m.Time, Sender: "我"}
+				if !m.IsMine {
+					excerpt.Sender = m.Speaker
+				} else {
+					excerpt.Sender = "我"
+				}
+				excerpt.Content = m.Content
+				dedupe := excerpt.SourceName + "|" + excerpt.Datetime + "|" + excerpt.Sender + "|" + excerpt.Content
+				if seen[dedupe] {
+					continue
+				}
+				seen[dedupe] = true
+				out = append(out, excerpt)
+			}
+		}
+	}
+	return out
+}
+
+// resolveContactName 返回联系人可读名（备注/昵称优先）。
+func resolveContactName(svc *service.ContactService, username string) string {
+	for _, s := range svc.GetCachedStats() {
+		if s.Username == username {
+			if s.Remark != "" {
+				return s.Remark
+			}
+			if s.Nickname != "" {
+				return s.Nickname
+			}
+		}
+	}
+	return username
+}
+
+// searchRawMessagesFTS 在没有可解析 key 时，用 msg_fts 对全库做原文精确检索。
+func searchRawMessagesFTS(query string, svc *service.ContactService) []RawExcerpt {
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil || strings.TrimSpace(query) == "" {
+		return nil
+	}
+
+	rows, err := db.Query(`SELECT DISTINCT contact_key FROM msg_fts`)
+	if err != nil {
+		return nil
+	}
+	var keys []string
+	for rows.Next() {
+		var k string
+		if rows.Scan(&k) == nil && k != "" {
+			keys = append(keys, k)
+		}
+	}
+	rows.Close()
+
+	var out []RawExcerpt
+	seen := make(map[string]bool)
+	for _, key := range keys {
+		ftsResults, _, err := SearchFTS(key, query, 20)
+		if err != nil {
+			continue
+		}
+		sourceName := resolveSourceName(key, svc)
+		for _, r := range ftsResults {
+			if r.Content == "" {
+				continue
+			}
+			e := RawExcerpt{
+				SourceName: sourceName,
+				Datetime:   r.Datetime,
+				Sender:     r.Sender,
+				Content:    r.Content,
+				Seq:        r.Seq,
+			}
+			dedupe := e.SourceName + "|" + e.Datetime + "|" + e.Sender + "|" + e.Content
+			if seen[dedupe] {
+				continue
+			}
+			seen[dedupe] = true
+			out = append(out, e)
+			if len(out) >= 100 {
+				return out
+			}
+		}
+	}
+	return out
+}
+
 
 // EnhancedRetrieval 整合 BM25 + 双路检索 + 查询改写 + Rerank 的增强检索。
 //
@@ -432,6 +572,7 @@ func EnhancedRetrieval(
 	timeFrom, timeTo string,
 	prefs Preferences,
 	profileID string,
+	svc *service.ContactService,
 	onProgress func(step, detail string),
 ) (*EnhancedRetrievalResult, error) {
 	progress := func(step, detail string) {
@@ -607,6 +748,17 @@ func EnhancedRetrieval(
 		allVecMessages = allVecMessages[:maxVecMessages]
 	}
 	result.VecMessages = allVecMessages
+
+	// 找原文场景：额外走原始聊天记录精确检索，拿到能直接引用/展示的原文。
+	if decomp != nil && decomp.LookupRaw {
+		progress("raw_lookup", fmt.Sprintf("按原文精确检索 query: %s", truncate(query, 40)))
+		rawHits := searchRawMessages(query, searchKeys, svc)
+		if len(searchKeys) == 0 {
+			// 没有可解析的 key 时做全库精确检索（msg_fts）
+			rawHits = append(rawHits, searchRawMessagesFTS(query, svc)...)
+		}
+		result.RawHits = rawHits
+	}
 
 	return result, nil
 }

@@ -104,11 +104,21 @@ interface MemorySearchResponse {
   bm25_hits?: number;
   vec_message_hits?: number;
   rerank_results?: RerankScoreItem[];
+  raw_hits?: RawExcerpt[];
 }
 
 interface RerankScoreItem {
   score: number;
   text: string;
+}
+
+// 找原文场景：原始聊天记录精确命中
+interface RawExcerpt {
+  source_name: string;
+  datetime: string;
+  sender: string;
+  content: string;
+  seq?: number;
 }
 
 interface ProgressStep {
@@ -160,6 +170,45 @@ function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return n.toString();
+}
+
+// 判断问题是否属于"找原文/原话/原句"类意图。
+function isRawLookup(q: string): boolean {
+  return /找原文|原文|原话|原句|怎么说|怎么说的|贴出来|直接贴|原封不动|逐字|一字不差/.test(q);
+}
+
+// 从整轮对话中收集所有已检索到的原文候选（sources / vec_messages / raw_hits），
+// 去重后返回；无候选返回 null。
+function collectWholeConversationExcerpts(msgs: Message[]): RawExcerpt[] | null {
+  const out: RawExcerpt[] = [];
+  const seen = new Set<string>();
+  for (const m of msgs) {
+    const d = m.memorySearchData;
+    if (!d) continue;
+    for (const src of d.sources || []) {
+      const sourceName = src.source_name || src.fact?.contact_key || '未知';
+      for (const msg of src.messages || []) {
+        const key = `${sourceName}|${msg.datetime}|${msg.sender}|${msg.content}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ source_name: sourceName, datetime: msg.datetime, sender: msg.sender, content: msg.content });
+      }
+    }
+    for (const vm of d.vec_messages || []) {
+      const sourceName = vm.contact_key || '未知';
+      const key = `${sourceName}|${vm.datetime}|${vm.sender}|${vm.content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ source_name: sourceName, datetime: vm.datetime, sender: vm.sender, content: vm.content });
+    }
+    for (const rh of d.raw_hits || []) {
+      const key = `${rh.source_name}|${rh.datetime}|${rh.sender}|${rh.content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(rh);
+    }
+  }
+  return out.length ? out : null;
 }
 
 const EXAMPLE_QUESTIONS = [
@@ -389,6 +438,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             dataContext += `[${vm.datetime} ${senderLabel}]: ${truncateMsgContent(vm.content)}\n`;
           }
         }
+        if (memData.raw_hits && memData.raw_hits.length > 0) {
+          dataContext += '\n【原文精确命中（聊天记录原文）】\n';
+          for (const rh of memData.raw_hits) {
+            const senderLabel = privacyMode ? '***' : (rh.sender || '未知');
+            const sourceLabel = privacyMode ? '***' : (rh.source_name || '未知');
+            dataContext += `[${sourceLabel} ${rh.datetime} ${senderLabel}]: ${truncateMsgContent(rh.content)}\n`;
+          }
+        }
         if (!dataContext.trim()) {
           dataContext = '【未找到相关记忆】';
         }
@@ -430,6 +487,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           messages: llmMessages,
           profile_id: profileId,
           skip_memory: true,
+          query: q,
+          candidate_sources: isRawLookup(q) ? (collectWholeConversationExcerpts(messages) ?? []) : [],
         }),
         signal: abortRef.current.signal,
       });
@@ -867,6 +926,22 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                           ))}
                         </div>
                       </div>
+                    )}
+                    {/* 原文精确命中（找原文场景） */}
+                    {msg.memorySearchData?.raw_hits && msg.memorySearchData.raw_hits.length > 0 && (
+                      <details className="mt-1" open>
+                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
+                          原文精确命中（{msg.memorySearchData.raw_hits.length} 条）
+                        </summary>
+                        <div className="mt-1 space-y-1">
+                          {msg.memorySearchData.raw_hits.map((rh, idx) => (
+                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                              <span className="text-gray-500 text-[10px]">{rh.source_name} · {rh.datetime} {rh.sender}</span>
+                              <div className="text-gray-600 dark:text-gray-300 text-xs break-all">{rh.content}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     )}
                     {/* 增强检索统计 */}
                     {msg.memorySearchData && (msg.memorySearchData.vector_hits || msg.memorySearchData.bm25_hits || msg.memorySearchData.vec_message_hits || msg.memorySearchData.rerank_used !== undefined) && (
