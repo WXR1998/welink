@@ -638,7 +638,9 @@ async function renderMarkdownCanvas(
   styleEl.textContent = MARKDOWN_CSS;
   const content = document.createElement('div');
   content.className = 'sa';
-  content.style.cssText = `font-size:14px;color:#1d1d1f;line-height:1.7;font-family:${font};`;
+  // padding-bottom 给最后一行留安全空间，避免 html2canvas 在末尾行高/边距
+  // 处截掉最后一行底部（背景透明，不影响文字）。
+  content.style.cssText = `font-size:14px;color:#1d1d1f;line-height:1.7;font-family:${font};padding-bottom:8px;`;
   content.innerHTML = sanitized;
   wrap.appendChild(styleEl);
   wrap.appendChild(content);
@@ -697,7 +699,8 @@ export async function generateAIScreenshot(options: AIScreenshotOptions): Promis
   const answerCanvas = options.answer
     ? await renderMarkdownCanvas(options.answer, MAX_BUBBLE_W - BUBBLE_PAD * 2, FONT)
     : null;
-  const answerH = answerCanvas ? answerCanvas.height / S : 0;
+  // 向上取整到整数逻辑像素，避免因 scaled canvas 小数高度导致最后一行底部被裁。
+  const answerH = answerCanvas ? Math.ceil(answerCanvas.height / S) : 0;
 
   // ── 文本测量工具 ──
   const tmpCvs = document.createElement('canvas');
