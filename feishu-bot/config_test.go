@@ -38,8 +38,35 @@ func TestLoadConfig_RequiresIDsAndMode(t *testing.T) {
 
 func TestCardWithTextIsValidJSON(t *testing.T) {
 	card := cardWithText("你好")
-	if !strings.Contains(card, "streaming_mode") || !strings.Contains(card, `"你好"`) {
-		t.Fatalf("card missing fields: %s", card)
+	for _, want := range []string{`"schema"`, `"2.0"`, "streaming_mode", `"你好"`, `"body"`, `"elements"`} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("card missing %s: %s", want, card)
+		}
+	}
+}
+
+func TestCardJSONWithProgress(t *testing.T) {
+	card := cardJSON("🔎 正在检索", "正文", progressBar(3, 5))
+	if !strings.Contains(card, `"🔎 正在检索"`) || !strings.Contains(card, `"正文"`) {
+		t.Fatalf("card missing title/body: %s", card)
+	}
+	if !strings.Contains(card, "60%") || !strings.Contains(card, "🟩🟩🟩") {
+		t.Fatalf("progress bar missing: %s", card)
+	}
+	if !strings.Contains(card, `"lark_md"`) && !strings.Contains(card, `"markdown"`) {
+		t.Fatalf("card missing markdown element: %s", card)
+	}
+}
+
+func TestProgressBar(t *testing.T) {
+	if got := progressBar(0, 5); strings.Contains(got, "🟩") {
+		t.Fatalf("0 progress should have no filled: %s", got)
+	}
+	if got := progressBar(5, 5); strings.Contains(got, "⬜") {
+		t.Fatalf("100%% progress should have no empty: %s", got)
+	}
+	if got := progressBar(7, 5); got != progressBar(5, 5) {
+		t.Fatalf("over-full should clamp to 100%%: %s", got)
 	}
 }
 

@@ -25,13 +25,13 @@ const (
 
 // bot 持有飞书通道与配置，并维护每个用户的独立会话。
 type bot struct {
-	cfg      *Config
-	client   *lark.Client
-	ch       types.Channel
-	store    *sessionStore
-	pending  *pendingStore
-	mu       sync.Mutex
-	sessions map[string]*session
+	cfg        *Config
+	client     *lark.Client
+	ch         types.Channel
+	store      *sessionStore
+	pending    *pendingStore
+	mu         sync.Mutex
+	sessions   map[string]*session
 }
 
 // session 表示单个用户在单个群聊/单聊中的独立上下文。
@@ -181,8 +181,22 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 
 	b.trackPending(messageID, msg.ChatID, sessionKey, question)
 
-	_ = b.patchCard(ctx, messageID, cardWithText("🔎 正在检索跨联系人聊天记录…\n\n处理中…"))
-	answer, errMsg := b.answer(ctx, sessionKey, question)
+	// 初始：检索阶段进度 1/5
+	_ = b.patchCard(ctx, messageID, cardJSON("🔎 正在检索", "正在跨联系人检索相关聊天记录…", progressBar(1, 5)))
+
+	answer, errMsg := b.answer(ctx, sessionKey, question, func(stage string, current, total int) {
+		title := "AI 回答"
+		body := "检索完成，正在生成回答…"
+		if stage == "search" {
+			title = "🔎 正在检索"
+			body = "正在跨联系人检索相关聊天记录…"
+		} else if stage == "answer" {
+			title = "✍️ 正在整理回答"
+			body = "检索完成，正在生成回答…"
+		}
+		pb := progressBar(current, total)
+		_ = b.patchCard(ctx, messageID, cardJSON(title, body, pb))
+	})
 	log.Printf("[bot] %s 回答完成: messageID=%s question=%q answerLen=%d errMsg=%q", sessionKey, messageID, question, len(answer), errMsg)
 
 	if errMsg != "" {
@@ -197,7 +211,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	}
 
 	b.untrackPending(messageID)
-	_ = b.patchCard(ctx, messageID, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+answer))
+	_ = b.patchCard(ctx, messageID, cardJSON("✅ 回答完成", answer, ""))
 	b.remember(sessionKey, question, answer)
 	go b.maybeCompress(context.Background(), sessionKey)
 }
@@ -304,17 +318,32 @@ func (b *bot) dropSession(key string) {
 }
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
-func (b *bot) answer(ctx context.Context, sessionKey, question string) (string, string) {
+func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgress func(stage string, current, total int)) (string, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
 	hasPriorEntity := len(priorEntities) > 0
 
 	convKey := "feishu:" + sessionKey
-	// 1. memory-search 跨联系人检索（进度回调打印日志；无实体且上下文无实体则中止）
+	// 1. memory-search 跨联系人检索（进度回调打印日志 + 驱动卡片进度；无实体则中止）
 	data, err := memorySearch(ctx, b.cfg, question, convKey, hasPriorEntity,
 		func(step, detail string) {
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
+			if onProgress != nil {
+				// 检索阶段按步骤推进 1->4 格
+				var cur int
+				switch step {
+				case "resolve_entities":
+					cur = 2
+				case "vector_search", "vecmsg_search", "bm25_search":
+					cur = 3
+				case "enhanced", "search_facts", "extract_sources":
+					cur = 4
+				default:
+					cur = 1
+				}
+				onProgress("search", cur, 5)
+			}
 		},
 		func(names []string) {
 			// 本轮解析出了实体，记录下来供后续追问沿用
@@ -348,6 +377,11 @@ func (b *bot) answer(ctx context.Context, sessionKey, question string) (string, 
 
 	// 2. 把检索结果拼成上下文
 	dataContext := buildDataContext(data)
+
+	// 2b. 检索完成，进入生成回答阶段
+	if onProgress != nil {
+		onProgress("answer", 5, 5)
+	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）
 	answer, err := analyzeQuestion(ctx, b.cfg, question, convKey, history, dataContext)
@@ -522,5 +556,36 @@ func cleanMention(content string) string {
 }
 
 func cardWithText(text string) string {
-	return fmt.Sprintf(`{"config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":"AI 回答"}},"elements":[{"tag":"markdown","content":%q}]}`, text)
+	return cardJSON("AI 回答", text, "")
+}
+
+// cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染
+// # 标题、> 引用等标准语法（需显式声明 schema:2.0）。
+// progress 留空则只渲染 markdown；非空则在其上下加一行 emoji 进度条。
+func cardJSON(title, text, progress string) string {
+	var elem string
+	if progress != "" {
+		elem = fmt.Sprintf(`{"tag":"markdown","content":%q},{"tag":"markdown","content":%q}`,
+			progress, text)
+	} else {
+		elem = fmt.Sprintf(`{"tag":"markdown","content":%q}`, text)
+	}
+	return fmt.Sprintf(`{"schema":"2.0","config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":%q}},"body":{"elements":[%s]}}`, title, elem)
+}
+
+// progressBar 返回一个 n/5 格的 emoji 进度条行。
+func progressBar(current, total int) string {
+	if current < 0 {
+		current = 0
+	}
+	if current > total {
+		current = total
+	}
+	filled := strings.Repeat("🟩", current)
+	empty := strings.Repeat("⬜", total-current)
+	pct := 0
+	if total > 0 {
+		pct = current * 100 / total
+	}
+	return fmt.Sprintf("**%d%%** %s%s", pct, filled, empty)
 }
