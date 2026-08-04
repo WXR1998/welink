@@ -556,15 +556,14 @@ func searchRawMessagesFTS(query string, svc *service.ContactService) []RawExcerp
 	return out
 }
 
-
 // EnhancedRetrieval 整合 BM25 + 双路检索 + 查询改写 + Rerank 的增强检索。
 //
 // 流程：
-//   1. 查询改写（可选）：ExpandQuery 生成子查询
-//   2. 多路检索：对每个 searchKey，同时做向量语义检索 + BM25 关键词检索 + 原始消息检索
-//   3. RRF 融合：将向量+BM25 两路结果融合
-//   4. Rerank 精排（可选）：对融合后的 top-50 偙选做 cross-encoder 精排
-//   5. 返回 top-K 事实 + 原始消息命中
+//  1. 查询改写（可选）：ExpandQuery 生成子查询
+//  2. 多路检索：对每个 searchKey，同时做向量语义检索 + BM25 关键词检索 + 原始消息检索
+//  3. RRF 融合：将向量+BM25 两路结果融合
+//  4. Rerank 精排（可选）：对融合后的 top-50 偙选做 cross-encoder 精排
+//  5. 返回 top-K 事实 + 原始消息命中
 func EnhancedRetrieval(
 	query string,
 	decomp *QueryDecomposition,
@@ -602,15 +601,25 @@ func EnhancedRetrieval(
 	}
 
 	// ── Step 2: 多路检索 ──
-	const perKeyVecTopK = 50
-	const perKeyBM25TopK = 50
-	const perKeyVecMsgTopK = 100
-	const maxFacts = 100
+	// 提高候选规模：人物级问答/实体共现场景下，若 topK 太小，
+	// 真正“人名 × 事件”同时命中的事实会在 RRF/rerank 前就被挤掉。
+	const perKeyVecTopK = 200
+	const perKeyBM25TopK = 200
+	const perKeyVecMsgTopK = 200
+	const maxFacts = 400
 	const finalTopK = 50
 
 	var allVecFacts []MemFact
 	var allBM25Facts []MemFact
 	var allVecMessages []VecMessageHit
+
+	// 实体（人名）+ 概念（语义事件）共现召回，保证这类事实不被淹没。
+	var entities []string
+	var conceptTerms []string
+	if decomp != nil {
+		entities = decomp.Entities
+		conceptTerms = decomp.Concepts
+	}
 
 	step2Start := time.Now()
 
@@ -675,6 +684,14 @@ func EnhancedRetrieval(
 		log.Printf("[enhanced] expanded queries retrieval: %d subQueries, %dms", len(result.ExpandedQueries), time.Since(expStart).Milliseconds())
 	}
 
+	// 实体 × 概念共现召回（全局一次）：优先保证“邓凯文 + 装逼/炫耀”这类
+	// 事实进入候选池。一个 LIKE 查询覆盖全部 contact_key，避免按 key 重复扫描。
+	if len(entities) > 0 && len(conceptTerms) > 0 {
+		progress("comention_search", "实体×概念共现检索（全局）")
+		comention := SearchMemFactsCoMention("", entities, conceptTerms, 300, timeFrom, timeTo)
+		allVecFacts = append(allVecFacts, comention...)
+	}
+
 	log.Printf("[enhanced] Step 2 total: vec=%d bm25=%d vecMsg=%d, %dms",
 		len(allVecFacts), len(allBM25Facts), len(allVecMessages), time.Since(step2Start).Milliseconds())
 
@@ -685,7 +702,7 @@ func EnhancedRetrieval(
 	// ── Step 3: RRF 融合 ──
 	progress("rrf_fusion", fmt.Sprintf("RRF 融合 %d 条向量 + %d 条BM25 候选...", len(allVecFacts), len(allBM25Facts)))
 	// 融合两路结果：向量检索 + BM25 检索
-	fusedFacts := FuseRRF([][]MemFact{allVecFacts, allBM25Facts}, 60)
+	fusedFacts := FuseRRF([][]MemFact{allVecFacts, allBM25Facts}, 120)
 	if len(fusedFacts) > maxFacts {
 		fusedFacts = fusedFacts[:maxFacts]
 	}
@@ -700,9 +717,25 @@ func EnhancedRetrieval(
 		for i, f := range fusedFacts {
 			docs[i] = formatFactForRerank(f.Fact)
 		}
-		// 在 rerank query 前加上当前日期，让 reranker 理解相对时间词（如"最近"）
+		// 结构化 rerank query：明示实体（主体）与概念（事件）约束，
+		// 避免 reranker 只被高频字面词（如"装逼"）带偏，忽略“谁的故事”。
 		today := time.Now().Format("2006-01-02")
-		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", today, query)
+		rankQuery := query
+		if decomp != nil && (len(decomp.Entities) > 0 || len(decomp.Concepts) > 0) {
+			var parts []string
+			if len(decomp.Entities) > 0 {
+				parts = append(parts, "主体人物/群: "+strings.Join(decomp.Entities, "、"))
+			}
+			if len(decomp.Concepts) > 0 {
+				parts = append(parts, "核心事件/主题: "+strings.Join(decomp.Concepts, "、"))
+			}
+			lookup := ""
+			if decomp.LookupRaw {
+				lookup = "，候选须是能作为原始佐证的聊天记录"
+			}
+			rankQuery = fmt.Sprintf("%s。约束：%s%s", query, strings.Join(parts, "；"), lookup)
+		}
+		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", today, rankQuery)
 		rerankResults, err := RerankCandidatesWithFallback(rerankQuery, docs, rerankCfgs)
 		if err == nil && len(rerankResults) > 0 {
 			type indexed struct {
@@ -756,6 +789,37 @@ func EnhancedRetrieval(
 		if len(searchKeys) == 0 {
 			// 没有可解析的 key 时做全库精确检索（msg_fts）
 			rawHits = append(rawHits, searchRawMessagesFTS(query, svc)...)
+		}
+
+		// 兜底：即使整句关键词没精确命中，也从命中的记忆事实里取 source 原文，
+		// 保证“原始聊天记录佐证”在没有精确关键词命中的情况下仍能给到。
+		if len(rawHits) == 0 && len(result.Facts) > 0 {
+			progress("raw_lookup", "从命中的记忆事实提取源聊天记录作为佐证")
+			sources, _ := ExtractFactSources(result.Facts, svc)
+			seen := make(map[string]bool)
+			for _, src := range sources {
+				for _, m := range src.Messages {
+					excerpt := RawExcerpt{
+						SourceName: src.SourceName,
+						Datetime:   m.Datetime,
+						Sender:     m.Sender,
+						Content:    m.Content,
+						Seq:        m.Seq,
+					}
+					dedupe := excerpt.SourceName + "|" + excerpt.Datetime + "|" + excerpt.Sender + "|" + excerpt.Content
+					if seen[dedupe] {
+						continue
+					}
+					seen[dedupe] = true
+					rawHits = append(rawHits, excerpt)
+					if len(rawHits) >= 100 {
+						break
+					}
+				}
+				if len(rawHits) >= 100 {
+					break
+				}
+			}
 		}
 		result.RawHits = rawHits
 	}

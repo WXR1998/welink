@@ -641,6 +641,7 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			"%s"+
 			"\n聊天记录：\n%s\n输出：",
 			accuracyRule,
+			displayName,
 			outputFormat,
 			bgSection,
 			priorSection,
@@ -812,6 +813,136 @@ func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string
 		}
 	}
 	return out, nil
+}
+
+// conceptLikeTerms 把一个概念拆成可用于 LIKE 共现匹配的词项。
+// LLM 分解出的概念可能是完整短语（如“装逼故事”），而事实文本往往只含
+// 其中一部分（“装逼”“炫耀”）。这里保留整词并补上 2 字子串，扩大召回，
+// 实体约束会把范围限制在“谁的故事”内，避免过度泛化。
+func conceptLikeTerms(concept string) []string {
+	r := []rune(concept)
+	if len(r) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if len([]rune(t)) >= 2 && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	// 整词
+	add(concept)
+	// 连续 2 字子串，覆盖“装逼故事”→“装逼”“逼故”“故事”
+	for i := 0; i+2 <= len(r); i++ {
+		add(string(r[i : i+2]))
+	}
+	return out
+}
+
+// SearchMemFactsCoMention 按“实体 × 概念”共现召回记忆事实。
+//
+// 与纯向量/BM25 检索互补：当问题里同时出现实体（人名）和语义概念时，
+// 用 LIKE 显式要求 fact 同时命中两者，避免相关度计算被无关的字面命中
+// （例如“装逼”）稀释掉真正需要“邓凯文 + 装逼/炫耀”共同出现的事实。
+func SearchMemFactsCoMention(key string, entities, concepts []string, topK int, timeFrom, timeTo string) []MemFact {
+	for i := range entities {
+		entities[i] = strings.TrimSpace(entities[i])
+	}
+	for i := range concepts {
+		concepts[i] = strings.TrimSpace(concepts[i])
+	}
+	var entityTerms []string
+	for _, e := range entities {
+		if e != "" {
+			entityTerms = append(entityTerms, e)
+		}
+	}
+	var conceptTerms []string
+	seenConcept := make(map[string]bool)
+	for _, c := range concepts {
+		for _, t := range conceptLikeTerms(c) {
+			if !seenConcept[t] {
+				seenConcept[t] = true
+				conceptTerms = append(conceptTerms, t)
+			}
+		}
+	}
+	if len(entityTerms) == 0 || len(conceptTerms) == 0 {
+		return nil
+	}
+
+	aiDBMu.Lock()
+	db := aiDB
+	aiDBMu.Unlock()
+	if db == nil {
+		return nil
+	}
+
+	// 构造 WHERE：(entity1 OR entity2) AND (concept1 OR concept2)
+	var conds []string
+	var args []interface{}
+	for _, e := range entityTerms {
+		conds = append(conds, "LOWER(fact) LIKE LOWER(?)")
+		args = append(args, "%"+e+"%")
+	}
+	entityClause := "(" + strings.Join(conds, " OR ") + ")"
+
+	var conceptConds []string
+	for _, c := range conceptTerms {
+		conceptConds = append(conceptConds, "LOWER(fact) LIKE LOWER(?)")
+		args = append(args, "%"+c+"%")
+	}
+	conceptClause := "(" + strings.Join(conceptConds, " OR ") + ")"
+
+	base := "SELECT contact_key, fact, source_from, source_to FROM mem_facts WHERE version = ? AND " + entityClause + " AND " + conceptClause
+	baseArgs := append([]interface{}{memFactVersion}, args...)
+
+	rows, err := func() (*sql.Rows, error) {
+		if key != "" {
+			return db.Query(base+" AND contact_key = ? ORDER BY id DESC LIMIT ?", append(baseArgs, key, topK*3)...)
+		}
+		return db.Query(base+" ORDER BY id DESC LIMIT ?", append(baseArgs, topK*3)...)
+	}()
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []MemFact
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var m MemFact
+		if err := rows.Scan(&m.ContactKey, &m.Fact, &m.SourceFrom, &m.SourceTo); err != nil {
+			continue
+		}
+		if timeFrom != "" || timeTo != "" {
+			factStart := factTimeStart(m.Fact)
+			if factStart != "" {
+				factEnd := factTimeEnd(m.Fact)
+				if factEnd == "" {
+					factEnd = factStart
+				}
+				if timeFrom != "" && factEnd < timeFrom+" 00:00" {
+					continue
+				}
+				if timeTo != "" && factStart > timeTo+" 23:59" {
+					continue
+				}
+			}
+		}
+		if seen[m.Fact] {
+			continue
+		}
+		seen[m.Fact] = true
+		out = append(out, m)
+		if len(out) >= topK {
+			break
+		}
+	}
+	return out
 }
 
 // memLLMConfigs 从 Preferences 构造 []Preferences（多提供商 fallback）。
