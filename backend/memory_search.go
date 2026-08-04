@@ -796,6 +796,7 @@ func registerLLMLogRoutes(api *gin.RouterGroup) {
 		llmApiLogs = nil
 		llmApiLogSeq = 0
 		llmApiLogMu.Unlock()
+		clearLLMApiLogsDB()
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 }

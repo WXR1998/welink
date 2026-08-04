@@ -67,13 +67,16 @@ func trimLLMApiLogs() {
 // logLLMApiCall 追加一条 LLM API 调用日志，返回它的 ID。
 func logLLMApiCall(entry LLMApiLogEntry) int {
 	llmApiLogMu.Lock()
-	defer llmApiLogMu.Unlock()
-
 	llmApiLogSeq++
 	entry.ID = llmApiLogSeq
 
 	llmApiLogs = append(llmApiLogs, entry)
 	trimLLMApiLogs()
+	llmApiLogMu.Unlock()
+
+	// 同步持久化到 SQLite，容器重启后仍能恢复最近的调用日志。
+	persistLLMApiLog(entry)
+	trimLLMApiLogsDB()
 	return entry.ID
 }
 
