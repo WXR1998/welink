@@ -70,6 +70,26 @@ func TestProgressBar(t *testing.T) {
 	}
 }
 
+func TestProgressBarCellCap(t *testing.T) {
+	// 总步数很大时，格数上限 20，按百分比涂色。
+	got := progressBar(10, 100) // 10%
+	if strings.Count(got, "🟩")+strings.Count(got, "⬜") != 20 {
+		t.Fatalf("cell count should cap at 20: %s", got)
+	}
+	if c := strings.Count(got, "🟩"); c != 2 {
+		t.Fatalf("10%% should fill 2 of 20 cells, got %d: %s", c, got)
+	}
+	// 小步数不受上限影响（保持原来的格子数）
+	small := progressBar(3, 5)
+	if strings.Count(small, "🟩")+strings.Count(small, "⬜") != 5 {
+		t.Fatalf("small totals keep own cells: %s", small)
+	}
+	// 25%（50/200）应填 5 格
+	if c := strings.Count(progressBar(50, 200), "🟩"); c != 5 {
+		t.Fatalf("25%% should fill 5 of 20, got %d", c)
+	}
+}
+
 
 func TestLoadConfig_LLMModelDefault(t *testing.T) {
 	os.Setenv("FEISHU_APP_ID", "cli_x")

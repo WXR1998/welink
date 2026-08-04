@@ -592,6 +592,9 @@ func cardJSON(title, text, progress string) string {
 }
 
 // progressBar 返回一个 n/5 格的 emoji 进度条行。
+// maxProgressCells 限制进度条格数，避免在消息框内被换行成两行。
+const maxProgressCells = 20
+
 func progressBar(current, total int) string {
 	if current < 0 {
 		current = 0
@@ -599,11 +602,22 @@ func progressBar(current, total int) string {
 	if current > total {
 		current = total
 	}
-	filled := strings.Repeat("🟩", current)
-	empty := strings.Repeat("⬜", total-current)
 	pct := 0
 	if total > 0 {
 		pct = current * 100 / total
 	}
-	return fmt.Sprintf("**%d%%** %s%s", pct, filled, empty)
+	// 最多显示 maxProgressCells 格，按百分比计算涂色格数，保证进度比例不变。
+	cells := total
+	if cells > maxProgressCells {
+		cells = maxProgressCells
+	}
+	filled := (cells * pct) / 100
+	if pct > 0 && filled == 0 {
+		filled = 1
+	}
+	empty := cells - filled
+	if empty < 0 {
+		empty = 0
+	}
+	return fmt.Sprintf("**%d%%** %s%s", pct, strings.Repeat("🟩", filled), strings.Repeat("⬜", empty))
 }
