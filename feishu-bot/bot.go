@@ -183,6 +183,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 
 	_ = b.patchCard(ctx, messageID, cardWithText("🔎 正在检索跨联系人聊天记录…\n\n处理中…"))
 	answer, errMsg := b.answer(ctx, sessionKey, question)
+	log.Printf("[bot] %s 回答完成: messageID=%s question=%q answerLen=%d errMsg=%q", sessionKey, messageID, question, len(answer), errMsg)
 
 	if errMsg != "" {
 		b.untrackPending(messageID)
