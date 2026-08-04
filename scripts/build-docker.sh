@@ -83,6 +83,7 @@ if [ -f "$COMPOSE_FILE" ]; then
   sed -i.bak \
     -e "s|image: welink-backend:.*|image: welink-backend:$SHA|" \
     -e "s|image: welink-frontend:.*|image: welink-frontend:$SHA|" \
+    -e "s|image: welink-feishu-bot:.*|image: welink-feishu-bot:$SHA|" \
     "$COMPOSE_FILE"
   rm -f "$COMPOSE_FILE.bak"
   echo "✅ compose.yaml 已更新"
