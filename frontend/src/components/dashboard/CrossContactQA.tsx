@@ -253,6 +253,155 @@ function collectWholeConversationExcerpts(msgs: Message[]): RawExcerpt[] | null 
   return out.length ? out : null;
 }
 
+// 只保留检索详情中“轻量 + 后续逻辑需要”的字段，丢弃纯调试的大体积内容
+// （查询分解/精排的完整 prompt、rerank 明细、扩展子查询）。
+// sources / vec_messages / raw_hits 仍保留，供“找原文”追问时复用原文候选。
+function compactMemorySearchData(d: MemorySearchResponse): MemorySearchResponse | undefined {
+  if (!d) return undefined;
+  return {
+    decomposition: d.decomposition,
+    resolved_entities: d.resolved_entities,
+    facts: d.facts,
+    sources: d.sources,
+    pinned_facts: d.pinned_facts,
+    token_usage: d.token_usage,
+    vec_messages: d.vec_messages,
+    rerank_used: d.rerank_used,
+    vector_hits: d.vector_hits,
+    bm25_hits: d.bm25_hits,
+    vec_message_hits: d.vec_message_hits,
+    raw_hits: d.raw_hits,
+  };
+}
+
+// 检索详情的折叠面板。核心点：内容只有在用户真正打开时才挂载/渲染，
+// 避免每条 AI 回答都把几十上百条 sources / rerank / 原文渲染进隐藏 DOM，
+// 造成输入时的持续卡顿。
+const RetrievalDetails: React.FC<{ msg: Message; privacyMode: boolean }> = ({ msg, privacyMode }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <details open={open} onToggle={e => setOpen((e.target as HTMLDetailsElement).open)} className="mt-1.5 w-full">
+      <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none flex items-center gap-1">
+        <Search size={10} />
+        检索详情
+      </summary>
+      {open && (
+        <div className="mt-2 p-3 bg-gray-50 dark:bg-white/5 rounded-xl text-xs space-y-3">
+          {/* 查询分解 */}
+          {msg.memorySearchData?.decomposition && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">查询分解</div>
+              <div className="space-y-0.5 text-gray-500">
+                <div>需要检索记忆: {msg.memorySearchData.decomposition.needs_memory ? '是' : '否（可即答）'}</div>
+                {msg.memorySearchData.decomposition.entities?.length > 0 && (
+                  <div>实体: {msg.memorySearchData.decomposition.entities.join('、')}</div>
+                )}
+                {msg.memorySearchData.decomposition.concepts?.length > 0 && (
+                  <div>概念: {msg.memorySearchData.decomposition.concepts.join('、')}</div>
+                )}
+                {(msg.memorySearchData.decomposition.time_from || msg.memorySearchData.decomposition.time_to) && (
+                  <div>时间范围: {msg.memorySearchData.decomposition.time_from || '?'} ~ {msg.memorySearchData.decomposition.time_to || '?'}</div>
+                )}
+              </div>
+            </div>
+          )}
+          {/* 解析实体 */}
+          {msg.memorySearchData?.resolved_entities && msg.memorySearchData.resolved_entities.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">解析实体</div>
+              <div className="space-y-0.5 text-gray-500">
+                {msg.memorySearchData.resolved_entities.map((re, idx) => (
+                  <div key={idx}>
+                    {re.name} → {re.contact_key || '未匹配'} {re.display_name ? `(${re.display_name})` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 用户指定的群聊 */}
+          {msg.memorySearchData?.decomposition?.groups && msg.memorySearchData.decomposition.groups.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">指定群聊</div>
+              <div className="text-gray-500">{msg.memorySearchData.decomposition.groups.join('、')}</div>
+            </div>
+          )}
+          {/* 记忆事实（不展示源聊天记录） */}
+          {msg.memorySearchData?.sources && msg.memorySearchData.sources.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                检索到 {msg.memorySearchData.sources.length} 条记忆事实
+              </div>
+              <div className="space-y-1">
+                {msg.memorySearchData.sources.map((src, idx) => (
+                  <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                    <span className="text-gray-500 text-[10px]">{privacyMode ? '***' : (src.source_name || src.fact?.contact_key || '未知')}</span>
+                    <div className="text-gray-600 dark:text-gray-300 text-xs">{src.fact.fact}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 置顶事实 */}
+          {msg.memorySearchData?.pinned_facts && msg.memorySearchData.pinned_facts.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">置顶事实</div>
+              <div className="space-y-0.5 text-gray-500">
+                {msg.memorySearchData.pinned_facts.map((pf, idx) => (
+                  <div key={idx}>- {pf.fact}</div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 原文精确命中（找原文场景） */}
+          {msg.memorySearchData?.raw_hits && msg.memorySearchData.raw_hits.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                原文精确命中（{msg.memorySearchData.raw_hits.length} 条）
+              </div>
+              <div className="mt-1 space-y-1 max-h-56 overflow-y-auto">
+                {msg.memorySearchData.raw_hits.map((rh, idx) => (
+                  <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                    <span className="text-gray-500 text-[10px]">{rh.source_name} · {rh.datetime} {rh.sender}</span>
+                    <div className="text-gray-600 dark:text-gray-300 text-xs break-all">{rh.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* 增强检索统计 */}
+          {msg.memorySearchData && (msg.memorySearchData.vector_hits || msg.memorySearchData.bm25_hits || msg.memorySearchData.vec_message_hits || msg.memorySearchData.rerank_used !== undefined) && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">检索统计</div>
+              <div className="space-y-0.5 text-gray-500">
+                <div>向量检索: {msg.memorySearchData.vector_hits ?? 0} 条命中</div>
+                <div>BM25 检索: {msg.memorySearchData.bm25_hits ?? 0} 条命中</div>
+                <div>原始消息检索: {msg.memorySearchData.vec_message_hits ?? 0} 条命中</div>
+                <div>Rerank 精排: {msg.memorySearchData.rerank_used ? '✅ 已使用' : '❌ 未使用'}</div>
+              </div>
+            </div>
+          )}
+          {/* 双路检索：原始消息命中 */}
+          {msg.memorySearchData?.vec_messages && msg.memorySearchData.vec_messages.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                原始消息检索命中（{msg.memorySearchData.vec_messages.length} 条）
+              </div>
+              <div className="mt-1 space-y-1 max-h-56 overflow-y-auto">
+                {msg.memorySearchData.vec_messages.map((vm, idx) => (
+                  <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                    <span className="text-gray-500 text-[10px]">{vm.datetime} {vm.sender}</span>
+                    <div className="text-gray-600 dark:text-gray-300 text-xs">{vm.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </details>
+  );
+};
+
 const EXAMPLE_QUESTIONS = [
   '谁跟我聊过旅行？',
   '去年国庆我都跟谁聊天了？',
@@ -575,10 +724,10 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       let buf = '';
       let full = '';
 
-      // 替换 searching 消息为正式回答，附带检索详情
+      // 替换 searching 消息为正式回答，附带（精简后的）检索详情
       setMessages(prev => {
         const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content: '', memorySearchData: memData, llmPrompt: llmMessages };
+        next[next.length - 1] = { role: 'assistant', content: '', memorySearchData: compactMemorySearchData(memData) };
         return next;
       });
 
@@ -658,11 +807,19 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         }).catch(() => {});
         return;
       }
-      // 组件仍挂载：保存 token 使用统计和耗时到最后一条 assistant 消息
+      // 组件仍挂载：保存 token 使用统计和耗时，并把检索详情压缩到最轻状态，
+      // 释放内存（llmPrompt / rerank 明细等纯调试数据不再留在 React 状态里）。
       setMessages(prev => {
         const next = [...prev];
-        if (next[next.length - 1]?.role === 'assistant') {
-          next[next.length - 1] = { ...next[next.length - 1], tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens }, elapsedMs: Date.now() - startTime };
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant') {
+          const { llmPrompt, ...rest } = last;
+          next[next.length - 1] = {
+            ...rest,
+            memorySearchData: compactMemorySearchData(last.memorySearchData as MemorySearchResponse),
+            tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens },
+            elapsedMs: Date.now() - startTime,
+          };
         }
         return next;
       });
@@ -731,8 +888,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             role: m.role as 'user' | 'assistant' | 'system',
             content: m.content,
             searching: false,
-            memorySearchData: m.memorySearchData,
-            llmPrompt: m.llmPrompt,
+            memorySearchData: compactMemorySearchData(m.memorySearchData),
           }));
         if (restored.length === 0) return;
         setMessages(restored);
@@ -929,186 +1085,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                   )}
                 </div>
               )}
-              {/* 检索详情下拉框 */}
-              {msg.role === 'assistant' && !msg.searching && msg.content && (msg.memorySearchData || msg.llmPrompt) && (
-                <details className="mt-1.5 w-full">
-                  <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none flex items-center gap-1">
-                    <Search size={10} />
-                    检索详情
-                  </summary>
-                  <div className="mt-2 p-3 bg-gray-50 dark:bg-white/5 rounded-xl text-xs space-y-3">
-                    {/* 查询分解 */}
-                    {msg.memorySearchData?.decomposition && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">查询分解</div>
-                        <div className="space-y-0.5 text-gray-500">
-                          <div>需要检索记忆: {msg.memorySearchData.decomposition.needs_memory ? '是' : '否（可即答）'}</div>
-                          {msg.memorySearchData.decomposition.entities?.length > 0 && (
-                            <div>实体: {msg.memorySearchData.decomposition.entities.join('、')}</div>
-                          )}
-                          {msg.memorySearchData.decomposition.concepts?.length > 0 && (
-                            <div>概念: {msg.memorySearchData.decomposition.concepts.join('、')}</div>
-                          )}
-                          {(msg.memorySearchData.decomposition.time_from || msg.memorySearchData.decomposition.time_to) && (
-                            <div>时间范围: {msg.memorySearchData.decomposition.time_from || '?'} ~ {msg.memorySearchData.decomposition.time_to || '?'}</div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {/* 解析实体 */}
-                    {msg.memorySearchData?.resolved_entities && msg.memorySearchData.resolved_entities.length > 0 && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">解析实体</div>
-                        <div className="space-y-0.5 text-gray-500">
-                          {msg.memorySearchData.resolved_entities.map((re, idx) => (
-                            <div key={idx}>
-                              {re.name} → {re.contact_key || '未匹配'} {re.display_name ? `(${re.display_name})` : ''}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* 用户指定的群聊 */}
-                    {msg.memorySearchData?.decomposition?.groups && msg.memorySearchData.decomposition.groups.length > 0 && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">指定群聊</div>
-                        <div className="text-gray-500">{msg.memorySearchData.decomposition.groups.join('、')}</div>
-                      </div>
-                    )}
-                    {/* 记忆事实（不展示源聊天记录） */}
-                    {msg.memorySearchData?.sources && msg.memorySearchData.sources.length > 0 && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                          检索到 {msg.memorySearchData.sources.length} 条记忆事实
-                        </div>
-                        <div className="space-y-1">
-                          {msg.memorySearchData.sources.map((src, idx) => (
-                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-                              <span className="text-gray-500 text-[10px]">{privacyMode ? '***' : (src.source_name || src.fact?.contact_key || '未知')}</span>
-                              <div className="text-gray-600 dark:text-gray-300 text-xs">{src.fact.fact}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* 置顶事实 */}
-                    {msg.memorySearchData?.pinned_facts && msg.memorySearchData.pinned_facts.length > 0 && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">置顶事实</div>
-                        <div className="space-y-0.5 text-gray-500">
-                          {msg.memorySearchData.pinned_facts.map((pf, idx) => (
-                            <div key={idx}>- {pf.fact}</div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* 原文精确命中（找原文场景） */}
-                    {msg.memorySearchData?.raw_hits && msg.memorySearchData.raw_hits.length > 0 && (
-                      <details className="mt-1" open>
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          原文精确命中（{msg.memorySearchData.raw_hits.length} 条）
-                        </summary>
-                        <div className="mt-1 space-y-1">
-                          {msg.memorySearchData.raw_hits.map((rh, idx) => (
-                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-                              <span className="text-gray-500 text-[10px]">{rh.source_name} · {rh.datetime} {rh.sender}</span>
-                              <div className="text-gray-600 dark:text-gray-300 text-xs break-all">{rh.content}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {/* 增强检索统计 */}
-                    {msg.memorySearchData && (msg.memorySearchData.vector_hits || msg.memorySearchData.bm25_hits || msg.memorySearchData.vec_message_hits || msg.memorySearchData.rerank_used !== undefined) && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">检索统计</div>
-                        <div className="space-y-0.5 text-gray-500">
-                          <div>向量检索: {msg.memorySearchData.vector_hits ?? 0} 条命中</div>
-                          <div>BM25 检索: {msg.memorySearchData.bm25_hits ?? 0} 条命中</div>
-                          <div>原始消息检索: {msg.memorySearchData.vec_message_hits ?? 0} 条命中</div>
-                          <div>Rerank 精排: {msg.memorySearchData.rerank_used ? '✅ 已使用' : '❌ 未使用'}</div>
-                        </div>
-                      </div>
-                    )}
-                    {/* Rerank 精排结果 */}
-                    {msg.memorySearchData?.rerank_results && msg.memorySearchData.rerank_results.length > 0 && (
-                      <details className="mt-1" open>
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          Rerank 精排结果（{msg.memorySearchData.rerank_results.length} 条，按得分降序）
-                        </summary>
-                        <div className="mt-1 space-y-0.5 text-xs text-gray-500 font-mono">
-                          {msg.memorySearchData.rerank_results.map((rr, idx) => (
-                            <div key={idx} className="flex gap-2">
-                              <span className="text-gray-400 tabular-nums">{rr.score.toFixed(5)}</span>
-                              <span className="text-gray-600 dark:text-gray-300 break-all">{rr.text}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {/* 查询改写：扩展子查询 */}
-                    {msg.memorySearchData?.expanded_queries && msg.memorySearchData.expanded_queries.length > 0 && (
-                      <div>
-                        <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">查询改写（扩展子查询）</div>
-                        <div className="space-y-0.5 text-gray-500">
-                          {msg.memorySearchData.expanded_queries.map((q, idx) => (
-                            <div key={idx}>{idx + 1}. {q}</div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* 双路检索：原始消息命中 */}
-                    {msg.memorySearchData?.vec_messages && msg.memorySearchData.vec_messages.length > 0 && (
-                      <details className="mt-1">
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          原始消息检索命中（{msg.memorySearchData.vec_messages.length} 条）
-                        </summary>
-                        <div className="mt-1 space-y-1">
-                          {msg.memorySearchData.vec_messages.map((vm, idx) => (
-                            <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-                              <span className="text-gray-500 text-[10px]">{vm.datetime} {vm.sender}</span>
-                              <div className="text-gray-600 dark:text-gray-300 text-xs">{vm.content}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {/* 嵌套下拉框：查询分解 prompt */}
-                    {msg.memorySearchData?.decompose_prompt && msg.memorySearchData.decompose_prompt.length > 0 && (
-                      <details className="mt-2">
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          查询分解 prompt（{msg.memorySearchData.decompose_prompt.length} 条消息）
-                        </summary>
-                        <div className="mt-2 space-y-2">
-                          {msg.memorySearchData.decompose_prompt.map((m, idx) => (
-                            <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-100 dark:border-gray-800">
-                              <div className="text-[10px] font-semibold text-gray-400 mb-1">{m.role}</div>
-                              <div className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words">{m.content}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {/* 嵌套下拉框：发给 LLM 的原始 prompt */}
-                    {msg.llmPrompt && msg.llmPrompt.length > 0 && (
-                      <details className="mt-2">
-                        <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none">
-                          发送给 LLM 的原始 prompt（{msg.llmPrompt.length} 条消息）
-                        </summary>
-                        <div className="mt-2 space-y-2">
-                          {msg.llmPrompt.map((m, idx) => (
-                            <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-100 dark:border-gray-800">
-                              <div className="text-[10px] font-semibold text-gray-400 mb-1">{m.role}</div>
-                              <div className="text-xs text-gray-600 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                </details>
+              {(msg.role === "assistant") && !msg.searching && msg.content && msg.memorySearchData && (
+                <RetrievalDetails msg={msg} privacyMode={privacyMode} />
               )}
               {/* 搜索结果完整列表 */}
               {msg.searchHits && msg.searchHits.length > 0 && !msg.searching && msg.content && (
