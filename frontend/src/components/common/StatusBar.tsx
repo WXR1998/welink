@@ -141,6 +141,20 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
       } catch { /* ignore */ }
     })());
 
+    // 记忆总数不依赖记忆面板是否打开：状态栏自己也拉取一次，
+    // 否则只有进入「记忆库」页面时 setMemoryCount 才会被调用。
+    promises.push((async () => {
+      try {
+        const r = await api.get<unknown, {
+          contacts: { contact_key: string; count: number; pinned_count: number }[];
+        }>('/memory/contacts');
+        const list = r.contacts || [];
+        const total = list.reduce((s, c) => s + (c.count || 0), 0);
+        const pinned = list.reduce((s, c) => s + (c.pinned_count || 0), 0);
+        setMemoryCount(total, pinned);
+      } catch { /* ignore */ }
+    })());
+
     await Promise.all(promises);
   }, []);
 
