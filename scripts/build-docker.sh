@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 构建前后端 Docker 镜像，tag 使用当前 git commit 短 SHA。
+# 构建前后端及飞书网关 Docker 镜像，tag 使用当前 git commit 短 SHA。
 # 自动更新 compose.yaml 中的镜像 tag，并重启容器。
 #
 # 用法:
@@ -39,7 +39,7 @@ fi
 
 # ── 构建后端 ──────────────────────────────────────────────────────────────────
 echo ""
-echo "📦 [1/2] 构建后端镜像 welink-backend:$SHA"
+echo "📦 [1/3] 构建后端镜像 welink-backend:$SHA"
 echo "   Dockerfile: backend/Dockerfile"
 echo ""
 docker build --network=host \
@@ -52,7 +52,7 @@ echo "✅ 后端镜像构建完成: welink-backend:$SHA"
 
 # ── 构建前端 ──────────────────────────────────────────────────────────────────
 echo ""
-echo "📦 [2/2] 构建前端镜像 welink-frontend:$SHA"
+echo "📦 [2/3] 构建前端镜像 welink-frontend:$SHA"
 echo "   Dockerfile: frontend/Dockerfile"
 echo ""
 docker build --network=host \
@@ -62,6 +62,19 @@ docker build --network=host \
 
 echo ""
 echo "✅ 前端镜像构建完成: welink-frontend:$SHA"
+
+# ── 构建飞书网关 ──────────────────────────────────────────────────────────────
+echo ""
+echo "📦 [3/3] 构建飞书网关镜像 welink-feishu-bot:$SHA"
+echo "   Dockerfile: feishu-bot/Dockerfile"
+echo ""
+docker build --network=host \
+  -f feishu-bot/Dockerfile \
+  -t "welink-feishu-bot:$SHA" \
+  feishu-bot/
+
+echo ""
+echo "✅ 飞书网关镜像构建完成: welink-feishu-bot:$SHA"
 
 # ── 更新 compose.yaml ────────────────────────────────────────────────────────
 if [ -f "$COMPOSE_FILE" ]; then
@@ -100,7 +113,7 @@ fi
 # ── 清理旧镜像 ────────────────────────────────────────────────────────────────
 echo ""
 echo "🧹 清理旧镜像 (保留当前 SHA: $SHA)..."
-OLD_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'welink-(backend|frontend):' | grep -v ":$SHA" || true)
+OLD_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'welink-(backend|frontend|feishu-bot):' | grep -v ":$SHA" || true)
 if [ -n "$OLD_IMAGES" ]; then
   echo "删除旧镜像:"
   echo "$OLD_IMAGES" | while read -r img; do
@@ -125,5 +138,5 @@ fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ 全部完成!"
-echo "  镜像: welink-backend:$SHA, welink-frontend:$SHA"
+echo "  镜像: welink-backend:$SHA, welink-frontend:$SHA, welink-feishu-bot:$SHA"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

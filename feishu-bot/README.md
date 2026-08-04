@@ -53,6 +53,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 | `WELINK_BASE_URL` | WeLink 后端地址 | `http://127.0.0.1:8080` |
 | `WELINK_TOKEN` | 配对 token。Docker 内非回环访问时需带 | 空（回环自动放行） |
 | `DEFAULT_PROFILE_ID` | 使用的 LLM Profile ID | 空（用默认） |
+| `LLM_MODEL` | LLM 模型名称（覆盖后端 profile 中的模型） | `lingjun.internal/deepseek-v4-flash` |
 | `STREAM_MODE` | 流式回复载体：`md`（默认）或 `card` | `md` |
 | `SESSION_STORE_PATH` | 会话历史 JSON 文件路径；空=仅内存 | 空 |
 | `ALLOWED_USERS` | 允许的飞书用户，逗号分隔 | 空=不限制 |

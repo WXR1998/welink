@@ -517,6 +517,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			ProfileID             string              `json:"profile_id"`
 			ConversationKey       string              `json:"conversation_key"`
 			PreviousDecomposition *QueryDecomposition `json:"previous_decomposition"`
+		Model                  string              `json:"model"` // 可选：覆盖 profile 中的模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Query) == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query 必填"})
@@ -525,6 +526,9 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		if body.Model != "" {
+			cfg.model = body.Model
+		}
 		if cfg.provider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return

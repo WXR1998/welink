@@ -42,3 +42,32 @@ func TestCardWithTextIsValidJSON(t *testing.T) {
 		t.Fatalf("card missing fields: %s", card)
 	}
 }
+
+
+func TestLoadConfig_LLMModelDefault(t *testing.T) {
+	os.Setenv("FEISHU_APP_ID", "cli_x")
+	os.Setenv("FEISHU_APP_SECRET", "secret")
+	defer func() {
+		os.Unsetenv("FEISHU_APP_ID")
+		os.Unsetenv("FEISHU_APP_SECRET")
+		os.Unsetenv("LLM_MODEL")
+	}()
+
+	os.Unsetenv("LLM_MODEL")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.LLMModel != "lingjun.internal/deepseek-v4-flash" {
+		t.Fatalf("expected default LLM model, got %q", cfg.LLMModel)
+	}
+
+	os.Setenv("LLM_MODEL", "custom-model")
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.LLMModel != "custom-model" {
+		t.Fatalf("expected custom model, got %q", cfg.LLMModel)
+	}
+}

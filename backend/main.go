@@ -1698,6 +1698,7 @@ func serverMain() {
 			Query            string       `json:"query"`             // 当前用户问题（用于找原文/选择候选）
 			ConversationKey  string       `json:"conversation_key"`  // 当前 AI 会话 key，用于后端读回前序原文候选
 			CandidateSources []RawExcerpt `json:"candidate_sources"` // 前序对话中已检索到的原文候选（兼容旧前端）
+		Model            string       `json:"model"`              // 可选：覆盖 profile 中的模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1705,6 +1706,9 @@ func serverMain() {
 		}
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		if body.Model != "" {
+			cfg.model = body.Model
+		}
 		if cfg.provider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return
@@ -2189,6 +2193,7 @@ func serverMain() {
 			SessionID string       `json:"session_id"`
 			Messages  []LLMMessage `json:"messages"`
 			ProfileID string       `json:"profile_id"`
+			Model     string       `json:"model"` // 可选：覆盖 profile 中的模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -2196,6 +2201,9 @@ func serverMain() {
 		}
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		if body.Model != "" {
+			cfg.model = body.Model
+		}
 		if cfg.provider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return
@@ -2372,12 +2380,16 @@ func serverMain() {
 	api.POST("/ai/complete", func(c *gin.Context) {
 		var body struct {
 			Messages []LLMMessage `json:"messages"`
+			Model    string       `json:"model"` // 可选：覆盖默认模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
 			return
 		}
 		prefs := loadPreferences()
+		if body.Model != "" {
+			prefs.LLMModel = body.Model
+		}
 		if prefs.LLMProvider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return
@@ -3649,6 +3661,7 @@ func serverMain() {
 			Messages    []LLMMessage `json:"messages"`
 			SearchQuery string       `json:"search_query"`
 			ProfileID   string       `json:"profile_id"`
+			Model       string       `json:"model"` // 可选：覆盖 profile 中的模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || body.Key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -3656,6 +3669,9 @@ func serverMain() {
 		}
 		prefs := loadPreferences()
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		if body.Model != "" {
+			cfg.model = body.Model
+		}
 		if cfg.provider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return

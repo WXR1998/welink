@@ -30,6 +30,9 @@ type Config struct {
 
 	// 允许的飞书用户（open_id 或 user_id），为空表示不限制（危险）
 	AllowedUsers []string
+
+	// LLM 模型名称（覆盖后端 profile 中的模型）
+	LLMModel string
 }
 
 // loadConfig 从环境变量读配置；可用 FEISHU_CONFIG 指向 JSON 覆盖。
@@ -43,6 +46,7 @@ func loadConfig() (*Config, error) {
 		StreamMode:        strings.ToLower(getenv("STREAM_MODE", "md")),
 		SessionStorePath:  os.Getenv("SESSION_STORE_PATH"),
 		AllowedUsers:      splitList(os.Getenv("ALLOWED_USERS")),
+		LLMModel:          getenv("LLM_MODEL", "lingjun.internal/deepseek-v4-flash"),
 	}
 
 	if p := os.Getenv("FEISHU_CONFIG"); p != "" {
@@ -59,6 +63,7 @@ func loadConfig() (*Config, error) {
 			StreamMode       string   `json:"stream_mode"`
 			SessionStorePath string   `json:"session_store_path"`
 			AllowedUsers     []string `json:"allowed_users"`
+			LLMModel         string   `json:"llm_model"`
 		}
 		if err := json.Unmarshal(b, &overrides); err != nil {
 			return nil, err
@@ -70,6 +75,7 @@ func loadConfig() (*Config, error) {
 		applyOverride(&cfg.DefaultProfileID, overrides.DefaultProfile)
 		applyOverride(&cfg.StreamMode, strings.ToLower(overrides.StreamMode))
 		applyOverride(&cfg.SessionStorePath, overrides.SessionStorePath)
+		applyOverride(&cfg.LLMModel, overrides.LLMModel)
 		if len(overrides.AllowedUsers) > 0 {
 			cfg.AllowedUsers = overrides.AllowedUsers
 		}

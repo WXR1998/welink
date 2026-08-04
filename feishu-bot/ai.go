@@ -99,6 +99,7 @@ type memorySearchRequest struct {
 	Query           string `json:"query"`
 	ProfileID       string `json:"profile_id"`
 	ConversationKey string `json:"conversation_key"`
+	Model           string `json:"model,omitempty"`
 }
 
 // analyzeRequest 对应 POST /api/ai/analyze（cross-contact 模式）。
@@ -110,6 +111,7 @@ type analyzeRequest struct {
 	SkipMemory      bool         `json:"skip_memory"`
 	Query           string       `json:"query"`
 	ConversationKey string       `json:"conversation_key"`
+	Model           string       `json:"model,omitempty"`
 }
 
 // analyzeChunk 解析后端 /api/ai/analyze 的 SSE data 帧。
@@ -121,7 +123,7 @@ type analyzeChunk struct {
 
 // complete 调用 POST /api/ai/complete，用非流式补全做上下文压缩摘要。
 func complete(ctx context.Context, cfg *Config, msgs []llmMessage) (string, error) {
-	payload, _ := json.Marshal(map[string]any{"messages": msgs})
+	payload, _ := json.Marshal(map[string]any{"messages": msgs, "model": cfg.LLMModel})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.WeLinkBaseURL+"/api/ai/complete", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
@@ -216,6 +218,7 @@ func memorySearch(ctx context.Context, cfg *Config, query, convKey string, hasPr
 		Query:           query,
 		ProfileID:       cfg.DefaultProfileID,
 		ConversationKey: convKey,
+		Model:           cfg.LLMModel,
 	})
 
 	var result *memorySearchData
@@ -401,6 +404,7 @@ func analyzeQuestion(ctx context.Context, cfg *Config, query, convKey string, hi
 		SkipMemory:      true, // memory-search 已注入，analyze 不再重复加载记忆
 		Query:           query,
 		ConversationKey: convKey,
+		Model:           cfg.LLMModel,
 	})
 
 	var answer strings.Builder
