@@ -10,6 +10,18 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
+	if len(os.Args) > 1 && os.Args[1] == "--check" {
+		cfg, err := loadConfig()
+		if err != nil {
+			log.Fatalf("[check] %v", err)
+		}
+		if err := runCheck(context.Background(), cfg); err != nil {
+			log.Fatalf("[check] 自检失败: %v", err)
+		}
+		return
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("[main] %v", err)

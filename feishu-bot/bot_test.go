@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
@@ -18,19 +19,59 @@ func TestSessionKeyFor_GroupIsolation(t *testing.T) {
 	}
 }
 
-func TestKeyAllowed(t *testing.T) {
-	b := &bot{cfg: &Config{AllowedKeys: []string{"contact:alice", "group:闲聊"}}}
-	if !b.keyAllowed("contact:alice") {
-		t.Errorf("expected contact:alice allowed")
+func TestBusyLockRejectsConcurrent(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	key := "p2p:user_a"
+	if !b.acquireBusy(key) {
+		t.Fatalf("expected first acquire to succeed")
 	}
-	if b.keyAllowed("contact:bob") {
-		t.Errorf("expected contact:bob rejected")
+	if b.acquireBusy(key) {
+		t.Fatalf("expected second acquire to be rejected while busy")
 	}
+	b.releaseBusy(key)
+	if !b.acquireBusy(key) {
+		t.Fatalf("expected acquire after release to succeed")
+	}
+	b.releaseBusy(key)
+}
 
-	b2 := &bot{cfg: &Config{AllowedKeys: nil}}
-	if !b2.keyAllowed("anything") {
-		t.Errorf("empty allowlist should allow all")
+func TestSessionExpiresAfterIdle(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	key := "p2p:user_b"
+	b.remember(key, "问题1", "回答1")
+	if len(b.historyOf(key)) != 2 {
+		t.Fatalf("expected history length 2, got %d", len(b.historyOf(key)))
 	}
+	// 模拟已空闲超过 2 小时
+	b.mu.Lock()
+	b.sessions[key].lastActive = time.Now().Add(-(sessionIdleTTL + time.Minute))
+	b.mu.Unlock()
+	if len(b.historyOf(key)) != 0 {
+		t.Fatalf("expected history reset after idle, got %d", len(b.historyOf(key)))
+	}
+}
+
+func TestBuildDataContextIncludesFacts(t *testing.T) {
+	d := &memorySearchData{
+		Facts: []memFact{{Fact: "张三上月聊过旅行", ContactKey: "contact:zhangsan"}},
+	}
+	ctx := buildDataContext(d)
+	if ctx == "" || !contains(ctx, "张三上月聊过旅行") {
+		t.Fatalf("buildDataContext missing facts: %q", ctx)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || indexOf(s, sub) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestCleanMention(t *testing.T) {

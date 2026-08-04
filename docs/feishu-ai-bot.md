@@ -38,22 +38,22 @@
         ▼  WebSocket 长连接（主动出站）
 NAS 上的飞书机器人网关进程
         │
-        ▼  本机调用 WeLink
-POST /api/ai/rag            （单联系人 / 群混合检索问答）
-POST /api/ai/memory-search  （跨联系人记忆优先问答）
+        ▼  本机调用 WeLink（跨联系人问答）
+POST /api/ai/memory-search  （记忆检索）
+POST /api/ai/analyze        （生成回答）
         │
         ▼  把 SSE delta 汇总成完整文本
 飞书「发送消息」API 异步回传
 ```
 
-- 常用入口：`/api/ai/rag`（`key` + `messages` + `profile_id`）与 `/api/ai/memory-search` + `/api/ai/analyze`（跨联系人记忆优先问答），这两条链路是现有前端 `LLMAnalysisTab` 与 `CrossContactQA` 在用的，机器人直接复用，不改前端。
+- 网关走 **跨联系人问答**：先 `memory-search` 检索记忆与原文，再 `analyze` 生成回答，复用现有前端 `CrossContactQA` 的 Agent 链路，不改前端。
 - 网关进程在 NAS 上回环访问 WeLink 时，属于 `loopback`，现有 `pairing.go` 的 `isLoopbackRequest` 会放行；如果网关跑在 Docker 容器里（非宿主），则需显式带 `Authorization: Bearer <MobilePairingToken>`。
 
 ## 飞书开放能力要点
 
 - **机器人能力**：在开发者后台「应用能力 > 添加应用能力」中开启「机器人」。
 - **长连接（WebSocket）**：用官方 SDK 建立 WS 全双工通道，订阅 `im.message.receive_v1`。无需回调 URL。
-- **3 秒约束**：事件需在 3 秒内处理完成，否则触发超时重推。所以收到消息后应先异步返回，再在后台执行 RAG + LLM，最后用发送消息 API 回传。
+- **3 秒约束**：事件需在 3 秒内处理完成，否则触发超时重推。所以收到消息后应先异步返回，再在后台执行检索 + LLM，最后用发送消息 API 回传。
 - **连接数**：每个应用最多 50 个 WebSocket 连接；集群模式下只有随机一个客户端会收到消息。单实例即可。
 - **消息幂等**：群机器人收到的是群内广播事件；单聊是点对点消息。都需要用 `message_id` / 事务去重，避免重推导致重复回复。
 
@@ -75,11 +75,15 @@ POST /api/ai/memory-search  （跨联系人记忆优先问答）
 4. 在事件订阅中选择**长连接**方式，订阅 `im.message.receive_v1`。
 5. 获取应用的 `App ID` / `App Secret`，配置到 WeLink 或机器人网关的环境变量 / `preferences.json`。
 6. 新增 Go 网关：使用 `github.com/larksuite/oapi-sdk-go/v3`，用 `larkws.NewClient` + `OnP2MessageReceiveV1` 收消息，`im/v1` 的 `message.Create` 发消息。
-7. 收到消息后异步处理，调 WeLink `/api/ai/rag`（或 `/api/ai/memory-search`），把 SSE delta 汇总为完整文本，再回传。
+7. 收到消息后异步处理，调 WeLink `/api/ai/memory-search` 与 `/api/ai/analyze`，把检索结果汇总为上下文并生成回答，再回传。
 
 ## 会话 / 权限 / 去重设计
 
-- **会话隔离**：单聊用 `chat_id`（或 `open_id`）映射 `conversation_key`（如 `feishu:<open_id>`）；群聊用 `chat_id + sender_id` 区分提问人，避免多人共享上下文。
+- **会话隔离**：单聊用 `user_id` 映射独立会话；群聊用 `chat_id + sender_id` 区分提问人，每人有独立上下文（含历史问答）。
+- **只 @bot 才提问**：群聊只有 `MentionedBot` 的消息才被当作提问；单聊始终响应。
+- **回答中冷却**：AI 正在回答某人时，同人再次提问会被拒绝并返回提示。
+- **2 小时过期**：某人超过 2 小时无提问，自动丢弃旧上下文、新起会话。
+- **上下文压缩**：历史达到一定条数/长度后，调用后端 `/api/ai/complete` 压缩成摘要，保留最近一问一答。
 - **访问控制**：应用「可用范围」限定成员 + 网关代码内白名单（Telegram/飞书 user_id 白名单）双保险；只对可信成员开放全部检索能力。
 - **消息去重**：通过 `message_id` / `client_msg_id` 幂等，避免 3 秒超时重推或同一条消息被多次执行。
 - **超长回答**：飞书文本消息体上限约 150KB，单条有长度限制；按段落拆分多条 `message.Create`，或只回摘要再提示“完整内容请到 Web UI”。
@@ -131,14 +135,14 @@ POST /api/ai/memory-search  （跨联系人记忆优先问答）
 |------|------------|----------|
 | 飞书 App ID / Secret 配置 | 已有字段 + token 缓存 | 可复用 |
 | 飞书消息收发 | 无 | 网关：SDK WS 接收 + 发送 API |
-| AI 问答接口 | `/api/ai/rag`、`/api/ai/memory-search` | 复用，包一层 SSE→文本 |
+| AI 问答接口 | `/api/ai/memory-search` + `/api/ai/analyze` | 复用，构建检索上下文 + 汇总 SSE→文本 |
 | 异步返回（3s 约束） | 前端是同步连接 | 网关需异步回消息 |
 | 用户白名单 / 可用范围 | 无 | 新增配置 |
 
 ## 后续 / 参考
 
-- 可先做一个最小原型：测试企业 + 单聊发消息 → 长连接收到 → 本机调 `/api/ai/rag` → 异步回完整文本。
-- 在此基础上再补：可用范围、群聊隔离、消息去重、隐私脱敏。
-- 相关代码参考：`backend/export_feishu.go`（token 缓存）、`backend/pairing.go`（回环鉴权）、`backend/main.go` 的 `/api/ai/rag` 与 `/api/ai/memory-search` 路由。
+- 已完成最小闭环：测试企业 + 长连接收到 → 本机调 `/api/ai/memory-search` + `/api/ai/analyze` → 异步回完整文本。
+- 已实现：每人独立上下文、只 @bot 提问、回答中冷却、2 小时过期、上下文压缩。
+- 相关代码参考：`backend/export_feishu.go`（token 缓存）、`backend/pairing.go`（回环鉴权）、`backend/main.go` 的 `/api/ai/memory-search` 与 `/api/ai/analyze` 路由。
 
 > 本文档基于公开资料调研整理，具体字段 / 权限名 / 限额以飞书开放平台当前控制台与官方文档为准。

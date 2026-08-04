@@ -4,8 +4,6 @@
   "welink_base_url": "http://127.0.0.1:8080",
   "welink_token": "",
   "default_profile_id": "",
-  "default_ai_key": "contact:alice",
   "stream_mode": "md",
-  "allowed_keys": ["contact:alice", "group:闲聊"],
   "allowed_users": ["ou_xxxxxxxx"]
 }

@@ -15,7 +15,13 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
-// bot 持有飞书通道与配置，并维护会话级上下文。
+const (
+	maxHistoryMsgs = 12  // 上下文达到该消息数时触发压缩
+	maxHistoryChars = 24000 // 上下文文本达到该字符数时触发压缩
+	sessionIdleTTL = 2 * time.Hour // 2 小时无新提问自动新开会话
+)
+
+// bot 持有飞书通道与配置，并维护每个用户的独立会话。
 type bot struct {
 	cfg      *Config
 	ch       types.Channel
@@ -23,8 +29,12 @@ type bot struct {
 	sessions map[string]*session
 }
 
+// session 表示单个用户在单个群聊/单聊中的独立上下文。
 type session struct {
-	history []string // 最近若干轮 user 问题（轻量记忆，避免无限增长）
+	history    []llmMessage // 完整问答历史（user + assistant）
+	lastActive time.Time    // 最近一次提问时间
+	compressed bool         // 是否已做过压缩摘要（供日志/调试）
+	busy       bool         // 该会话是否正在回答中（冷却锁）
 }
 
 // newBot 构造飞书客户端与高层 channel。
@@ -65,7 +75,7 @@ func (b *bot) handleMessage(ctx context.Context, msg *types.NormalizedMessage) {
 	if msg == nil || msg.Content == "" {
 		return
 	}
-	// 群聊只在 @ 机器人时响应；单聊直接响应。
+	// 只有 @ 机器人的消息才会被视为提问（单聊始终响应）。
 	if msg.ChatType == "group" && !msg.MentionedBot {
 		return
 	}
@@ -79,12 +89,55 @@ func (b *bot) handleMessage(ctx context.Context, msg *types.NormalizedMessage) {
 		return
 	}
 
-	go b.process(ctx, msg, question)
+	// 回答中：同人再次提问直接拒绝
+	sessionKey := sessionKeyFor(msg)
+	if !b.acquireBusy(sessionKey) {
+		b.safeSend(ctx, msg, "你上一个问题还在处理中，请稍候再提问。")
+		return
+	}
+
+	go b.process(ctx, msg, question, sessionKey)
 }
 
-// process 执行一次问答，按配置选择 Markdown 或卡片流式回复。
-func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, question string) {
-	sessionKey := sessionKeyFor(msg)
+// acquireBusy 尝试锁定会话开始一次回答；已在回答中则返回 false。
+func (b *bot) acquireBusy(key string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	if s.busy {
+		return false
+	}
+	s.busy = true
+	return true
+}
+
+// releaseBusy 回答完成后释放会话锁。
+func (b *bot) releaseBusy(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if s := b.sessions[key]; s != nil {
+		s.busy = false
+	}
+}
+
+// sessionLocked 返回（或创建）会话，调用方须持有 b.mu。
+func (b *bot) sessionLocked(key string) *session {
+	s := b.sessions[key]
+	if s == nil {
+		s = &session{history: []llmMessage{}, lastActive: time.Now()}
+		b.sessions[key] = s
+	}
+	// 超过 2 小时没新提问 → 丢弃旧上下文，新起一个会话
+	if time.Since(s.lastActive) > sessionIdleTTL {
+		s.history = []llmMessage{}
+		s.compressed = false
+	}
+	return s
+}
+
+// process 执行跨联系人问答并维护会话历史。
+func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
+	defer b.releaseBusy(sessionKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -95,7 +148,7 @@ func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, questio
 	b.processMarkdown(ctx, msg, question, sessionKey)
 }
 
-// processMarkdown 用飞书 Markdown 富文本（post）流式逐段更新，适合长回答。
+// processMarkdown 用 Markdown 富文本（post）流式更新。
 func (b *bot) processMarkdown(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
 	stream, err := b.ch.Stream(ctx, &types.SendInput{
 		ChatID:   msg.ChatID,
@@ -108,24 +161,26 @@ func (b *bot) processMarkdown(ctx context.Context, msg *types.NormalizedMessage,
 	}
 	defer func() { _ = stream.Close(context.Background()) }()
 
-	_ = stream.Append(ctx, "\n\n🔎 正在检索聊天记录…")
-	out, errMsg := b.runQuery(ctx, sessionKey, question)
+	// 先做 memory-search（检索），再 analyze（生成最终回答）
+	_ = stream.Append(ctx, "\n\n🔎 正在检索跨联系人聊天记录…")
+	answer, errMsg := b.answer(ctx, sessionKey, question)
 	if errMsg != "" {
 		_ = stream.Append(ctx, "\n\n❌ "+errMsg)
 		return
 	}
-	if out.Answer == "" {
+	if answer == "" {
 		_ = stream.Append(ctx, "\n\n（没有生成可展示的回答，可能没有检索到相关内容。）")
 		return
 	}
 
 	_ = stream.Append(ctx, "\n\n✍️ 正在整理回答…")
-	_ = stream.Append(ctx, "\n\n"+out.Answer)
-	b.remember(sessionKey, question)
+	_ = stream.Append(ctx, "\n\n"+answer)
+	b.remember(sessionKey, question, answer)
+	go b.maybeCompress(context.Background(), sessionKey)
 	_ = stream.Flush(ctx)
 }
 
-// processCard 用飞书卡片流式更新，适合需要组件级进度/步骤的展示。
+// processCard 用卡片 JSON 2.0 流式更新。
 func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
 	stream, err := b.ch.Stream(ctx, &types.SendInput{
 		ChatID: msg.ChatID,
@@ -138,38 +193,139 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	}
 	defer func() { _ = stream.Close(context.Background()) }()
 
-	_ = stream.UpdateCard(ctx, cardWithText("🔎 正在检索聊天记录…\n\n处理中…"))
-	out, errMsg := b.runQuery(ctx, sessionKey, question)
+	_ = stream.UpdateCard(ctx, cardWithText("🔎 正在检索跨联系人聊天记录…\n\n处理中…"))
+	answer, errMsg := b.answer(ctx, sessionKey, question)
 	if errMsg != "" {
 		_ = stream.UpdateCard(ctx, cardWithText("❌ "+errMsg))
 		return
 	}
-	if out.Answer == "" {
+	if answer == "" {
 		_ = stream.UpdateCard(ctx, cardWithText("（没有生成可展示的回答，可能没有检索到相关内容。）"))
 		return
 	}
 
-	_ = stream.UpdateCard(ctx, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+out.Answer))
-	b.remember(sessionKey, question)
+	_ = stream.UpdateCard(ctx, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+answer))
+	b.remember(sessionKey, question, answer)
+	go b.maybeCompress(context.Background(), sessionKey)
 }
 
-// runQuery 执行一次 RAG 检索并返回结果；errMsg 非空表示有可展示给用户的错误。
-func (b *bot) runQuery(ctx context.Context, sessionKey, question string) (*ragOutcome, string) {
+// answer 执行一次跨联系人问答：先 memory-search，再 analyze。
+func (b *bot) answer(ctx context.Context, sessionKey, question string) (string, string) {
+	// 取会话历史
 	history := b.historyOf(sessionKey)
-	if !b.keyAllowed(b.keyFor()) {
-		return nil, "当前配置的 AI key 不在 allow 列表内，无法检索。"
-	}
-	out, err := askRAG(ctx, b.cfg, b.keyFor(), question, history)
+
+	convKey := "feishu:" + sessionKey
+	// 1. memory-search 跨联系人检索（进度回调打印日志，不回帖中间态）
+	data, err := memorySearch(ctx, b.cfg, question, convKey, func(step, detail string) {
+		log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
+	})
 	if err != nil {
-		return nil, "调用 AI 接口失败，请稍后重试。\n\n" + err.Error()
+		return "", "跨联系人检索失败，请稍后重试。\n\n" + err.Error()
 	}
-	if out.Error != "" {
-		return nil, out.Error
+
+	// 2. 把检索结果拼成上下文
+	dataContext := buildDataContext(data)
+
+	// 3. analyze 生成回答（带上历史 + 检索上下文）
+	answer, err := analyzeQuestion(ctx, b.cfg, question, convKey, history, dataContext)
+	if err != nil {
+		return "", "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}
-	return out, ""
+	return answer, ""
 }
 
-// safeSend 发送一条普通文本（用于权限/引导等简单回复）。
+func (b *bot) historyOf(key string) []llmMessage {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	return append([]llmMessage(nil), s.history...)
+}
+
+// remember 追加问答到会话并更新活跃时间。
+func (b *bot) remember(key, question, answer string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	s.history = append(s.history, llmMessage{Role: "user", Content: question})
+	s.history = append(s.history, llmMessage{Role: "assistant", Content: answer})
+	s.lastActive = time.Now()
+}
+
+// maybeCompress 若会话达到压缩阈值，则异步调用 LLM 做摘要压缩。
+func (b *bot) maybeCompress(ctx context.Context, key string) {
+	b.mu.Lock()
+	s := b.sessions[key]
+	need := s != nil && b.shouldCompressLocked(s)
+	b.mu.Unlock()
+	if !need {
+		return
+	}
+	log.Printf("[bot] %s 会话上下文过长，开始异步压缩", key)
+	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	b.compress(cctx, key)
+}
+
+// shouldCompressLocked 判断是否达到压缩阈值，调用方须持有 b.mu。
+func (b *bot) shouldCompressLocked(s *session) bool {
+	if len(s.history) >= maxHistoryMsgs {
+		return true
+	}
+	total := 0
+	for _, m := range s.history {
+		total += len(m.Content)
+	}
+	return total >= maxHistoryChars
+}
+
+// compress 压缩会话历史为一段摘要，仅保留最近的问题。
+func (b *bot) compress(ctx context.Context, key string) {
+	b.mu.Lock()
+	s := b.sessions[key]
+	if s == nil || len(s.history) == 0 || !b.shouldCompressLocked(s) {
+		b.mu.Unlock()
+		return
+	}
+	// 取所有历史作为输入给 LLM 做摘要
+	msgs := make([]llmMessage, 0, len(s.history)+2)
+	msgs = append(msgs, llmMessage{
+		Role: "system",
+		Content: "你是一个会话摘要器。请把下面的用户和 AI 的历史问答压缩成一段简洁的中文摘要，保留关键人物、时间、事件、结论，供后续多轮追问使用。只输出摘要本身。",
+	})
+	msgs = append(msgs, s.history...)
+	b.mu.Unlock()
+
+	summary, err := complete(ctx, b.cfg, msgs)
+	if err != nil {
+		log.Printf("[bot] %s 压缩失败: %v", key, err)
+		return
+	}
+	if strings.TrimSpace(summary) == "" {
+		log.Printf("[bot] %s 压缩结果为空，保留原历史", key)
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s = b.sessions[key]
+	if s == nil {
+		return
+	}
+	// 保留最近一问一答，其余替换为摘要，保证后续追问衔接
+	keep := 0
+	if len(s.history) >= 2 {
+		if s.history[len(s.history)-1].Role == "assistant" && s.history[len(s.history)-2].Role == "user" {
+			keep = 2
+		} else if s.history[len(s.history)-1].Role == "user" {
+			keep = 1
+		}
+	}
+	recent := append([]llmMessage(nil), s.history[len(s.history)-keep:]...)
+	s.history = []llmMessage{{Role: "system", Content: "【上一段会话摘要】" + summary}}
+	s.history = append(s.history, recent...)
+	s.compressed = true
+}
+
 func (b *bot) safeSend(ctx context.Context, msg *types.NormalizedMessage, text string) {
 	if msg == nil {
 		return
@@ -195,19 +351,6 @@ func (b *bot) allowed(msg *types.NormalizedMessage) bool {
 	return false
 }
 
-// keyAllowed 若配置了 ALLOWED_KEYS，则只放行命中项；未配置时放行。
-func (b *bot) keyAllowed(key string) bool {
-	if len(b.cfg.AllowedKeys) == 0 {
-		return true
-	}
-	for _, k := range b.cfg.AllowedKeys {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
-
 func sessionKeyFor(msg *types.NormalizedMessage) string {
 	if msg.ChatType == "group" {
 		return fmt.Sprintf("group:%s:%s", msg.ChatID, msg.UserID)
@@ -215,38 +358,6 @@ func sessionKeyFor(msg *types.NormalizedMessage) string {
 	return fmt.Sprintf("p2p:%s", msg.UserID)
 }
 
-// keyFor 决定调用 WeLink 时使用的 contact key。
-func (b *bot) keyFor() string {
-	if b.cfg.DefaultKey != "" {
-		return b.cfg.DefaultKey
-	}
-	return ""
-}
-
-func (b *bot) historyOf(key string) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	s := b.sessions[key]
-	if s == nil {
-		return ""
-	}
-	return strings.Join(s.history, "\n")
-}
-
-func (b *bot) remember(key, q string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.sessions[key] == nil {
-		b.sessions[key] = &session{}
-	}
-	s := b.sessions[key]
-	s.history = append(s.history, q)
-	if len(s.history) > 6 {
-		s.history = s.history[len(s.history)-6:]
-	}
-}
-
-// cleanMention 去掉消息里的 @ 机器人 文本，避免把它塞进问题。
 func cleanMention(content string) string {
 	s := strings.ReplaceAll(content, "@_user_1", "")
 	s = strings.ReplaceAll(s, "@_user_2", "")
@@ -256,7 +367,6 @@ func cleanMention(content string) string {
 	return strings.TrimSpace(s)
 }
 
-// cardWithText 构造一个最简单的飞书卡片 JSON 2.0 文本卡片，便于卡片流式模式使用。
 func cardWithText(text string) string {
 	return fmt.Sprintf(`{"config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":"AI 回答"}},"elements":[{"tag":"markdown","content":%q}]}`, text)
 }
