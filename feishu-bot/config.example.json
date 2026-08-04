@@ -1,0 +1,10 @@
+{
+  "feishu_app_id": "cli_xxxxxxxx",
+  "feishu_app_secret": "your_app_secret",
+  "welink_base_url": "http://127.0.0.1:8080",
+  "welink_token": "",
+  "default_profile_id": "",
+  "default_ai_key": "contact:alice",
+  "allowed_keys": ["contact:alice", "group:闲聊"],
+  "allowed_users": ["ou_xxxxxxxx"]
+}

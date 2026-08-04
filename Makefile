@@ -124,7 +124,7 @@ dev-logs:    ## 跟踪本地开发部署日志
 
 ## ─── 构建 ────────────────────────────────────────────────────────────────────
 
-build: build-backend build-frontend  ## 构建后端 + 前端
+build: build-backend build-frontend build-feishu-bot  ## 构建后端 + 前端 + 飞书网关
 
 build-backend:   ## 编译后端二进制（本地，无 CGO）
 	cd backend && CGO_ENABLED=0 go build -ldflags="-X main.appVersion=$(APP_VERSION) -X main.gitCommit=$(GIT_COMMIT)" -o welink-backend .
@@ -134,6 +134,9 @@ build-frontend:  ## 构建前端静态资源
 
 build-mcp:       ## 编译 MCP Server 二进制
 	cd mcp-server && go build -o welink-mcp .
+
+build-feishu-bot: ## 编译飞书 AI 问答网关二进制
+	cd feishu-bot && go build -o welink-feishu-bot .
 
 ## ─── 本地开发 ─────────────────────────────────────────────────────────────────
 
@@ -145,17 +148,20 @@ dev-frontend:    ## 本地启动前端 Vite dev server
 
 ## ─── 测试 ────────────────────────────────────────────────────────────────────
 
-test:            ## 运行后端所有单元测试
+test:            ## 运行后端 + 飞书网关所有单元测试
 	cd backend && go test ./... -v
+	cd feishu-bot && go test ./... -v
 
-test-short:      ## 运行后端单元测试（不显示详情）
+test-short:      ## 运行后端 + 飞书网关单元测试（不显示详情）
 	cd backend && go test ./...
+	cd feishu-bot && go test ./...
 
 ## ─── 代码检查 ─────────────────────────────────────────────────────────────────
 
 lint:            ## 运行 go vet 检查
 	cd backend && go vet ./...
 	cd mcp-server && go vet ./...
+	cd feishu-bot && go vet ./...
 
 ## ─── 清理 ────────────────────────────────────────────────────────────────────
 
@@ -304,6 +310,7 @@ _exe-package: _exe-binary
 clean:           ## 删除本地编译产物
 	rm -f backend/welink-backend
 	rm -f mcp-server/welink-mcp
+	rm -f feishu-bot/welink-feishu-bot
 	rm -rf frontend/dist
 	rm -rf backend/static
 	rm -rf dist/
