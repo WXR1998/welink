@@ -346,30 +346,26 @@ func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgres
 	hasPriorEntity := len(priorEntities) > 0
 
 	convKey := "feishu:" + sessionKey
+	// 进度跟踪器：把后端步骤转成单调递增的 (current, total)。
+	tracker := newProgressTracker()
+
 	// 1. memory-search 跨联系人检索（进度回调打印日志 + 驱动卡片进度；无实体则中止）
 	data, err := memorySearch(ctx, b.cfg, question, convKey, hasPriorEntity,
 		func(step, detail string) {
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
 			if onProgress != nil {
-				// 检索阶段按步骤推进 1->4 格
-				var cur int
-				switch step {
-				case "resolve_entities":
-					cur = 2
-				case "vector_search", "vecmsg_search", "bm25_search":
-					cur = 3
-				case "enhanced", "search_facts", "extract_sources":
-					cur = 4
-				default:
-					cur = 1
-				}
-				onProgress("search", cur, 5)
+				cur, total := tracker.Observe(step, detail)
+				onProgress("search", cur, total)
 			}
 		},
 		func(names []string) {
 			// 本轮解析出了实体，记录下来供后续追问沿用
 			if len(names) > 0 {
 				b.setEntities(sessionKey, names)
+			}
+			if onProgress != nil {
+				cur, total := tracker.Observe("resolve_entities", "")
+				onProgress("search", cur, total)
 			}
 		},
 	)
@@ -401,7 +397,8 @@ func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgres
 
 	// 2b. 检索完成，进入生成回答阶段
 	if onProgress != nil {
-		onProgress("answer", 5, 5)
+		cur, total := tracker.Observe("answer", "")
+		onProgress("answer", cur, total)
 	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）

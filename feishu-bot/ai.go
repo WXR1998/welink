@@ -342,7 +342,7 @@ func buildDataContext(d *memorySearchData) string {
 	if len(d.RawHits) > 0 {
 		sb.WriteString("\n【原文精确命中（聊天记录原文）】\n")
 		for _, rh := range d.RawHits {
-			sb.WriteString(fmt.Sprintf("[%s %s %s]: %s\n", rh.SourceName, rh.Datetime, rh.Sender, rh.Content))
+			sb.WriteString(fmt.Sprintf("[%s %s %s]：%s\n", rh.SourceName, rh.Datetime, rh.Sender, rh.Content))
 		}
 	}
 
@@ -353,7 +353,7 @@ func buildDataContext(d *memorySearchData) string {
 			if src == "" {
 				src = "未知"
 			}
-			sb.WriteString(fmt.Sprintf("[%s %s %s]: %s\n", src, vm.Datetime, vm.Sender, vm.Content))
+			sb.WriteString(fmt.Sprintf("[%s %s %s]：%s\n", src, vm.Datetime, vm.Sender, vm.Content))
 		}
 	}
 
@@ -361,7 +361,7 @@ func buildDataContext(d *memorySearchData) string {
 		sb.WriteString("\n【记忆事实对应的源聊天记录】\n")
 		for _, s := range d.Sources {
 			for _, m := range s.Messages {
-				sb.WriteString(fmt.Sprintf("[%s %s %s]: %s\n", s.SourceName, m.Datetime, m.Sender, m.Content))
+				sb.WriteString(fmt.Sprintf("[%s %s %s]：%s\n", s.SourceName, m.Datetime, m.Sender, m.Content))
 			}
 		}
 	}
