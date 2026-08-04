@@ -617,11 +617,9 @@ func progressBar(current, total int) string {
 	if total > 0 {
 		pct = current * 100 / total
 	}
-	// 最多显示 maxProgressCells 格，按百分比计算涂色格数，保证进度比例不变。
-	cells := total
-	if cells > maxProgressCells {
-		cells = maxProgressCells
-	}
+	// 固定显示 maxProgressCells 格（不随 N/M 学习而变化），
+	// 按百分比计算涂色格数，保证进度比例不变。
+	cells := maxProgressCells
 	filled := (cells * pct) / 100
 	if pct > 0 && filled == 0 {
 		filled = 1

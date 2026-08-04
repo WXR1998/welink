@@ -71,22 +71,25 @@ func TestProgressBar(t *testing.T) {
 }
 
 func TestProgressBarCellCap(t *testing.T) {
-	// 总步数很大时，格数上限 20，按百分比涂色。
+	// 无论 total 大小，格子数始终固定为 maxProgressCells (20)，按百分比涂色。
 	got := progressBar(10, 100) // 10%
-	if strings.Count(got, "🟩")+strings.Count(got, "⬜") != 20 {
-		t.Fatalf("cell count should cap at 20: %s", got)
+	if strings.Count(got, "🟩")+strings.Count(got, "⬜") != maxProgressCells {
+		t.Fatalf("cell count should always be %d: %s", maxProgressCells, got)
 	}
 	if c := strings.Count(got, "🟩"); c != 2 {
-		t.Fatalf("10%% should fill 2 of 20 cells, got %d: %s", c, got)
+		t.Fatalf("10%% should fill 2 of %d cells, got %d: %s", maxProgressCells, c, got)
 	}
-	// 小步数不受上限影响（保持原来的格子数）
-	small := progressBar(3, 5)
-	if strings.Count(small, "🟩")+strings.Count(small, "⬜") != 5 {
-		t.Fatalf("small totals keep own cells: %s", small)
+	// 小 total 时格子数也是 20，不因 N/M 学习而变化
+	small := progressBar(2, 5) // 40%
+	if strings.Count(small, "🟩")+strings.Count(small, "⬜") != maxProgressCells {
+		t.Fatalf("small totals still use %d cells: %s", maxProgressCells, small)
+	}
+	if c := strings.Count(small, "🟩"); c != 8 {
+		t.Fatalf("40%% should fill 8 of %d, got %d: %s", maxProgressCells, c, small)
 	}
 	// 25%（50/200）应填 5 格
 	if c := strings.Count(progressBar(50, 200), "🟩"); c != 5 {
-		t.Fatalf("25%% should fill 5 of 20, got %d", c)
+		t.Fatalf("25%% should fill 5 of %d, got %d", maxProgressCells, c)
 	}
 }
 
