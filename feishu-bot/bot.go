@@ -185,6 +185,9 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	// 初始：检索阶段进度 1/5
 	_ = b.patchCard(ctx, messageID, cardJSON("🔎 正在检索", "正在跨联系人检索相关聊天记录…", progressBar(1, 5)))
 
+	// lastPct 记录上次渲染的百分比，保证进度条只增不减
+	// （total 动态增长时 current/total 可能下降，这里在渲染层强制单调）。
+	lastPct := -1
 	answer, errMsg := b.answer(ctx, sessionKey, question, func(stage string, current, total int) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
@@ -195,6 +198,14 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 			title = "✍️ 正在整理回答"
 			body = "检索完成，正在生成回答…"
 		}
+		pct := 0
+		if total > 0 {
+			pct = current * 100 / total
+		}
+		if pct < lastPct {
+			return // 百分比下降，忽略本次更新，保证进度条只增不减
+		}
+		lastPct = pct
 		pb := progressBar(current, total)
 		_ = b.patchCard(ctx, messageID, cardJSON(title, body, pb))
 	})
