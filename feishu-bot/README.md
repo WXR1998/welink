@@ -8,6 +8,7 @@
 - 长连接接收消息，不暴露 WeLink 入站端口。
 - 调用现有 `POST /api/ai/rag`，复用 WeLink 的混合检索（向量 + FTS + 记忆事实）。
 - 流式回传：先发“处理中”，再分阶段更新（分析中 / 检索中 / 整理中），最终以 Markdown 回传完整回答。
+- 回复载体可配置：默认 `md`（Markdown 富文本 post 流式），可选 `card`（卡片 JSON 2.0 流式）。
 - 会话隔离：单聊按 `user_id` 区分，群聊按 `chat_id + sender_id` 区分，避免多人共享上下文。
 - 用户白名单 + 联系人 key 白名单（可选）。
 
@@ -46,6 +47,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 | `WELINK_TOKEN` | 配对 token。Docker 内非回环访问时需带 | 空（回环自动放行） |
 | `DEFAULT_PROFILE_ID` | 使用的 LLM Profile ID | 空（用默认） |
 | `DEFAULT_AI_KEY` | 检索范围 key，如 `contact:alice` | 必填 |
+| `STREAM_MODE` | 流式回复载体：`md`（默认）或 `card` | `md` |
 | `ALLOWED_KEYS` | 允许的 key 白名单，逗号分隔 | 空=不限制 |
 | `ALLOWED_USERS` | 允许的飞书用户，逗号分隔 | 空=不限制 |
 

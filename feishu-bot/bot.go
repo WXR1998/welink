@@ -82,54 +82,91 @@ func (b *bot) handleMessage(ctx context.Context, msg *types.NormalizedMessage) {
 	go b.process(ctx, msg, question)
 }
 
-// process 执行一次问答：先发“处理中”流式消息，再异步推进度，最后回完整 Markdown。
+// process 执行一次问答，按配置选择 Markdown 或卡片流式回复。
 func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, question string) {
 	sessionKey := sessionKeyFor(msg)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	if b.cfg.StreamMode == "card" {
+		b.processCard(ctx, msg, question, sessionKey)
+		return
+	}
+	b.processMarkdown(ctx, msg, question, sessionKey)
+}
+
+// processMarkdown 用飞书 Markdown 富文本（post）流式逐段更新，适合长回答。
+func (b *bot) processMarkdown(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
 	stream, err := b.ch.Stream(ctx, &types.SendInput{
 		ChatID:   msg.ChatID,
 		Title:    "AI 回答",
 		Markdown: "⏳ 正在分析你的问题…",
 	})
 	if err != nil {
-		log.Printf("[bot] 创建流式消息失败: %v", err)
+		log.Printf("[bot] 创建 Markdown 流式消息失败: %v", err)
 		return
 	}
 	defer func() { _ = stream.Close(context.Background()) }()
 
 	_ = stream.Append(ctx, "\n\n🔎 正在检索聊天记录…")
-
-	// 从会话里取前序问题作为轻量上下文
-	history := b.historyOf(sessionKey)
-	// 检查 key 是否在白名单内（若配置了白名单）
-	if !b.keyAllowed(b.keyFor()) {
-		_ = stream.Append(ctx, "\n\n❌ 当前配置的 AI key 不在 allow 列表内，无法检索。")
+	out, errMsg := b.runQuery(ctx, sessionKey, question)
+	if errMsg != "" {
+		_ = stream.Append(ctx, "\n\n❌ "+errMsg)
 		return
 	}
-	out, err := askRAG(ctx, b.cfg, b.keyFor(), question, history)
-	if err != nil {
-		_ = stream.Append(ctx, "\n\n❌ 调用 AI 接口失败，请稍后重试。\n\n"+err.Error())
-		return
-	}
-	if out.Error != "" {
-		_ = stream.Append(ctx, "\n\n❌ "+out.Error)
-		return
-	}
-
 	if out.Answer == "" {
 		_ = stream.Append(ctx, "\n\n（没有生成可展示的回答，可能没有检索到相关内容。）")
 		return
 	}
 
-	// 进度：表示即将完成
 	_ = stream.Append(ctx, "\n\n✍️ 正在整理回答…")
-	// 流式追加最终 Markdown
 	_ = stream.Append(ctx, "\n\n"+out.Answer)
-
 	b.remember(sessionKey, question)
 	_ = stream.Flush(ctx)
+}
+
+// processCard 用飞书卡片流式更新，适合需要组件级进度/步骤的展示。
+func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
+	stream, err := b.ch.Stream(ctx, &types.SendInput{
+		ChatID: msg.ChatID,
+		Title:  "AI 回答",
+		Card:   cardWithText("⏳ 正在分析你的问题…"),
+	})
+	if err != nil {
+		log.Printf("[bot] 创建卡片流式消息失败: %v", err)
+		return
+	}
+	defer func() { _ = stream.Close(context.Background()) }()
+
+	_ = stream.UpdateCard(ctx, cardWithText("🔎 正在检索聊天记录…\n\n处理中…"))
+	out, errMsg := b.runQuery(ctx, sessionKey, question)
+	if errMsg != "" {
+		_ = stream.UpdateCard(ctx, cardWithText("❌ "+errMsg))
+		return
+	}
+	if out.Answer == "" {
+		_ = stream.UpdateCard(ctx, cardWithText("（没有生成可展示的回答，可能没有检索到相关内容。）"))
+		return
+	}
+
+	_ = stream.UpdateCard(ctx, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+out.Answer))
+	b.remember(sessionKey, question)
+}
+
+// runQuery 执行一次 RAG 检索并返回结果；errMsg 非空表示有可展示给用户的错误。
+func (b *bot) runQuery(ctx context.Context, sessionKey, question string) (*ragOutcome, string) {
+	history := b.historyOf(sessionKey)
+	if !b.keyAllowed(b.keyFor()) {
+		return nil, "当前配置的 AI key 不在 allow 列表内，无法检索。"
+	}
+	out, err := askRAG(ctx, b.cfg, b.keyFor(), question, history)
+	if err != nil {
+		return nil, "调用 AI 接口失败，请稍后重试。\n\n" + err.Error()
+	}
+	if out.Error != "" {
+		return nil, out.Error
+	}
+	return out, ""
 }
 
 // safeSend 发送一条普通文本（用于权限/引导等简单回复）。
@@ -217,4 +254,9 @@ func cleanMention(content string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "/ai")
 	return strings.TrimSpace(s)
+}
+
+// cardWithText 构造一个最简单的飞书卡片 JSON 2.0 文本卡片，便于卡片流式模式使用。
+func cardWithText(text string) string {
+	return fmt.Sprintf(`{"config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":"AI 回答"}},"elements":[{"tag":"markdown","content":%q}]}`, text)
 }

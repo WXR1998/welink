@@ -25,16 +25,15 @@ type Config struct {
 	// 默认 WeLink 检索 key（例如 contact:alice 或 group:闲聊）
 	DefaultKey string
 
+	// 流式回复载体：md（默认，Markdown 富文本 post 流式）或 card（卡片流式）
+	StreamMode string
+
 	// 允许使用的联系人 key，为空表示不限制（危险）
 	// 例如：contact:alice,group:闲聊
 	AllowedKeys []string
 
 	// 允许的飞书用户（open_id 或 user_id），为空表示不限制（危险）
 	AllowedUsers []string
-}
-
-func mustBool(v string) bool {
-	return v == "1" || v == "true" || strings.EqualFold(v, "yes")
 }
 
 // loadConfig 从环境变量读配置；可用 FEISHU_CONFIG 指向 JSON 覆盖。
@@ -46,6 +45,7 @@ func loadConfig() (*Config, error) {
 		WeLinkToken:      os.Getenv("WELINK_TOKEN"),
 		DefaultProfileID: os.Getenv("DEFAULT_PROFILE_ID"),
 		DefaultKey:       os.Getenv("DEFAULT_AI_KEY"),
+		StreamMode:       strings.ToLower(getenv("STREAM_MODE", "md")),
 		AllowedKeys:      splitList(os.Getenv("ALLOWED_KEYS")),
 		AllowedUsers:     splitList(os.Getenv("ALLOWED_USERS")),
 	}
@@ -62,6 +62,7 @@ func loadConfig() (*Config, error) {
 			WeLinkToken     string   `json:"welink_token"`
 			DefaultProfile  string   `json:"default_profile_id"`
 			DefaultKey      string   `json:"default_ai_key"`
+			StreamMode      string   `json:"stream_mode"`
 			AllowedKeys     []string `json:"allowed_keys"`
 			AllowedUsers    []string `json:"allowed_users"`
 		}
@@ -74,6 +75,7 @@ func loadConfig() (*Config, error) {
 		applyOverride(&cfg.WeLinkToken, overrides.WeLinkToken)
 		applyOverride(&cfg.DefaultProfileID, overrides.DefaultProfile)
 		applyOverride(&cfg.DefaultKey, overrides.DefaultKey)
+		applyOverride(&cfg.StreamMode, strings.ToLower(overrides.StreamMode))
 		if len(overrides.AllowedKeys) > 0 {
 			cfg.AllowedKeys = overrides.AllowedKeys
 		}
@@ -87,6 +89,9 @@ func loadConfig() (*Config, error) {
 	}
 	if cfg.DefaultKey == "" {
 		return nil, fmt.Errorf("DEFAULT_AI_KEY 未配置，请设置检索范围（如 contact:alice / group:xxx）")
+	}
+	if cfg.StreamMode != "md" && cfg.StreamMode != "card" {
+		return nil, fmt.Errorf("STREAM_MODE 仅支持 md 或 card，当前: %s", cfg.StreamMode)
 	}
 	return cfg, nil
 }
