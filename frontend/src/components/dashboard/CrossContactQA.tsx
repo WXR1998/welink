@@ -392,6 +392,20 @@ const RetrievalDetails: React.FC<{
               </div>
             </div>
           )}
+          {/* 发给 LLM 的原始文本 */}
+          {msg.llmPrompt && msg.llmPrompt.length > 0 && (
+            <div>
+              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">发给 LLM 的原始文本</div>
+              <div className="space-y-2">
+                {msg.llmPrompt.map((m, idx) => (
+                  <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+                    <span className="text-[10px] font-semibold text-gray-400">{m.role}</span>
+                    <pre className="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono mt-1">{m.content}</pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </details>
@@ -730,7 +744,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       // 替换 searching 消息为正式回答，附带（精简后的）检索详情
       setMessages(prev => {
         const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content: '', memorySearchData: compactMemorySearchData(memData) };
+        next[next.length - 1] = { role: 'assistant', content: '', memorySearchData: compactMemorySearchData(memData), llmPrompt: llmMessages };
         return next;
       });
 
@@ -816,9 +830,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === 'assistant') {
-          const { llmPrompt, ...rest } = last;
           next[next.length - 1] = {
-            ...rest,
+            ...last,
             memorySearchData: compactMemorySearchData(last.memorySearchData as MemorySearchResponse),
             tokenUsage: { prompt_tokens: 0, output_tokens: 0, total_tokens: totalTokens },
             elapsedMs: Date.now() - startTime,
@@ -892,6 +905,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
             content: m.content,
             searching: false,
             memorySearchData: compactMemorySearchData(m.memorySearchData),
+            llmPrompt: m.llmPrompt,
           }));
         if (restored.length === 0) return;
         setMessages(restored);
