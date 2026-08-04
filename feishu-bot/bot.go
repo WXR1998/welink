@@ -152,52 +152,15 @@ func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, questio
 	defer b.releaseBusy(sessionKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-
-	if b.cfg.StreamMode == "card" {
-		b.processCard(ctx, msg, question, sessionKey)
-		return
-	}
-	b.processMarkdown(ctx, msg, question, sessionKey)
+	b.processCard(ctx, msg, question, sessionKey)
 }
 
-// processMarkdown 用 Markdown 富文本（post）流式更新。
-func (b *bot) processMarkdown(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
-	stream, err := b.ch.Stream(ctx, &types.SendInput{
-		ChatID:   msg.ChatID,
-		Title:    "AI 回答",
-		Markdown: "⏳ 正在分析你的问题…",
-	})
-	if err != nil {
-		log.Printf("[bot] 创建 Markdown 流式消息失败: %v", err)
-		return
-	}
-	defer func() { _ = stream.Close(context.Background()) }()
-
-	// 先做 memory-search（检索），再 analyze（生成最终回答）
-	_ = stream.Append(ctx, "\n\n🔎 正在检索跨联系人聊天记录…")
-	answer, errMsg := b.answer(ctx, sessionKey, question)
-	if errMsg != "" {
-		_ = stream.Append(ctx, "\n\n❌ "+errMsg)
-		return
-	}
-	if answer == "" {
-		_ = stream.Append(ctx, "\n\n（没有生成可展示的回答，可能没有检索到相关内容。）")
-		return
-	}
-
-	_ = stream.Append(ctx, "\n\n✍️ 正在整理回答…")
-	_ = stream.Append(ctx, "\n\n"+answer)
-	b.remember(sessionKey, question, answer)
-	go b.maybeCompress(context.Background(), sessionKey)
-	_ = stream.Flush(ctx)
-}
-
-// processCard 用卡片 JSON 2.0 流式更新。
+// processCard 用卡片流式更新，回复时引用用户的原始提问。
 func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
 	stream, err := b.ch.Stream(ctx, &types.SendInput{
-		ChatID: msg.ChatID,
-		Title:  "AI 回答",
-		Card:   cardWithText("⏳ 正在分析你的问题…"),
+		ChatID:         msg.ChatID,
+		ReplyMessageID: msg.MessageID,
+		Card:           cardWithText("⏳ 正在分析你的问题…"),
 	})
 	if err != nil {
 		log.Printf("[bot] 创建卡片流式消息失败: %v", err)
@@ -404,9 +367,10 @@ func (b *bot) safeSend(ctx context.Context, msg *types.NormalizedMessage, text s
 	ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	_, _ = b.ch.Send(ctxT, &types.SendInput{
-		ChatID:  msg.ChatID,
-		MsgType: "text",
-		Text:    text,
+		ChatID:         msg.ChatID,
+		ReplyMessageID: msg.MessageID,
+		MsgType:        "text",
+		Text:           text,
 	})
 }
 
