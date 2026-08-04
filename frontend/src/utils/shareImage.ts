@@ -7,6 +7,7 @@
 import html2canvas from 'html2canvas';
 import { marked } from 'marked';
 import QRCode from 'qrcode';
+import { preserveMarkdownBlockquote } from './formatters';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
@@ -627,7 +628,7 @@ async function renderMarkdownCanvas(
   font: string,
 ): Promise<HTMLCanvasElement> {
   marked.use({ breaks: true });
-  const html = marked.parse(markdown) as string;
+  const html = marked.parse(preserveMarkdownBlockquote(markdown)) as string;
   const sanitized = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
