@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
 
@@ -127,5 +128,19 @@ func TestCompressAppliesWhenVersionUnchanged(t *testing.T) {
 	}
 	if s.history[0].Role != "system" || !strings.Contains(s.history[0].Content, "summary-text") {
 		t.Errorf("expected summary first, got %+v", s.history[0])
+	}
+}
+
+
+func TestNotifyMentionPrefix(t *testing.T) {
+	// 提问者 open_id，经 SDK 前缀生成应为 <at user_id="ou_xxx">
+	prefix := normalize.ComposeMentionsTextPrefix([]types.Mention{{UserID: "ou_test_123", Name: ""}})
+	if !strings.Contains(prefix, `<at user_id="ou_test_123">`) {
+		t.Fatalf("mention prefix missing at tag: %q", prefix)
+	}
+	// 空 UserID 应被跳过
+	empty := normalize.ComposeMentionsTextPrefix([]types.Mention{{UserID: "", Name: "x"}})
+	if empty != "" {
+		t.Fatalf("empty user_id should be skipped, got %q", empty)
 	}
 }

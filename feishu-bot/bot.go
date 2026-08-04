@@ -12,6 +12,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
@@ -214,6 +215,26 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	_ = b.patchCard(ctx, messageID, cardJSON("✅ 回答完成", answer, ""))
 	b.remember(sessionKey, question, answer)
 	go b.maybeCompress(context.Background(), sessionKey)
+
+	// 提醒提问人：回答已完成（引用卡片并 @ 提问人）
+	b.notifyAnswerDone(ctx, msg, messageID)
+}
+
+// notifyAnswerDone 在回答完成后发送一条引用卡片、@提问人的提醒消息。
+func (b *bot) notifyAnswerDone(ctx context.Context, msg *types.NormalizedMessage, cardMessageID string) {
+	if msg == nil || msg.ChatType != "group" {
+		return
+	}
+	mention := types.Mention{UserID: msg.UserID, Name: ""}
+	prefix := normalize.ComposeMentionsTextPrefix([]types.Mention{mention})
+	ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, _ = b.ch.Send(ctxT, &types.SendInput{
+		ChatID:         msg.ChatID,
+		ReplyMessageID: cardMessageID,
+		MsgType:        "text",
+		Text:           prefix + "你的问题已回答完毕，请查看上方卡片。",
+	})
 }
 
 // patchCard 用 message_id 更新一张已发送的卡片。
