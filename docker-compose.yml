@@ -37,5 +37,25 @@ services:
     depends_on:
       - backend
 
+  feishu-bot:
+    profiles: ["feishu"]
+    build: ./feishu-bot
+    container_name: welink-feishu-bot
+    depends_on:
+      - backend
+    environment:
+      - FEISHU_APP_ID=${FEISHU_APP_ID:-}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
+      - WELINK_BASE_URL=http://backend:8080
+      - WELINK_TOKEN=${WELINK_TOKEN:-}
+      - LLM_MODEL=${LLM_MODEL:-lingjun.internal/deepseek-v4-flash}
+      - SESSION_STORE_PATH=/var/lib/welink-feishu/sessions.json
+      - ALLOWED_USERS=${ALLOWED_USERS:-}
+      - STREAM_MODE=${STREAM_MODE:-md}
+    volumes:
+      - feishu-bot-sessions:/var/lib/welink-feishu
+    restart: unless-stopped
+
 volumes:
   welink-prefs:
+  feishu-bot-sessions:
