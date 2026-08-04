@@ -23,6 +23,7 @@
 | [ai-analysis.md](./ai-analysis.md) | AI 分析：LLM/Embedding 配置、全量分析、混合检索（FTS5 + 向量 + 记忆提炼）、Gemini OAuth |
 | [ai-group-sim.md](./ai-group-sim.md) | AI 群聊模拟 |
 | [cross-contact-qa.md](./cross-contact-qa.md) | 跨联系人 AI 问答 |
+| [feishu-ai-bot.md](./feishu-ai-bot.md) | 飞书企业 AI 问答机器人接入调研 |
 | [podcast.md](./podcast.md) | 播客与 TTS |
 | [skill-forge.md](./skill-forge.md) | Skill 炼化格式与实现 |
 
