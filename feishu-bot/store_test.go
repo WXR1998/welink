@@ -19,6 +19,7 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 			},
 			lastActive: time.Now(),
 			version:    3,
+			entities:   []string{"邓凯文"},
 		},
 	}
 	if err := st.Save(in); err != nil {
@@ -39,6 +40,9 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 	}
 	if s.version != 3 {
 		t.Fatalf("version not preserved: %d", s.version)
+	}
+	if len(s.entities) != 1 || s.entities[0] != "邓凯文" {
+		t.Fatalf("entities not preserved: %v", s.entities)
 	}
 	if s.lastActive.IsZero() {
 		t.Fatalf("lastActive not preserved")

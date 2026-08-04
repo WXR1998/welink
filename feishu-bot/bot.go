@@ -37,6 +37,7 @@ type session struct {
 	compressed bool         // 是否已做过压缩摘要（供日志/调试）
 	busy       bool         // 该会话是否正在回答中（冷却锁）
 	version    uint64       // 每次追加问答递增，用于压缩写回时的并发保护
+	entities   []string     // 最近成功解析出的实体展示名（追问时沿用）
 }
 
 // newBot 构造飞书客户端与高层 channel。
@@ -219,16 +220,45 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
 func (b *bot) answer(ctx context.Context, sessionKey, question string) (string, string) {
-	// 取会话历史
+	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
+	priorEntities := b.entitiesOf(sessionKey)
+	hasPriorEntity := len(priorEntities) > 0
 
 	convKey := "feishu:" + sessionKey
-	// 1. memory-search 跨联系人检索（进度回调打印日志，不回帖中间态）
-	data, err := memorySearch(ctx, b.cfg, question, convKey, func(step, detail string) {
-		log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
-	})
+	// 1. memory-search 跨联系人检索（进度回调打印日志；无实体且上下文无实体则中止）
+	data, err := memorySearch(ctx, b.cfg, question, convKey, hasPriorEntity,
+		func(step, detail string) {
+			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
+		},
+		func(names []string) {
+			// 本轮解析出了实体，记录下来供后续追问沿用
+			if len(names) > 0 {
+				b.setEntities(sessionKey, names)
+			}
+		},
+	)
 	if err != nil {
+		if err == errMissingEntity {
+			return "", "请指定要查询的联系人/群名（例如“我和邓凯文最近聊了什么？”），或先在本会话指定一次实体对象。"
+		}
+		if err == errEntityNotFound {
+			return "", "未找到你指定的联系人/群名，请确认姓名后重试。"
+		}
 		return "", "跨联系人检索失败，请稍后重试。\n\n" + err.Error()
+	}
+
+	// 若本轮结果里解析出了实体，也记录下来
+	if data.hasResolvedEntity() {
+		var names []string
+		for _, e := range data.ResolvedEntities {
+			if e.ContactKey != "" {
+				names = append(names, e.DisplayName)
+			}
+		}
+		if len(names) > 0 {
+			b.setEntities(sessionKey, names)
+		}
 	}
 
 	// 2. 把检索结果拼成上下文
@@ -247,6 +277,24 @@ func (b *bot) historyOf(key string) []llmMessage {
 	defer b.mu.Unlock()
 	s := b.sessionLocked(key)
 	return append([]llmMessage(nil), s.history...)
+}
+
+// entitiesOf 返回会话最近解析出的实体展示名。
+func (b *bot) entitiesOf(key string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if s := b.sessions[key]; s != nil {
+		return append([]string(nil), s.entities...)
+	}
+	return nil
+}
+
+// setEntities 记录会话最近解析出的实体展示名。
+func (b *bot) setEntities(key string, names []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	s.entities = append([]string(nil), names...)
 }
 
 // remember 追加问答到会话并更新活跃时间。

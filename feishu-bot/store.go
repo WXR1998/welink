@@ -13,6 +13,7 @@ type sessionDump struct {
 	History    []llmMessage `json:"history"`
 	LastActive time.Time    `json:"last_active"`
 	Version    uint64       `json:"version"`
+	Entities   []string     `json:"entities,omitempty"`
 }
 
 // sessionStore 负责把内存会话持久化到 JSON 文件。
@@ -48,6 +49,7 @@ func (st *sessionStore) Load() (map[string]*session, error) {
 			history:    d.History,
 			lastActive: d.LastActive,
 			version:    d.Version,
+			entities:   d.Entities,
 		}
 	}
 	return out, nil
@@ -64,6 +66,7 @@ func (st *sessionStore) Save(sessions map[string]*session) error {
 			History:    s.history,
 			LastActive: s.lastActive,
 			Version:    s.version,
+			Entities:   s.entities,
 		}
 	}
 	b, err := json.MarshalIndent(dumps, "", "  ")

@@ -60,17 +60,38 @@ type rawExcerpt struct {
 	Seq        int    `json:"seq"`
 }
 
+// resolvedEntity 与后端 ResolvedEntity 对应。
+type resolvedEntity struct {
+	Name        string `json:"name"`
+	ContactKey  string `json:"contact_key"`
+	DisplayName string `json:"display_name"`
+	IsGroup     bool   `json:"is_group"`
+}
+
 // memorySearchData 是 memory-search result 中用于构建上下文的关键字段。
 type memorySearchData struct {
-	Facts        []memFact       `json:"facts"`
-	Sources      []factSource    `json:"sources"`
-	PinnedFacts  []memFact       `json:"pinned_facts"`
-	VecMessages  []vecMessageHit `json:"vec_messages"`
-	RawHits      []rawExcerpt    `json:"raw_hits"`
-	NeedsMemory  *bool           `json:"-"`
+	Facts            []memFact       `json:"facts"`
+	Sources          []factSource    `json:"sources"`
+	PinnedFacts      []memFact       `json:"pinned_facts"`
+	VecMessages      []vecMessageHit `json:"vec_messages"`
+	RawHits          []rawExcerpt    `json:"raw_hits"`
+	ResolvedEntities []resolvedEntity `json:"resolved_entities"`
 	Decomposition *struct {
 		NeedsMemory bool `json:"needs_memory"`
 	} `json:"decomposition"`
+}
+
+// hasResolvedEntity 返回是否解析出至少一个可检索实体（联系人/群）。
+func (d *memorySearchData) hasResolvedEntity() bool {
+	if d == nil {
+		return false
+	}
+	for _, e := range d.ResolvedEntities {
+		if e.ContactKey != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // memorySearchRequest 对应 POST /api/ai/memory-search。
@@ -176,8 +197,21 @@ func doSSE(ctx context.Context, cfg *Config, url string, payload []byte, onData 
 	}
 }
 
+// memorySearchTimeout 是跨联系人检索单次等待上限。后端对无实体的全局问题会
+// 遍历大量 contact_key，检索可能很久；避免网关长期占用会话，超时即返回可读错误。
+const memorySearchTimeout = 3 * time.Minute
+
 // memorySearch 调用 POST /api/ai/memory-search，返回检索结果与过程。
-func memorySearch(ctx context.Context, cfg *Config, query, convKey string, cb func(step, detail string)) (*memorySearchData, error) {
+// errMissingEntity 是网关在“未指定实体且上下文无实体”时主动中止检索的哨兵错误。
+var errMissingEntity = fmt.Errorf("问题里没有指定联系人/群，且本会话上下文也没有实体对象")
+
+// errEntityNotFound 是网关在“指定了实体名但后端未解析到 contact_key”时中止检索的哨兵错误。
+var errEntityNotFound = fmt.Errorf("问题中指定的联系人/群名未在数据中找到")
+
+// memorySearch 调用 POST /api/ai/memory-search，返回检索结果与过程。
+// hasPriorEntity 表示会话历史里是否已有明确实体（追问时可放行无实体问题）。
+// onResolveEntities 在收到 resolve_entities 进度时回调，可在无实体时主动中止。
+func memorySearch(ctx context.Context, cfg *Config, query, convKey string, hasPriorEntity bool, cb func(step, detail string), onResolveEntities func(names []string)) (*memorySearchData, error) {
 	payload, _ := json.Marshal(memorySearchRequest{
 		Query:           query,
 		ProfileID:       cfg.DefaultProfileID,
@@ -185,7 +219,11 @@ func memorySearch(ctx context.Context, cfg *Config, query, convKey string, cb fu
 	})
 
 	var result *memorySearchData
-	err := doSSE(ctx, cfg, "/api/ai/memory-search", payload, func(data []byte) error {
+	lastDetail := ""
+	ctx2, cancel := context.WithTimeout(ctx, memorySearchTimeout)
+	defer cancel()
+
+	err := doSSE(ctx2, cfg, "/api/ai/memory-search", payload, func(data []byte) error {
 		var evt struct {
 			Type   string          `json:"type"`
 			Step   string          `json:"step"`
@@ -195,8 +233,32 @@ func memorySearch(ctx context.Context, cfg *Config, query, convKey string, cb fu
 		if err := json.Unmarshal(data, &evt); err != nil {
 			return nil
 		}
-		if evt.Type == "progress" && cb != nil {
-			cb(evt.Step, evt.Detail)
+		if evt.Type == "progress" {
+			if evt.Detail != "" {
+				lastDetail = evt.Detail
+			}
+			if cb != nil {
+				cb(evt.Step, evt.Detail)
+			}
+			if evt.Step == "resolve_entities" {
+				if strings.Contains(evt.Detail, "实体解析结果:") {
+					// 第二条进度：后端已尝试解析实体，报告命中与否
+					if !hasPriorEntity && strings.Contains(evt.Detail, "未命中") {
+						return errEntityNotFound
+					}
+					return nil
+				}
+				// 第一条进度：解析实体名（无实体且无前序实体则中止）
+				if !hasPriorEntity {
+					names := parseEntityNamesFromDetail(evt.Detail)
+					if onResolveEntities != nil {
+						onResolveEntities(names)
+					}
+					if len(names) == 0 {
+						return errMissingEntity
+					}
+				}
+			}
 			return nil
 		}
 		if evt.Type == "result" {
@@ -209,12 +271,39 @@ func memorySearch(ctx context.Context, cfg *Config, query, convKey string, cb fu
 		return nil
 	})
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			return nil, fmt.Errorf("跨联系人检索超过 %s 仍未完成，建议改成更具体的人名/事件问题再试", memorySearchTimeout)
+		}
 		return nil, err
 	}
 	if result == nil {
-		return nil, fmt.Errorf("memory-search 未返回最终结果")
+		if lastDetail != "" {
+			return nil, fmt.Errorf("跨联系人检索未返回最终结果（最后进度：%s），建议改成更具体的问题再试", lastDetail)
+		}
+		return nil, fmt.Errorf("跨联系人检索未返回最终结果，建议改成更具体的问题再试")
 	}
 	return result, nil
+}
+
+// parseEntityNamesFromDetail 从 “解析实体名: A、B” 的进度详情里提取实体名。
+func parseEntityNamesFromDetail(detail string) []string {
+	idx := strings.Index(detail, "解析实体名:")
+	if idx < 0 {
+		return nil
+	}
+	rest := strings.TrimSpace(detail[idx+len("解析实体名:"):])
+	if rest == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.FieldsFunc(rest, func(r rune) bool {
+		return r == '、' || r == ',' || r == '，' || r == ' '
+	}) {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // buildDataContext 把 memory-search 结果拼成给 analyze 的上下文文本。

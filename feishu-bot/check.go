@@ -126,3 +126,66 @@ func checkWSReady(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("12 秒内未收到长连接就绪事件")
 	}
 }
+
+// runSmoke 直接调用跨联系人问答做一次真实链路冒烟，不依赖飞书消息。
+func runSmoke(ctx context.Context, cfg *Config, question string) error {
+	fmt.Printf("== 跨联系人问答冒烟测试 ==\n")
+	fmt.Printf("问题: %s\n", question)
+
+	convKey := "feishu:smoke:test"
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	fmt.Println("[1/2] memory-search 检索...")
+	data, err := memorySearch(ctx, cfg, question, convKey, false,
+		func(step, detail string) {
+			fmt.Printf("  - %s: %s\n", step, detail)
+		},
+		func(names []string) {
+			if len(names) > 0 {
+				fmt.Printf("  ↳ 解析到实体: %v\n", names)
+			}
+		},
+	)
+	if err != nil {
+		if err == errMissingEntity {
+			fmt.Println("  ✗ 未指定实体（联系人/群名），且上下文无实体，已拒绝进入检索")
+			return err
+		}
+		if err == errEntityNotFound {
+			fmt.Println("  ✗ 指定的实体未命中（联系人/群名未在数据中找到），已拒绝进入检索")
+			return err
+		}
+		fmt.Printf("  ✗ memory-search 失败: %v\n", err)
+		return err
+	}
+	if !data.hasResolvedEntity() {
+		fmt.Println("  ✗ 未解析到有效实体，已拒绝进入检索")
+		return fmt.Errorf("未指定实体")
+	}
+	ctxData := buildDataContext(data)
+	if ctxData == "" {
+		fmt.Println("  ✓ memory-search 完成（无检索上下文）")
+	} else {
+		fmt.Printf("  ✓ memory-search 完成，检索到上下文 %d 字符\n", len(ctxData))
+	}
+
+	fmt.Println("[2/2] analyze 生成回答...")
+	answer, err := analyzeQuestion(ctx, cfg, question, convKey, nil, ctxData)
+	if err != nil {
+		fmt.Printf("  ✗ analyze 失败: %v\n", err)
+		return err
+	}
+	if answer == "" {
+		fmt.Println("  ✗ analyze 返回空回答")
+		return fmt.Errorf("analyze 返回空回答")
+	}
+	fmt.Printf("  ✓ analyze 完成，回答 %d 字符：\n\n%s\n", len(answer), answer)
+	return nil
+}
+
+// runSmokeEntity 以邓凯文为测试实体跑一次冒烟，验证实体约束与跨联系人检索链路。
+func runSmokeEntity(ctx context.Context, cfg *Config) error {
+	return runSmoke(ctx, cfg, "我和邓凯文最近聊了什么？")
+}
+

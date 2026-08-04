@@ -61,9 +61,12 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	var steps []string
-	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", func(step, detail string) {
-		steps = append(steps, step)
-	})
+	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", false,
+		func(step, detail string) {
+			steps = append(steps, step)
+		},
+		func(names []string) {},
+	)
 	if err != nil {
 		t.Fatalf("memorySearch returned error: %v", err)
 	}
@@ -72,5 +75,47 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 	}
 	if len(steps) == 0 || steps[0] != "decompose" {
 		t.Fatalf("expected progress callback, got %v", steps)
+	}
+}
+
+func TestMemorySearch_AbortsOnEntityNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"progress\",\"step\":\"resolve_entities\",\"detail\":\"解析实体名: 邓凯文\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"progress\",\"step\":\"resolve_entities\",\"detail\":\"实体解析结果: 未命中\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &Config{WeLinkBaseURL: server.URL}
+	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", false,
+		func(step, detail string) {},
+		func(names []string) {},
+	)
+	if err != errEntityNotFound {
+		t.Fatalf("expected errEntityNotFound, got %v", err)
+	}
+}
+
+func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"progress\",\"step\":\"resolve_entities\",\"detail\":\"解析实体名: 邓凯文\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"progress\",\"step\":\"resolve_entities\",\"detail\":\"实体解析结果: 已命中\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"result\",\"data\":{\"facts\":[],\"resolved_entities\":[{\"name\":\"邓凯文\",\"contact_key\":\"contact:wxid_dkw\",\"display_name\":\"邓凯文\"}]}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &Config{WeLinkBaseURL: server.URL}
+	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", false,
+		func(step, detail string) {},
+		func(names []string) {},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d == nil || len(d.ResolvedEntities) != 1 {
+		t.Fatalf("unexpected result: %+v", d)
 	}
 }

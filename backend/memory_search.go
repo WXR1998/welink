@@ -654,6 +654,17 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				break
 			}
 		}
+
+		// 报告实体解析命中结果，让网关在慢检索前精确判断
+		if len(decomp.Entities) > 0 || len(decomp.Groups) > 0 {
+			anyResolved := hasResolvedEntity || len(groupKeys) > 0
+			if anyResolved {
+				sendProgress("resolve_entities", "实体解析结果: 已命中")
+			} else {
+				sendProgress("resolve_entities", "实体解析结果: 未命中")
+			}
+		}
+
 		var searchKeys []string
 		if hasResolvedEntity {
 			for _, re := range resolvedEntities {

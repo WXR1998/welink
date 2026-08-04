@@ -34,6 +34,12 @@ export SESSION_STORE_PATH="/var/lib/welink-feishu/sessions.json"  # 持久化会
 # 自检（验证飞书凭证 / WeLink / 长连接）
 GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run . --check
 
+# 以测试实体“邓凯文”跑跨联系人问答冒烟（需包含实体，避免全库慢扫）
+GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run . --smoke-entity
+
+# 任意带实体的冒烟问题
+GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run . --smoke "我和邓凯文最近聊了什么？"
+
 # 启动
 GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 ```
@@ -57,6 +63,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 |------|------|
 | 每人独立上下文 | `sessionKey = group:chatID:senderID`（群聊）或 `p2p:userID`（单聊） |
 | 只 @bot 才提问 | 群聊只有 `MentionedBot` 才处理；单聊始终响应 |
+| 必须指定实体 | 每条提问至少要指定一个联系人/群名；否则（且会话上下文也没有实体）直接报错，不进慢速全库检索 |
 | 回答中冷却 | 会话 `busy` 锁：处理期间同人再次提问返回错误 |
 | 2 小时过期 | 超过 `2h` 无提问自动清空历史并新开会话 |
 | 上下文压缩 | 达到条数/长度阈值后调用 `/api/ai/complete` 压缩成摘要，保留最近一问一答 |
@@ -64,6 +71,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 ## 说明与限制
 
 - 跨联系人问答依赖 WeLink 端已构建好记忆事实（`mem_facts`）和向量索引；若未建索引，检索可能返回空。
+- **开放性问题有性能边界**：真实冒烟显示，问“谁聊得最多”这类**无具体人名/群名/时间的开放问题**，WeLink 跨联系人 `memory-search` 会遍历大量联系人（如 505 个）做多路向量/BM25 检索，可能超过 3 分钟。网关内置 `memorySearchTimeout=3m`，超时返回提示，并建议改成更具体的人名/群名/时间范围的问题，避免长期占用会话。若在你的数据量下需要支持完全开放的问题，需进一步优化后端 `EnhancedRetrieval`。
 - `memory-search` 步骤在网关侧打印进度日志；飞书消息以最终答案为主，不逐条回帖中间态。
 - 会话历史默认保存在内存中，重启网关后丢失；设置 `SESSION_STORE_PATH` 后持久化到 JSON 文件，重启可续。
 - 飞书 3 秒约束：收到消息立即异步启动处理，避免超时重推。
