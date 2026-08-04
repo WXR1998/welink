@@ -214,63 +214,24 @@ function formatTokens(n: number): string {
   return n.toString();
 }
 
-// 判断问题是否属于"找原文/原话/原句"类意图。
-function isRawLookup(q: string): boolean {
-  return /找原文|原文|原话|原句|怎么说|怎么说的|贴出来|直接贴|原封不动|逐字|一字不差/.test(q);
-}
-
-// 从整轮对话中收集所有已检索到的原文候选（sources / vec_messages / raw_hits），
-// 去重后返回；无候选返回 null。
-function collectWholeConversationExcerpts(msgs: Message[]): RawExcerpt[] | null {
-  const out: RawExcerpt[] = [];
-  const seen = new Set<string>();
-  for (const m of msgs) {
-    const d = m.memorySearchData;
-    if (!d) continue;
-    for (const src of d.sources || []) {
-      const sourceName = src.source_name || src.fact?.contact_key || '未知';
-      for (const msg of src.messages || []) {
-        const key = `${sourceName}|${msg.datetime}|${msg.sender}|${msg.content}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ source_name: sourceName, datetime: msg.datetime, sender: msg.sender, content: msg.content });
-      }
-    }
-    for (const vm of d.vec_messages || []) {
-      const sourceName = vm.contact_key || '未知';
-      const key = `${sourceName}|${vm.datetime}|${vm.sender}|${vm.content}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ source_name: sourceName, datetime: vm.datetime, sender: vm.sender, content: vm.content });
-    }
-    for (const rh of d.raw_hits || []) {
-      const key = `${rh.source_name}|${rh.datetime}|${rh.sender}|${rh.content}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(rh);
-    }
-  }
-  return out.length ? out : null;
-}
-
-// 只保留检索详情中“轻量 + 后续逻辑需要”的字段，丢弃纯调试的大体积内容
-// （查询分解/精排的完整 prompt、rerank 明细、扩展子查询）。
-// sources / vec_messages / raw_hits 仍保留，供“找原文”追问时复用原文候选。
+// 只保留检索详情中“轻量”字段，丢弃所有大体积内容（source 消息、
+// 原文命中、向量命中、rerank 明细、完整 prompt、扩展子查询）。
+// 找原文追问已改为由后端按会话 key 从 ai_conversations 读回原文候选，
+// 前端不再需要在内存里保留这些原始内容。
 function compactMemorySearchData(d: MemorySearchResponse): MemorySearchResponse | undefined {
   if (!d) return undefined;
   return {
     decomposition: d.decomposition,
     resolved_entities: d.resolved_entities,
-    facts: d.facts,
-    sources: d.sources,
+    // facts / sources 是类型必填字段，压缩后用空数组占位，不保留源消息原文。
+    facts: [],
+    sources: [],
     pinned_facts: d.pinned_facts,
     token_usage: d.token_usage,
-    vec_messages: d.vec_messages,
     rerank_used: d.rerank_used,
     vector_hits: d.vector_hits,
     bm25_hits: d.bm25_hits,
     vec_message_hits: d.vec_message_hits,
-    raw_hits: d.raw_hits,
   };
 }
 
@@ -526,6 +487,11 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const askQuestion = useCallback(async (question: string) => {
     if (!question.trim() || loading) return;
     const q = question.trim();
+    // 在首轮提问前就确定会话 key，保证 memory-search 的原文候选能按会话持久化到后端。
+    if (!convKeyRef.current) {
+      convKeyRef.current = `cross-qa:${Date.now()}`;
+      setConversationKey(convKeyRef.current);
+    }
     setMessages(prev => [...prev, { role: 'user', content: q }]);
     setLoading(true);
     scrollToBottom();
@@ -552,6 +518,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         body: JSON.stringify({
           query: q,
           profile_id: profileId,
+          conversation_key: convKeyRef.current ?? '',
           previous_decomposition: prevDecomp,
         }),
       });
@@ -696,7 +663,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 2. 直接回答问题，不要废话
 3. 如果数据不足以回答，诚实说明
 4. 用 Markdown 格式排版（列表、粗体等）
-5. 如果涉及多个联系人，用列表列出并简要说明` },
+5. 如果涉及多个联系人，用列表列出并简要说明
+6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；上下文条数不做硬性限制，只要能完整表达一个事件或观点即可。` },
         ...history,
         { role: 'user', content: `问题：${q}\n\n${dataContext}` },
       ];
@@ -710,7 +678,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           profile_id: profileId,
           skip_memory: true,
           query: q,
-          candidate_sources: isRawLookup(q) ? (collectWholeConversationExcerpts(messages) ?? []) : [],
+          conversation_key: convKeyRef.current ?? '',
         }),
         signal: abortRef.current.signal,
       });
@@ -899,8 +867,14 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   }, []);
 
   const startNew = useCallback(() => {
+    const oldKey = convKeyRef.current;
+    convKeyRef.current = null;
     setMessages([]);
     setConversationKey(null);
+    if (oldKey) {
+      // 清空后端按会话保存的原文候选，避免孤儿数据堆积。
+      fetch(`/api/ai/conversations/candidates?key=${encodeURIComponent(oldKey)}`, { method: 'DELETE' }).catch(() => {});
+    }
   }, []);
 
   return (

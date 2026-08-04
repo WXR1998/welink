@@ -556,6 +556,83 @@ func searchRawMessagesFTS(query string, svc *service.ContactService) []RawExcerp
 	return out
 }
 
+// conversationMemorySearchData 是 AI 会话消息里记忆检索详情的 JSON 透传结构，
+// 只读取与本功能相关的原文候选字段。
+type conversationMemorySearchData struct {
+	Sources []struct {
+		SourceName string `json:"source_name"`
+		Messages   []struct {
+			Seq      int    `json:"seq"`
+			Datetime string `json:"datetime"`
+			Sender   string `json:"sender"`
+			Content  string `json:"content"`
+		} `json:"messages"`
+	} `json:"sources"`
+	VecMessages []struct {
+		ContactKey string  `json:"contact_key"`
+		Seq        int     `json:"seq"`
+		Datetime   string  `json:"datetime"`
+		Sender     string  `json:"sender"`
+		Content    string  `json:"content"`
+		Similarity float32 `json:"similarity"`
+	} `json:"vec_messages"`
+	RawHits []RawExcerpt `json:"raw_hits"`
+}
+
+// collectConversationRawCandidates 从已保存的 AI 会话里，把此前各轮
+// memorySearchData 中已检索到的原文候选（raw_hits / vec_messages / sources）
+// 收集出来，作为本轮“找原文”追问的可引用原文。数据唯一来源在后端。
+func collectConversationRawCandidates(convKey string) []RawExcerpt {
+	if convKey == "" {
+		return nil
+	}
+	msgs, err := GetAIConversation(convKey)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	out := make([]RawExcerpt, 0, 64)
+	seen := make(map[string]bool)
+	add := func(sourceName, dt, sender, content string) {
+		if content == "" {
+			return
+		}
+		key := sourceName + "|" + dt + "|" + sender + "|" + content
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, RawExcerpt{SourceName: sourceName, Datetime: dt, Sender: sender, Content: content})
+	}
+	for _, m := range msgs {
+		if m.Role != "assistant" || len(m.MemorySearchData) == 0 {
+			continue
+		}
+		var data conversationMemorySearchData
+		if json.Unmarshal(m.MemorySearchData, &data) != nil {
+			continue
+		}
+		for _, rh := range data.RawHits {
+			add(rh.SourceName, rh.Datetime, rh.Sender, rh.Content)
+		}
+		for _, vm := range data.VecMessages {
+			sourceName := vm.ContactKey
+			if sourceName == "" {
+				sourceName = "未知"
+			}
+			add(sourceName, vm.Datetime, vm.Sender, vm.Content)
+		}
+		for _, src := range data.Sources {
+			for _, msg := range src.Messages {
+				add(src.SourceName, msg.Datetime, msg.Sender, msg.Content)
+			}
+		}
+		if len(out) >= 200 {
+			break
+		}
+	}
+	return out
+}
+
 // EnhancedRetrieval 整合 BM25 + 双路检索 + 查询改写 + Rerank 的增强检索。
 //
 // 流程：

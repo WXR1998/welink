@@ -673,8 +673,8 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
     scrollToBottom();
 
     const sysPrompt = ctxText
-      ? `你是一个聊天记录分析助手。以下是${contactLabels}的聊天记录（已脱敏处理）：\n\n${ctxText}\n\n请根据以上聊天记录回答用户的问题，分析时请客观、有洞察力，用中文回答，语言自然流畅。`
-      : `你是一个聊天记录分析助手，请帮助分析${contactLabels}的聊天记录，用中文回答。`;
+      ? `你是一个聊天记录分析助手。以下是${contactLabels}的聊天记录（已脱敏处理）：\n\n${ctxText}\n\n请根据以上聊天记录回答用户的问题，分析时请客观、有洞察力，用中文回答，语言自然流畅。每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；上下文条数不做硬性限制，只要能完整表达一个事件或观点即可。`
+      : `你是一个聊天记录分析助手，请帮助分析${contactLabels}的聊天记录，用中文回答。每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；上下文条数不做硬性限制，只要能完整表达一个事件或观点即可。`;
 
     const abort = new AbortController();
     abortRef.current = abort;

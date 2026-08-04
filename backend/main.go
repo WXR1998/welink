@@ -1189,29 +1189,29 @@ func serverMain() {
 			return
 		}
 		var incoming struct {
-			LLMProfiles        []LLMProfile      `json:"llm_profiles"`
-			LLMProvider        string            `json:"llm_provider"`
-			LLMAPIKey          string            `json:"llm_api_key"`
-			LLMBaseURL         string            `json:"llm_base_url"`
-			LLMModel           string            `json:"llm_model"`
-			GeminiClientID     string            `json:"gemini_client_id"`
-			GeminiClientSecret string            `json:"gemini_client_secret"`
-			AIAnalysisDBPath   string            `json:"ai_analysis_db_path"`
-			EmbeddingProvider  string            `json:"embedding_provider"`
-			EmbeddingAPIKey    string            `json:"embedding_api_key"`
-			EmbeddingBaseURL   string            `json:"embedding_base_url"`
-			EmbeddingModel     string            `json:"embedding_model"`
-			EmbeddingDims      int               `json:"embedding_dims"`
+			LLMProfiles        []LLMProfile       `json:"llm_profiles"`
+			LLMProvider        string             `json:"llm_provider"`
+			LLMAPIKey          string             `json:"llm_api_key"`
+			LLMBaseURL         string             `json:"llm_base_url"`
+			LLMModel           string             `json:"llm_model"`
+			GeminiClientID     string             `json:"gemini_client_id"`
+			GeminiClientSecret string             `json:"gemini_client_secret"`
+			AIAnalysisDBPath   string             `json:"ai_analysis_db_path"`
+			EmbeddingProvider  string             `json:"embedding_provider"`
+			EmbeddingAPIKey    string             `json:"embedding_api_key"`
+			EmbeddingBaseURL   string             `json:"embedding_base_url"`
+			EmbeddingModel     string             `json:"embedding_model"`
+			EmbeddingDims      int                `json:"embedding_dims"`
 			EmbeddingProfiles  []EmbeddingProfile `json:"embedding_profiles"`
-			MemLLMBaseURL      string            `json:"mem_llm_base_url"`
-			MemLLMModel        string            `json:"mem_llm_model"`
-			MemLLMAPIKey       string            `json:"mem_llm_api_key"`
-			MemLLMProfiles     []MemLLMProfile   `json:"mem_llm_profiles"`
-			RerankProfiles     []RerankProfile   `json:"rerank_profiles"`
-			RerankProvider     string            `json:"rerank_provider"`
-			RerankAPIKey       string            `json:"rerank_api_key"`
-			RerankBaseURL      string            `json:"rerank_base_url"`
-			RerankModel        string            `json:"rerank_model"`
+			MemLLMBaseURL      string             `json:"mem_llm_base_url"`
+			MemLLMModel        string             `json:"mem_llm_model"`
+			MemLLMAPIKey       string             `json:"mem_llm_api_key"`
+			MemLLMProfiles     []MemLLMProfile    `json:"mem_llm_profiles"`
+			RerankProfiles     []RerankProfile    `json:"rerank_profiles"`
+			RerankProvider     string             `json:"rerank_provider"`
+			RerankAPIKey       string             `json:"rerank_api_key"`
+			RerankBaseURL      string             `json:"rerank_base_url"`
+			RerankModel        string             `json:"rerank_model"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1577,6 +1577,18 @@ func serverMain() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		deleteConversationCandidates(key)
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	// DELETE /api/ai/conversations/candidates?key=xxx — 清空某会话持久化的原文候选
+	api.DELETE("/ai/conversations/candidates", func(c *gin.Context) {
+		key := c.Query("key")
+		if key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 key 参数"})
+			return
+		}
+		deleteConversationCandidates(key)
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -1668,9 +1680,10 @@ func serverMain() {
 			To               int64        `json:"to"`
 			Messages         []LLMMessage `json:"messages"`
 			ProfileID        string       `json:"profile_id"`
-			SkipMemory       bool         `json:"skip_memory"`        // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
-			Query            string       `json:"query"`              // 当前用户问题（用于找原文/选择候选）
-			CandidateSources []RawExcerpt `json:"candidate_sources"`  // 前序对话中已检索到的原文候选
+			SkipMemory       bool         `json:"skip_memory"`       // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
+			Query            string       `json:"query"`             // 当前用户问题（用于找原文/选择候选）
+			ConversationKey  string       `json:"conversation_key"`  // 当前 AI 会话 key，用于后端读回前序原文候选
+			CandidateSources []RawExcerpt `json:"candidate_sources"` // 前序对话中已检索到的原文候选（兼容旧前端）
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1748,9 +1761,23 @@ func serverMain() {
 		rerankCfgs := rerankConfigs(prefs)
 		// 仅在"找原文"类意图时，才用额外 LLM/rerank 从前序候选里挑选相关原文注入，
 		// 避免普通问题也触发一次无关的额外调用。
+		// 前端不再回传 candidate_sources；后端按会话 key 从已保存的下一轮消息里
+		// 读回此前检索到的原文候选（数据唯一来源在后端）。若旧前端仍传了候选，则回退兼容。
+		// 优先从按会话持久化的原文候选表读取（数据唯一来源在后端）；
+		// 再回退到从 ai_conversations 消息扫描，最后兼容旧前端传参。
+		var candidates []RawExcerpt
+		if body.ConversationKey != "" {
+			candidates = getConversationCandidates(body.ConversationKey)
+		}
+		if len(candidates) == 0 && body.ConversationKey != "" {
+			candidates = collectConversationRawCandidates(body.ConversationKey)
+		}
+		if len(candidates) == 0 {
+			candidates = body.CandidateSources
+		}
 		var selected []RawExcerpt
-		if looksLikeRawLookup(query) && len(body.CandidateSources) > 0 {
-			selected = selectRelevantSources(query, body.CandidateSources, prefs, body.ProfileID, rerankCfgs)
+		if looksLikeRawLookup(query) && len(candidates) > 0 {
+			selected = selectRelevantSources(query, candidates, prefs, body.ProfileID, rerankCfgs)
 		}
 		if len(selected) > 0 {
 			var sb strings.Builder
@@ -1895,7 +1922,6 @@ func serverMain() {
 				}
 			}
 		}
-
 
 		// 截断过长的 prompt（最多 100K chars）
 		body.Messages = truncatePromptChars(body.Messages)

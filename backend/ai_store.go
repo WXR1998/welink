@@ -17,7 +17,7 @@ import (
 type AIMessage struct {
 	Role             string          `json:"role"`
 	Content          string          `json:"content"`
-	Searching        bool            `json:"searching,omitempty"`        // 是否处于检索/生成中的中间状态
+	Searching        bool            `json:"searching,omitempty"` // 是否处于检索/生成中的中间状态
 	Provider         string          `json:"provider,omitempty"`
 	Model            string          `json:"model,omitempty"`
 	ElapsedSecs      float64         `json:"elapsedSecs,omitempty"`
@@ -117,6 +117,11 @@ func InitAIDB() error {
 		return fmt.Errorf("ai_store: %w", err)
 	}
 	seedLLMApiLogsFromDB()
+	if err := initConversationCandidatesTable(); err != nil {
+		db.Close()
+		aiDB = nil
+		return fmt.Errorf("ai_store: %w", err)
+	}
 	if err := initDailyDigestTables(); err != nil {
 		db.Close()
 		aiDB = nil
@@ -388,12 +393,12 @@ type AIUsageStats struct {
 
 // AIUsageProviderStat 单个 provider 的小计
 type AIUsageProviderStat struct {
-	Provider    string  `json:"provider"`
-	Model       string  `json:"model,omitempty"`
-	Count       int     `json:"count"`
-	Chars       int64   `json:"chars"`
-	Tokens      int64   `json:"tokens"`
-	ElapsedSec  float64 `json:"elapsed_sec"`
+	Provider   string  `json:"provider"`
+	Model      string  `json:"model,omitempty"`
+	Count      int     `json:"count"`
+	Chars      int64   `json:"chars"`
+	Tokens     int64   `json:"tokens"`
+	ElapsedSec float64 `json:"elapsed_sec"`
 }
 
 // GetAIUsageStats 扫描所有 ai_conversations 汇总用量。数据量小（每联系人至多 1 条），

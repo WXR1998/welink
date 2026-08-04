@@ -14,8 +14,6 @@ package main
 //   2. embedding 搜索天然处理近义词/转述
 //   3. 每条 fact 的 source_from/source_to 指向 vec_messages 源消息，可精准追溯
 
-
-
 import (
 	"encoding/json"
 	"fmt"
@@ -132,7 +130,6 @@ func ExtractFactSources(facts []MemFact, svc *service.ContactService) ([]FactSou
 	}
 	return out, nil
 }
-
 
 // ─── LLM 查询分解 ─────────────────────────────────────────────────────────────
 
@@ -304,9 +301,9 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 
 	return &decomp, llmMsgs, &StreamUsage{
-		PromptTokens:  promptTokens,
-		OutputTokens:  outputTokens,
-		TotalTokens:   promptTokens + outputTokens,
+		PromptTokens: promptTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  promptTokens + outputTokens,
 	}, nil
 }
 
@@ -484,40 +481,41 @@ func GetGroupKeysWithFacts() []string {
 
 // MemorySearchResponse 是 /api/ai/memory-search 的响应。
 type MemorySearchResponse struct {
-	Decomposition    *QueryDecomposition `json:"decomposition"`      // LLM 查询分解结果
-	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"`  // 实体名 → contact_key 解析结果
-	Facts            []MemFact           `json:"facts"`              // 匹配到的记忆事实
-	Sources          []FactSource        `json:"sources"`            // 记忆事实对应的源聊天记录
-	PinnedFacts      []MemFact           `json:"pinned_facts"`       // 置顶事实（始终注入）
-	TokenUsage       *StreamUsage        `json:"token_usage"`        // DecomposeQuery 消耗的 token
-	DecomposePrompt  []LLMMessage        `json:"decompose_prompt"`   // DecomposeQuery 发给 LLM 的原始 prompt
+	Decomposition    *QueryDecomposition `json:"decomposition"`     // LLM 查询分解结果
+	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"` // 实体名 → contact_key 解析结果
+	Facts            []MemFact           `json:"facts"`             // 匹配到的记忆事实
+	Sources          []FactSource        `json:"sources"`           // 记忆事实对应的源聊天记录
+	PinnedFacts      []MemFact           `json:"pinned_facts"`      // 置顶事实（始终注入）
+	TokenUsage       *StreamUsage        `json:"token_usage"`       // DecomposeQuery 消耗的 token
+	DecomposePrompt  []LLMMessage        `json:"decompose_prompt"`  // DecomposeQuery 发给 LLM 的原始 prompt
 	// 增强检索结果
-	VecMessages      []VecMessageHit     `json:"vec_messages"`       // 双路检索：原始消息命中
-	ExpandedQueries  []string            `json:"expanded_queries"`   // 查询改写：扩展的子查询
-	RerankUsed       bool                `json:"rerank_used"`        // 是否使用了 rerank
-	RerankResults    []RerankScoreItem   `json:"rerank_results"`     // rerank 精排结果（按分数降序）
-	RawHits          []RawExcerpt        `json:"raw_hits"`           // 找原文场景：原始消息精确命中
-	VectorHits       int                 `json:"vector_hits"`        // 向量检索命中数
-	BM25Hits         int                 `json:"bm25_hits"`          // BM25 检索命中数
-	VecMessageHits   int                 `json:"vec_message_hits"`   // 原始消息检索命中数
+	VecMessages     []VecMessageHit   `json:"vec_messages"`     // 双路检索：原始消息命中
+	ExpandedQueries []string          `json:"expanded_queries"` // 查询改写：扩展的子查询
+	RerankUsed      bool              `json:"rerank_used"`      // 是否使用了 rerank
+	RerankResults   []RerankScoreItem `json:"rerank_results"`   // rerank 精排结果（按分数降序）
+	RawHits         []RawExcerpt      `json:"raw_hits"`         // 找原文场景：原始消息精确命中
+	VectorHits      int               `json:"vector_hits"`      // 向量检索命中数
+	BM25Hits        int               `json:"bm25_hits"`        // BM25 检索命中数
+	VecMessageHits  int               `json:"vec_message_hits"` // 原始消息检索命中数
 }
 
 // registerMemorySearchRoutes 注册 /api/ai/memory-search 端点。
 //
 // 这个端点编排完整的两级检索流程：
-//   1. DecomposeQuery — LLM 分解问题（needs_memory gate + 实体/概念/时间提取）
-//   2. 如果 needs_memory=false → 直接返回（问题可即答，省 token）
-//   3. ResolveEntities — 把实体名映射到 contact_key（缩小搜索范围，降噪）
-//   4. SearchMemFacts — 用 concepts 做 embedding 搜索 mem_facts
-//      - 有实体 → 按 contact_key 过滤搜索
-//      - 无实体 → 全局搜索
-//   5. ExtractFactSources — 从 mem_facts 的 source_from/source_to 提取源聊天记录
-//   6. 时间过滤 — 如果分解出时间范围，过滤源聊天记录
+//  1. DecomposeQuery — LLM 分解问题（needs_memory gate + 实体/概念/时间提取）
+//  2. 如果 needs_memory=false → 直接返回（问题可即答，省 token）
+//  3. ResolveEntities — 把实体名映射到 contact_key（缩小搜索范围，降噪）
+//  4. SearchMemFacts — 用 concepts 做 embedding 搜索 mem_facts
+//     - 有实体 → 按 contact_key 过滤搜索
+//     - 无实体 → 全局搜索
+//  5. ExtractFactSources — 从 mem_facts 的 source_from/source_to 提取源聊天记录
+//  6. 时间过滤 — 如果分解出时间范围，过滤源聊天记录
 func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.ContactService) {
 	api.POST("/ai/memory-search", func(c *gin.Context) {
 		var body struct {
 			Query                 string              `json:"query"`
 			ProfileID             string              `json:"profile_id"`
+			ConversationKey       string              `json:"conversation_key"`
 			PreviousDecomposition *QueryDecomposition `json:"previous_decomposition"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Query) == "" {
@@ -733,6 +731,38 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			sources = filterSourcesByTime(sources, decomp.TimeFrom, decomp.TimeTo)
 		}
 
+		// 把本轮检索到的原文候选按会话持久化到后端，供后续“找原文”追问直接使用。
+		// 前端不再需要保留这些大数组，数据统一存放在聊天 session 侧。
+		if body.ConversationKey != "" {
+			var candidates []RawExcerpt
+			seen := make(map[string]bool)
+			add := func(src, dt, sender, content string) {
+				if content == "" || seen[src+"|"+dt+"|"+sender+"|"+content] {
+					return
+				}
+				seen[src+"|"+dt+"|"+sender+"|"+content] = true
+				candidates = append(candidates, RawExcerpt{SourceName: src, Datetime: dt, Sender: sender, Content: content})
+			}
+			if enhancedResult != nil {
+				for _, rh := range enhancedResult.RawHits {
+					add(rh.SourceName, rh.Datetime, rh.Sender, rh.Content)
+				}
+			}
+			for _, vm := range vecMessages {
+				src := vm.ContactKey
+				if src == "" {
+					src = "未知"
+				}
+				add(src, vm.Datetime, vm.Sender, vm.Content)
+			}
+			for _, src := range sources {
+				for _, m := range src.Messages {
+					add(src.SourceName, m.Datetime, m.Sender, m.Content)
+				}
+			}
+			saveConversationCandidates(body.ConversationKey, candidates)
+		}
+
 		// 推送最终结果
 		close(keepaliveDone)
 		resp := MemorySearchResponse{
@@ -747,7 +777,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 		if enhancedResult != nil {
 			resp.ExpandedQueries = enhancedResult.ExpandedQueries
-				resp.RerankUsed = enhancedResult.RerankUsed
+			resp.RerankUsed = enhancedResult.RerankUsed
 			resp.RerankResults = enhancedResult.RerankResults
 			resp.RawHits = enhancedResult.RawHits
 			resp.VectorHits = enhancedResult.VectorHits
