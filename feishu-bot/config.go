@@ -25,6 +25,9 @@ type Config struct {
 	// 流式回复载体：md（默认，Markdown 富文本 post 流式）或 card（卡片流式）
 	StreamMode string
 
+	// 会话历史持久化文件路径；为空表示仅内存、重启丢失
+	SessionStorePath string
+
 	// 允许的飞书用户（open_id 或 user_id），为空表示不限制（危险）
 	AllowedUsers []string
 }
@@ -37,8 +40,9 @@ func loadConfig() (*Config, error) {
 		WeLinkBaseURL:    strings.TrimRight(getenv("WELINK_BASE_URL", "http://127.0.0.1:8080"), "/"),
 		WeLinkToken:      os.Getenv("WELINK_TOKEN"),
 		DefaultProfileID: os.Getenv("DEFAULT_PROFILE_ID"),
-		StreamMode:       strings.ToLower(getenv("STREAM_MODE", "md")),
-		AllowedUsers:     splitList(os.Getenv("ALLOWED_USERS")),
+		StreamMode:        strings.ToLower(getenv("STREAM_MODE", "md")),
+		SessionStorePath:  os.Getenv("SESSION_STORE_PATH"),
+		AllowedUsers:      splitList(os.Getenv("ALLOWED_USERS")),
 	}
 
 	if p := os.Getenv("FEISHU_CONFIG"); p != "" {
@@ -51,9 +55,10 @@ func loadConfig() (*Config, error) {
 			FeishuAppSecret string   `json:"feishu_app_secret"`
 			WeLinkBaseURL   string   `json:"welink_base_url"`
 			WeLinkToken     string   `json:"welink_token"`
-			DefaultProfile  string   `json:"default_profile_id"`
-			StreamMode      string   `json:"stream_mode"`
-			AllowedUsers    []string `json:"allowed_users"`
+			DefaultProfile   string   `json:"default_profile_id"`
+			StreamMode       string   `json:"stream_mode"`
+			SessionStorePath string   `json:"session_store_path"`
+			AllowedUsers     []string `json:"allowed_users"`
 		}
 		if err := json.Unmarshal(b, &overrides); err != nil {
 			return nil, err
@@ -64,6 +69,7 @@ func loadConfig() (*Config, error) {
 		applyOverride(&cfg.WeLinkToken, overrides.WeLinkToken)
 		applyOverride(&cfg.DefaultProfileID, overrides.DefaultProfile)
 		applyOverride(&cfg.StreamMode, strings.ToLower(overrides.StreamMode))
+		applyOverride(&cfg.SessionStorePath, overrides.SessionStorePath)
 		if len(overrides.AllowedUsers) > 0 {
 			cfg.AllowedUsers = overrides.AllowedUsers
 		}

@@ -25,6 +25,7 @@ const (
 type bot struct {
 	cfg      *Config
 	ch       types.Channel
+	store    *sessionStore
 	mu       sync.Mutex
 	sessions map[string]*session
 }
@@ -46,9 +47,15 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 	wsClient := larkws.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
+	st := newSessionStore(cfg.SessionStorePath)
+	loaded, err := st.Load()
+	if err != nil {
+		return nil, fmt.Errorf("加载会话历史失败: %w", err)
+	}
 	b := &bot{
 		cfg:      cfg,
-		sessions: map[string]*session{},
+		store:    st,
+		sessions: loaded,
 	}
 	b.ch = channel.NewChannel(client, wsClient)
 
@@ -251,6 +258,7 @@ func (b *bot) remember(key, question, answer string) {
 	s.history = append(s.history, llmMessage{Role: "assistant", Content: answer})
 	s.lastActive = time.Now()
 	s.version++
+	b.saveLocked()
 }
 
 // maybeCompress 若会话达到压缩阈值，则异步调用 LLM 做摘要压缩。
@@ -325,6 +333,17 @@ func (b *bot) applyCompression(key string, triggerVersion uint64, summary string
 	s.history = []llmMessage{{Role: "system", Content: "【上一段会话摘要】" + summary}}
 	s.history = append(s.history, recent...)
 	s.compressed = true
+	b.saveLocked()
+}
+
+// saveLocked 把当前会话快照写入存储文件；调用方已持有 b.mu。
+func (b *bot) saveLocked() {
+	if b.store == nil {
+		return
+	}
+	if err := b.store.Save(b.sessions); err != nil {
+		log.Printf("[bot] 保存会话历史失败: %v", err)
+	}
 }
 
 func (b *bot) safeSend(ctx context.Context, msg *types.NormalizedMessage, text string) {

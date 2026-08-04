@@ -29,6 +29,7 @@ export FEISHU_APP_ID="cli_xxx"
 export FEISHU_APP_SECRET="your_secret"
 export WELINK_BASE_URL="http://127.0.0.1:8080"
 export ALLOWED_USERS="ou_xxx"   # 逗号分隔；不设=全部放行（慎用）
+export SESSION_STORE_PATH="/var/lib/welink-feishu/sessions.json"  # 持久化会话（可选）
 
 # 自检（验证飞书凭证 / WeLink / 长连接）
 GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run . --check
@@ -47,6 +48,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 | `WELINK_TOKEN` | 配对 token。Docker 内非回环访问时需带 | 空（回环自动放行） |
 | `DEFAULT_PROFILE_ID` | 使用的 LLM Profile ID | 空（用默认） |
 | `STREAM_MODE` | 流式回复载体：`md`（默认）或 `card` | `md` |
+| `SESSION_STORE_PATH` | 会话历史 JSON 文件路径；空=仅内存 | 空 |
 | `ALLOWED_USERS` | 允许的飞书用户，逗号分隔 | 空=不限制 |
 
 ## 会话机制
@@ -63,7 +65,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 
 - 跨联系人问答依赖 WeLink 端已构建好记忆事实（`mem_facts`）和向量索引；若未建索引，检索可能返回空。
 - `memory-search` 步骤在网关侧打印进度日志；飞书消息以最终答案为主，不逐条回帖中间态。
-- 会话历史保存在内存中，重启网关后丢失；当前未做持久化。
+- 会话历史默认保存在内存中，重启网关后丢失；设置 `SESSION_STORE_PATH` 后持久化到 JSON 文件，重启可续。
 - 飞书 3 秒约束：收到消息立即异步启动处理，避免超时重推。
 - 长文本由 SDK 按块拆分并以 Markdown/富文本回传，客户端 7.20+ 支持流式上屏。
 
