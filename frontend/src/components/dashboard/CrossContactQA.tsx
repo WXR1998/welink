@@ -238,8 +238,31 @@ function compactMemorySearchData(d: MemorySearchResponse): MemorySearchResponse 
 // 检索详情的折叠面板。核心点：内容只有在用户真正打开时才挂载/渲染，
 // 避免每条 AI 回答都把几十上百条 sources / rerank / 原文渲染进隐藏 DOM，
 // 造成输入时的持续卡顿。
-const RetrievalDetails: React.FC<{ msg: Message; privacyMode: boolean }> = ({ msg, privacyMode }) => {
+const RetrievalDetails: React.FC<{
+  msg: Message;
+  privacyMode: boolean;
+  conversationKey?: string;
+  onAskRaw?: (question: string) => void;
+}> = ({ msg, privacyMode, conversationKey, onAskRaw }) => {
   const [open, setOpen] = useState(false);
+  const [candidates, setCandidates] = useState<RawExcerpt[] | null>(null);
+  const [candLoading, setCandLoading] = useState(false);
+
+  // 打开时才从后端按会话拉取原文候选，避免占用前端内存。
+  useEffect(() => {
+    if (!open || !conversationKey || candidates !== null) return;
+    let cancelled = false;
+    setCandLoading(true);
+    fetch(`/api/ai/conversations/candidates?key=${encodeURIComponent(conversationKey)}`)
+      .then(r => r.json())
+      .then((d: { candidates?: RawExcerpt[] }) => {
+        if (!cancelled) setCandidates(d.candidates ?? []);
+      })
+      .catch(() => { if (!cancelled) setCandidates([]); })
+      .finally(() => { if (!cancelled) setCandLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, conversationKey, candidates]);
+
   return (
     <details open={open} onToggle={e => setOpen((e.target as HTMLDetailsElement).open)} className="mt-1.5 w-full">
       <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-[#07c160] transition-colors select-none flex items-center gap-1">
@@ -313,22 +336,34 @@ const RetrievalDetails: React.FC<{ msg: Message; privacyMode: boolean }> = ({ ms
               </div>
             </div>
           )}
-          {/* 原文精确命中（找原文场景） */}
-          {msg.memorySearchData?.raw_hits && msg.memorySearchData.raw_hits.length > 0 && (
-            <div>
-              <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                原文精确命中（{msg.memorySearchData.raw_hits.length} 条）
-              </div>
+          {/* 原文精确命中（找原文场景）— 数据来自后端会话，按需拉取 */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="font-semibold text-gray-600 dark:text-gray-300">聊天记录原文（找原文）</div>
+              {onAskRaw && (
+                <button
+                  onClick={() => { setOpen(false); onAskRaw('把上面这段聊天记录对应的原文原样贴出来，并标注时间和来源。'); }}
+                  className="text-[10px] px-2 py-0.5 rounded-lg bg-[#07c160]/10 text-[#07c160] hover:bg-[#e7f8f0] transition-colors"
+                >
+                  问 AI：贴出这段原文
+                </button>
+              )}
+            </div>
+            {candLoading ? (
+              <div className="text-[10px] text-gray-400">正在加载原文...</div>
+            ) : candidates && candidates.length > 0 ? (
               <div className="mt-1 space-y-1 max-h-56 overflow-y-auto">
-                {msg.memorySearchData.raw_hits.map((rh, idx) => (
+                {candidates.map((rh, idx) => (
                   <div key={idx} className="border-l-2 border-gray-200 dark:border-gray-700 pl-2">
-                    <span className="text-gray-500 text-[10px]">{rh.source_name} · {rh.datetime} {rh.sender}</span>
-                    <div className="text-gray-600 dark:text-gray-300 text-xs break-all">{rh.content}</div>
+                    <span className="text-gray-500 text-[10px]">{privacyMode ? '***' : rh.source_name} · {rh.datetime} {rh.sender}</span>
+                    <div className="text-gray-600 dark:text-gray-300 text-xs break-all">{privacyMode ? '***' : rh.content}</div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : candidates ? (
+              <div className="text-[10px] text-gray-400">当前会话暂无已保存的原文候选，可点上方按钮让 AI 去检索。</div>
+            ) : null}
+          </div>
           {/* 增强检索统计 */}
           {msg.memorySearchData && (msg.memorySearchData.vector_hits || msg.memorySearchData.bm25_hits || msg.memorySearchData.vec_message_hits || msg.memorySearchData.rerank_used !== undefined) && (
             <div>
@@ -1060,7 +1095,12 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                 </div>
               )}
               {(msg.role === "assistant") && !msg.searching && msg.content && msg.memorySearchData && (
-                <RetrievalDetails msg={msg} privacyMode={privacyMode} />
+                <RetrievalDetails
+                  msg={msg}
+                  privacyMode={privacyMode}
+                  conversationKey={convKeyRef.current ?? undefined}
+                  onAskRaw={(question) => { setInput(question); void askQuestion(question); }}
+                />
               )}
               {/* 搜索结果完整列表 */}
               {msg.searchHits && msg.searchHits.length > 0 && !msg.searching && msg.content && (

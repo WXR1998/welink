@@ -1581,6 +1581,20 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
+	// GET /api/ai/conversations/candidates?key=xxx — 读取某会话持久化的原文候选
+	api.GET("/ai/conversations/candidates", func(c *gin.Context) {
+		key := c.Query("key")
+		if key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 key 参数"})
+			return
+		}
+		candidates := getConversationCandidates(key)
+		if candidates == nil {
+			candidates = []RawExcerpt{}
+		}
+		c.JSON(http.StatusOK, gin.H{"candidates": candidates})
+	})
+
 	// DELETE /api/ai/conversations/candidates?key=xxx — 清空某会话持久化的原文候选
 	api.DELETE("/ai/conversations/candidates", func(c *gin.Context) {
 		key := c.Query("key")
