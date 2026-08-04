@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -77,5 +78,54 @@ func indexOf(s, sub string) int {
 func TestCleanMention(t *testing.T) {
 	if got := cleanMention("@_user_1 我和张三聊了什么？"); got != "我和张三聊了什么？" {
 		t.Errorf("cleanMention got %q", got)
+	}
+}
+
+func TestCompressDiscardsIfVersionChanged(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	key := "p2p:user_c"
+	b.remember(key, "q1", "a1")
+	b.remember(key, "q2", "a2")
+	b.remember(key, "q3", "a3")
+	b.mu.Lock()
+	v0 := b.sessions[key].version
+	b.mu.Unlock()
+
+	// 触发压缩后、写回前又有新问答，version 变化
+	b.remember(key, "q4", "a4")
+
+	// 版本已变，写回应被放弃，历史保持 8 条不变
+	b.applyCompression(key, v0, "summary")
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessions[key]
+	if len(s.history) != 8 {
+		t.Errorf("expected history unchanged on race, got %d messages", len(s.history))
+	}
+	if s.history[0].Role != "user" || s.history[0].Content != "q1" {
+		t.Errorf("expected history intact, first=%+v", s.history[0])
+	}
+}
+
+func TestCompressAppliesWhenVersionUnchanged(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	key := "p2p:user_d"
+	b.remember(key, "q1", "a1")
+	b.remember(key, "q2", "a2")
+	b.mu.Lock()
+	v := b.sessions[key].version
+	b.mu.Unlock()
+
+	b.applyCompression(key, v, "summary-text")
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessions[key]
+	if len(s.history) != 3 {
+		t.Fatalf("expected 3 messages (summary + last pair), got %d", len(s.history))
+	}
+	if s.history[0].Role != "system" || !strings.Contains(s.history[0].Content, "summary-text") {
+		t.Errorf("expected summary first, got %+v", s.history[0])
 	}
 }

@@ -35,6 +35,7 @@ type session struct {
 	lastActive time.Time    // 最近一次提问时间
 	compressed bool         // 是否已做过压缩摘要（供日志/调试）
 	busy       bool         // 该会话是否正在回答中（冷却锁）
+	version    uint64       // 每次追加问答递增，用于压缩写回时的并发保护
 }
 
 // newBot 构造飞书客户端与高层 channel。
@@ -249,21 +250,31 @@ func (b *bot) remember(key, question, answer string) {
 	s.history = append(s.history, llmMessage{Role: "user", Content: question})
 	s.history = append(s.history, llmMessage{Role: "assistant", Content: answer})
 	s.lastActive = time.Now()
+	s.version++
 }
 
 // maybeCompress 若会话达到压缩阈值，则异步调用 LLM 做摘要压缩。
 func (b *bot) maybeCompress(ctx context.Context, key string) {
 	b.mu.Lock()
 	s := b.sessions[key]
-	need := s != nil && b.shouldCompressLocked(s)
-	b.mu.Unlock()
-	if !need {
+	if s == nil || !b.shouldCompressLocked(s) {
+		b.mu.Unlock()
 		return
 	}
-	log.Printf("[bot] %s 会话上下文过长，开始异步压缩", key)
+	// 记录触发压缩时的版本与历史快照，避免压缩期间新问答被覆盖
+	triggerVersion := s.version
+	msgs := make([]llmMessage, 0, len(s.history)+2)
+	msgs = append(msgs, llmMessage{
+		Role:    "system",
+		Content: "你是一个会话摘要器。请把下面的用户和 AI 的历史问答压缩成一段简洁的中文摘要，保留关键人物、时间、事件、结论，供后续多轮追问使用。只输出摘要本身。",
+	})
+	msgs = append(msgs, s.history...)
+	b.mu.Unlock()
+
+	log.Printf("[bot] %s 会话上下文过长，开始异步压缩 (version=%d)", key, triggerVersion)
 	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	b.compress(cctx, key)
+	b.compress(cctx, key, triggerVersion, msgs)
 }
 
 // shouldCompressLocked 判断是否达到压缩阈值，调用方须持有 b.mu。
@@ -278,23 +289,9 @@ func (b *bot) shouldCompressLocked(s *session) bool {
 	return total >= maxHistoryChars
 }
 
-// compress 压缩会话历史为一段摘要，仅保留最近的问题。
-func (b *bot) compress(ctx context.Context, key string) {
-	b.mu.Lock()
-	s := b.sessions[key]
-	if s == nil || len(s.history) == 0 || !b.shouldCompressLocked(s) {
-		b.mu.Unlock()
-		return
-	}
-	// 取所有历史作为输入给 LLM 做摘要
-	msgs := make([]llmMessage, 0, len(s.history)+2)
-	msgs = append(msgs, llmMessage{
-		Role: "system",
-		Content: "你是一个会话摘要器。请把下面的用户和 AI 的历史问答压缩成一段简洁的中文摘要，保留关键人物、时间、事件、结论，供后续多轮追问使用。只输出摘要本身。",
-	})
-	msgs = append(msgs, s.history...)
-	b.mu.Unlock()
-
+// compress 压缩会话历史为一段摘要，仅保留最近的一问一答。
+// 只有会话版本仍未变化时才写回，避免覆盖压缩期间新加入的问答。
+func (b *bot) compress(ctx context.Context, key string, triggerVersion uint64, msgs []llmMessage) {
 	summary, err := complete(ctx, b.cfg, msgs)
 	if err != nil {
 		log.Printf("[bot] %s 压缩失败: %v", key, err)
@@ -304,23 +301,27 @@ func (b *bot) compress(ctx context.Context, key string) {
 		log.Printf("[bot] %s 压缩结果为空，保留原历史", key)
 		return
 	}
+	b.applyCompression(key, triggerVersion, summary)
+}
 
+// applyCompression 仅在会话版本未变化时把历史替换为摘要，避免覆盖新问答。
+func (b *bot) applyCompression(key string, triggerVersion uint64, summary string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	s = b.sessions[key]
-	if s == nil {
+	s := b.sessions[key]
+	if s == nil || s.version != triggerVersion {
+		log.Printf("[bot] %s 压缩期间有新问答，放弃本次写回 (v=%d -> %d)", key, triggerVersion, s.version)
 		return
 	}
 	// 保留最近一问一答，其余替换为摘要，保证后续追问衔接
 	keep := 0
-	if len(s.history) >= 2 {
-		if s.history[len(s.history)-1].Role == "assistant" && s.history[len(s.history)-2].Role == "user" {
-			keep = 2
-		} else if s.history[len(s.history)-1].Role == "user" {
-			keep = 1
-		}
+	n := len(s.history)
+	if n >= 2 && s.history[n-1].Role == "assistant" && s.history[n-2].Role == "user" {
+		keep = 2
+	} else if n >= 1 && s.history[n-1].Role == "user" {
+		keep = 1
 	}
-	recent := append([]llmMessage(nil), s.history[len(s.history)-keep:]...)
+	recent := append([]llmMessage(nil), s.history[n-keep:]...)
 	s.history = []llmMessage{{Role: "system", Content: "【上一段会话摘要】" + summary}}
 	s.history = append(s.history, recent...)
 	s.compressed = true

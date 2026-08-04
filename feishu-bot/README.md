@@ -77,3 +77,50 @@ GOTMPDIR=/var/services/homes/wangxuanrun/.local/tmp GOFLAGS=-mod=mod /volume4/ho
 ```
 
 > 飞书长连接、卡片流式能力与客户端版本会随飞书平台演进，实施前以开放平台当前文档为准。
+
+## 常驻部署
+
+### systemd（推荐，NAS / Linux）
+
+写一个 systemd service（把二进制和配置放到固定路径）：
+
+```ini
+[Unit]
+Description=WeLink Feishu AI Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/welink/feishu-bot
+EnvironmentFile=/opt/welink/feishu-bot/env
+ExecStart=/opt/welink/feishu-bot/welink-feishu-bot
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/opt/welink/feishu-bot/env` 内容：
+
+```bash
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=your_secret
+WELINK_BASE_URL=http://127.0.0.1:8080
+STREAM_MODE=md
+```
+
+启动：
+
+```bash
+cd feishu-bot && go build -o /opt/welink/feishu-bot/welink-feishu-bot .
+sudo systemctl daemon-reload
+sudo systemctl enable --now welink-feishu-bot
+journalctl -u welink-feishu-bot -f
+```
+
+### Docker
+
+仓库根目录执行 `make build-feishu-bot` 会编译出 `feishu-bot/welink-feishu-bot` 二进制；也可自行打包镜像，用 `--network=host` 访问宿主机 WeLink（`http://127.0.0.1:8080`），或用 `host.docker.internal`。
+
+> 若网关跑在容器内访问 WeLink，需在容器与宿主之间打通 loopback 语义（`network_mode: host` 或显式 `WELINK_TOKEN` + 宿主机真实端口），因为容器内连 `127.0.0.1` 指向容器自身，不是宿主。
