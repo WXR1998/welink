@@ -773,12 +773,15 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
     }
 
     // 保存
-    const saveData = messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      provider: m.stats?.provider,
-      model: m.stats?.model,
-    }));
+    const saveData = messages
+      .filter(m => !!String(m.content ?? '').trim())
+      .map(m => ({
+        role: m.role,
+        content: m.content,
+        provider: m.stats?.provider,
+        model: m.stats?.model,
+      }));
+    if (!saveData.some(m => m.role === 'user')) return;
     fetch('/api/ai/conversations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -794,10 +797,14 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
       const resp = await fetch(`/api/ai/conversations?key=${encodeURIComponent(key)}`);
       const data = await resp.json();
       if (data.messages?.length) {
-        setMessages(data.messages.map((m: { role: string; content: string }) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        })));
+        const restored = (data.messages as { role: string; content: string }[])
+          .filter(m => !!String(m.content ?? '').trim())
+          .map((m) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          }));
+        if (restored.length === 0) return;
+        setMessages(restored);
         setConversationKey(key);
       }
     } catch {}

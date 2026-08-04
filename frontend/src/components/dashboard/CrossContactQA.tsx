@@ -696,7 +696,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     convKeyRef.current = key;
 
     const saveData = messages
-      .filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+      // 只保存有明确内容的 user/assistant 消息。searching 中间态只用于
+      // 当前会话内展示，跨进程恢复时不应再以“正在生成/检索”的假状态出现。
+      .filter(m => m.content && (m.role === 'user' || m.role === 'assistant'))
       .map(m => {
         const item: any = { role: m.role, content: m.content };
         if (m.searching) item.searching = true;
@@ -720,13 +722,20 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       const resp = await fetch(`/api/ai/conversations?key=${encodeURIComponent(key)}`);
       const data = await resp.json();
       if (data.messages?.length) {
-        setMessages(data.messages.map((m: any) => ({
-          role: m.role as 'user' | 'assistant' | 'system',
-          content: m.content,
-          searching: m.searching || false,
-          memorySearchData: m.memorySearchData,
-          llmPrompt: m.llmPrompt,
-        })));
+        // 恢复历史时丢掉“正在检索/生成”且无内容的残留中间态，
+        // 并把任何带内容的 searching 消息降级为普通 assistant 消息，
+        // 避免容器重启后出现永不结束的转圈气泡。
+        const restored = (data.messages as any[])
+          .filter(m => !!String(m.content ?? '').trim())
+          .map((m: any) => ({
+            role: m.role as 'user' | 'assistant' | 'system',
+            content: m.content,
+            searching: false,
+            memorySearchData: m.memorySearchData,
+            llmPrompt: m.llmPrompt,
+          }));
+        if (restored.length === 0) return;
+        setMessages(restored);
         setConversationKey(key);
         convKeyRef.current = key;
       }

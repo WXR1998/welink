@@ -58,7 +58,11 @@ export async function loadFromDB(key: string): Promise<void> {
     const r = await fetch(`/api/ai/conversations?key=${encodeURIComponent(key)}`);
     if (!r.ok) return;
     const data = await r.json() as { messages?: AnalysisMessage[] };
-    const msgs = (data.messages ?? []).map(m => ({ ...m, streaming: false }));
+    // 恢复历史时统一清掉“正在生成”标记，并丢弃无内容的残留中间气泡，
+    // 避免容器重启后展示永不结束的转圈状态。
+    const msgs = (data.messages ?? [])
+      .filter(m => !!String(m.content ?? '').trim())
+      .map(m => ({ ...m, streaming: false }));
     _store.set(key, { ...getAnalysisState(key), messages: msgs, dbLoaded: true });
     _notify();
   } catch {
