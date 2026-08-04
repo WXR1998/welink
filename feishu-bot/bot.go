@@ -12,6 +12,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
@@ -45,8 +46,10 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 	client := lark.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
 		lark.WithLogLevel(larkcore.LogLevelInfo),
 	)
+	eventDispatcher := dispatcher.NewEventDispatcher("", "")
 	wsClient := larkws.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
+		larkws.WithEventHandler(eventDispatcher),
 	)
 	st := newSessionStore(cfg.SessionStorePath)
 	loaded, err := st.Load()
