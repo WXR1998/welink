@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { anniversaryApi, forecastApi, tasksApi } from '../../services/api';
 import type {
   AnniversaryResponse,
@@ -388,7 +389,7 @@ export const RelationshipInboxPage: React.FC<Props> = ({
               <button onClick={() => setOpenRun(null)} className="text-gray-400 hover:text-gray-600 text-sm px-2">关闭</button>
             </div>
             <div className="p-5 prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-p:my-1.5">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{openRun.result}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(openRun.result)}</ReactMarkdown>
             </div>
           </div>
         </div>

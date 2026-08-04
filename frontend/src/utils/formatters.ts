@@ -5,6 +5,23 @@
 /**
  * 格式化数字为千分位
  */
+/**
+ * 修复 react-markdown + remark-gfm 的一个渲染坑：块引用行写成
+ * `> [说话人]: 内容` 时，英文冒号会被 GFM 误判为自动链接定义，
+ * 导致整行被吞掉、只留下空 <blockquote>。
+ * 这里只把块引用行开头的 `]: ` 改成 `]：`，保住引用内容与本来的方括号。
+ */
+export const preserveMarkdownBlockquote = (markdown: string): string => {
+  if (!markdown) return markdown;
+  return markdown.split('\n').map(line => {
+    if (/^\s*>\s*\[[^\]]+\]:/.test(line)) {
+      return line.replace(/^(\s*>\s*\[[^\]]+\]):/, '$1：');
+    }
+    return line;
+  }).join('\n');
+};
+
+
 export const formatNumber = (num: number): string => {
   return num.toLocaleString('zh-CN');
 };

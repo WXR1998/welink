@@ -23,6 +23,7 @@ import { generateAIScreenshot } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
 import { isAIConfigError } from '../../utils/aiError';
 import { truncateMsgContent } from '../../utils/formatters';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { AIConfigNotice } from '../common/AIConfigNotice';
 import { PROVIDER_LABELS, consumeSSEStream } from './calendarUtils';
 
@@ -112,7 +113,7 @@ const DayAssistantBubble: React.FC<{
         <div className="max-w-[85%] flex flex-col gap-0.5">
           <div className="px-3 py-2 rounded-2xl rounded-bl-sm text-sm leading-relaxed break-words bg-gray-100 dark:bg-white/10 text-gray-800 dark:text-gray-200 prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 dark:prose-invert">
             {msg.content
-              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(msg.content)}</ReactMarkdown>
               : ''}
             {!msg.streaming && msg.content && isAIConfigError(msg.content) && onOpenSettings && (
               <button

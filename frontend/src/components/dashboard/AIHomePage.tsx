@@ -13,6 +13,7 @@ import { avatarSrc } from '../../utils/avatar';
 import type { ContactStats, TimeRange, ChatMessage, GroupInfo, GroupChatMessage } from '../../types';
 import { contactsApi, groupsApi } from '../../services/api';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { isAIConfigError } from '../../utils/aiError';
 import { truncateMsgContent } from '../../utils/formatters';
 import { AIConfigNotice } from '../common/AIConfigNotice';
@@ -347,7 +348,7 @@ const MessageBubble: React.FC<{
               </div>
             )}
             {msg.content
-              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(msg.content)}</ReactMarkdown>
               : msg.streaming
                 ? <span className="flex items-center gap-2 text-gray-400 text-xs">
                     <Loader2 size={13} className="animate-spin text-[#576b95] flex-shrink-0" />

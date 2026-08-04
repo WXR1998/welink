@@ -10,6 +10,7 @@ import remarkGfm from 'remark-gfm';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { generateAIScreenshot } from '../../utils/shareImage';
 import { truncateMsgContent } from '../../utils/formatters';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
 import { getPrompt, loadCustomPrompts } from '../../utils/promptTemplates';
@@ -367,7 +368,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
               prose-headings:text-[#1d1d1f] prose-headings:dark:text-white prose-strong:text-[#07c160]"
           >
             {result ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(result)}</ReactMarkdown>
             ) : (
               <div className="flex items-center gap-2 text-gray-400 text-sm">
                 <Loader2 size={16} className="animate-spin text-[#07c160]" />

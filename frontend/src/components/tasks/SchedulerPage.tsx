@@ -13,6 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ScheduledTask, TaskRun, ContactStats, GroupInfo } from '../../types';
 import { tasksApi } from '../../services/api';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { useToast } from '../common/Toast';
 import { TaskEditModal } from './TaskEditModal';
 
@@ -277,7 +278,7 @@ export const SchedulerPage: React.FC<Props> = ({ contacts, groups }) => {
               <button onClick={() => { tasksApi.markRead().catch(() => {}); setOpenRun(null); }} className="text-gray-400 hover:text-gray-600 text-sm px-2">关闭</button>
             </div>
             <div className="p-5 prose prose-sm dark:prose-invert max-w-none prose-headings:font-bold prose-p:my-1.5">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{openRun.result}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(openRun.result)}</ReactMarkdown>
             </div>
           </div>
         </div>

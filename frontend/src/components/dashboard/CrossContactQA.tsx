@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
 import { truncateMsgContent } from '../../utils/formatters';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import type { ChatMessage } from '../../types';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { ConversationHistory } from './ConversationHistory';
@@ -1030,7 +1031,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                 {msg.role === 'assistant' && !msg.searching ? (
                   msg.content ? (
                     <div data-msg-idx={i} className="prose prose-sm dark:prose-invert max-w-none prose-strong:text-[#07c160]">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(msg.content)}</ReactMarkdown>
                     </div>
                   ) : (
                     <span className="flex items-center gap-1.5 text-xs text-gray-400">

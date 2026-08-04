@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { generateAIScreenshot } from '../../utils/shareImage';
 import { truncateMsgContent } from '../../utils/formatters';
+import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { RevealLink } from '../common/RevealLink';
 import { contactsApi, groupsApi } from '../../services/api';
 import { CalendarRangePicker } from './CalendarRangePicker';
@@ -303,7 +304,7 @@ const AssistantMessage: React.FC<{
               </div>
             )}
             {msg.content
-              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{preserveMarkdownBlockquote(msg.content)}</ReactMarkdown>
               : msg.streaming
                 ? (
                   <span className="flex items-center gap-2 text-gray-400 text-xs">
