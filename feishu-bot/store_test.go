@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,5 +62,81 @@ func TestSessionStoreEmptyPathNoop(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("expected empty, got %d", len(out))
+	}
+}
+
+
+func TestPendingStoreRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+
+	p := newPendingStore(path)
+	items := map[string]pendingItem{
+		"om_x100": {
+			MessageID:  "om_x100",
+			ChatID:     "oc_abc",
+			SessionKey: "group:oc_abc:user1",
+			Question:   "讲讲95的故事",
+			CreatedAt:  time.Now(),
+		},
+	}
+	if err := p.Save(items); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// pending.json 应与会话文件在同一目录
+	if _, err := os.Stat(filepath.Join(dir, "pending.json")); err != nil {
+		t.Fatalf("pending.json not found: %v", err)
+	}
+
+	p2 := newPendingStore(path)
+	got, err := p2.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	it, ok := got["om_x100"]
+	if !ok {
+		t.Fatalf("missing pending item after reload")
+	}
+	if it.SessionKey != "group:oc_abc:user1" || it.Question != "讲讲95的故事" {
+		t.Fatalf("pending item not preserved: %+v", it)
+	}
+}
+
+func TestPendingStoreEmptyPathNoop(t *testing.T) {
+	p := newPendingStore("")
+	if err := p.Save(map[string]pendingItem{}); err != nil {
+		t.Fatalf("Save with empty path should be no-op, got %v", err)
+	}
+	got, err := p.Load()
+	if err != nil {
+		t.Fatalf("Load with empty path should be no-op, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %d", len(got))
+	}
+}
+
+func TestDropSessionClearsState(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	b.remember("p2p:user_x", "q1", "a1")
+	b.mu.Lock()
+	b.sessions["p2p:user_x"].busy = true
+	b.sessions["p2p:user_x"].entities = []string{"邓凯文"}
+	b.mu.Unlock()
+
+	b.dropSession("p2p:user_x")
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessions["p2p:user_x"]
+	if len(s.history) != 0 {
+		t.Fatalf("expected history cleared, got %d", len(s.history))
+	}
+	if s.busy {
+		t.Fatalf("expected busy cleared")
+	}
+	if len(s.entities) != 0 {
+		t.Fatalf("expected entities cleared")
 	}
 }

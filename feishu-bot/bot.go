@@ -13,6 +13,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
@@ -25,8 +26,10 @@ const (
 // bot 持有飞书通道与配置，并维护每个用户的独立会话。
 type bot struct {
 	cfg      *Config
+	client   *lark.Client
 	ch       types.Channel
 	store    *sessionStore
+	pending  *pendingStore
 	mu       sync.Mutex
 	sessions map[string]*session
 }
@@ -58,7 +61,9 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 	}
 	b := &bot{
 		cfg:      cfg,
+		client:   client,
 		store:    st,
+		pending:  newPendingStore(cfg.SessionStorePath),
 		sessions: loaded,
 	}
 	b.ch = channel.NewChannel(client, wsClient)
@@ -73,6 +78,7 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 		b.handleMessage(ctx, msg)
 		return nil
 	})
+	b.recoverPending(ctx)
 	return b, nil
 }
 
@@ -155,33 +161,145 @@ func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, questio
 	b.processCard(ctx, msg, question, sessionKey)
 }
 
-// processCard 用卡片流式更新，回复时引用用户的原始提问。
+// processCard 用卡片流式回答，回复时引用用户的原始提问。
+// 先发送初始卡片并登记 pending（便于崩溃后回滚），回答完成后移除登记。
 func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
-	stream, err := b.ch.Stream(ctx, &types.SendInput{
+	res, err := b.ch.Send(ctx, &types.SendInput{
 		ChatID:         msg.ChatID,
 		ReplyMessageID: msg.MessageID,
 		Card:           cardWithText("⏳ 正在分析你的问题…"),
 	})
 	if err != nil {
-		log.Printf("[bot] 创建卡片流式消息失败: %v", err)
+		log.Printf("[bot] 创建卡片消息失败: %v", err)
 		return
 	}
-	defer func() { _ = stream.Close(context.Background()) }()
+	messageID := res.MessageID
+	if messageID == "" {
+		log.Printf("[bot] 发送卡片未返回 message_id，无法跟踪进行中状态")
+		return
+	}
 
-	_ = stream.UpdateCard(ctx, cardWithText("🔎 正在检索跨联系人聊天记录…\n\n处理中…"))
+	b.trackPending(messageID, msg.ChatID, sessionKey, question)
+
+	_ = b.patchCard(ctx, messageID, cardWithText("🔎 正在检索跨联系人聊天记录…\n\n处理中…"))
 	answer, errMsg := b.answer(ctx, sessionKey, question)
+
 	if errMsg != "" {
-		_ = stream.UpdateCard(ctx, cardWithText("❌ "+errMsg))
+		b.untrackPending(messageID)
+		_ = b.patchCard(ctx, messageID, cardWithText("❌ "+errMsg))
 		return
 	}
 	if answer == "" {
-		_ = stream.UpdateCard(ctx, cardWithText("（没有生成可展示的回答，可能没有检索到相关内容。）"))
+		b.untrackPending(messageID)
+		_ = b.patchCard(ctx, messageID, cardWithText("（没有生成可展示的回答，可能没有检索到相关内容。）"))
 		return
 	}
 
-	_ = stream.UpdateCard(ctx, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+answer))
+	b.untrackPending(messageID)
+	_ = b.patchCard(ctx, messageID, cardWithText("✍️ 正在整理回答…\n\n🔎 检索完成，正在生成回答：\n\n"+answer))
 	b.remember(sessionKey, question, answer)
 	go b.maybeCompress(context.Background(), sessionKey)
+}
+
+// patchCard 用 message_id 更新一张已发送的卡片。
+func (b *bot) patchCard(ctx context.Context, messageID, card string) error {
+	if messageID == "" || b.client == nil {
+		return nil
+	}
+	req := larkim.NewPatchMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewPatchMessageReqBodyBuilder().Content(card).Build()).
+		Build()
+	ctxT, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	resp, err := b.client.Im.V1.Message.Patch(ctxT, req)
+	if err != nil {
+		log.Printf("[bot] 更新卡片 %s 失败: %v", messageID, err)
+		return err
+	}
+	if !resp.Success() {
+		log.Printf("[bot] 更新卡片 %s 失败: code=%d msg=%s", messageID, resp.Code, resp.Msg)
+		return fmt.Errorf("patch card failed: code=%d", resp.Code)
+	}
+	return nil
+}
+
+// trackPending 持久化一条进行中的卡片记录。
+func (b *bot) trackPending(messageID, chatID, sessionKey, question string) {
+	if b.pending == nil {
+		return
+	}
+	items, err := b.pending.Load()
+	if err != nil {
+		log.Printf("[bot] 读取进行中记录失败: %v", err)
+		items = map[string]pendingItem{}
+	}
+	items[messageID] = pendingItem{
+		MessageID:  messageID,
+		ChatID:     chatID,
+		SessionKey: sessionKey,
+		Question:   question,
+		CreatedAt:  time.Now(),
+	}
+	if err := b.pending.Save(items); err != nil {
+		log.Printf("[bot] 保存进行中记录失败: %v", err)
+	}
+}
+
+// untrackPending 从进行中记录中移除一条已完成/出错的卡片。
+func (b *bot) untrackPending(messageID string) {
+	if b.pending == nil || messageID == "" {
+		return
+	}
+	items, err := b.pending.Load()
+	if err != nil {
+		log.Printf("[bot] 读取进行中记录失败: %v", err)
+		return
+	}
+	if _, ok := items[messageID]; !ok {
+		return
+	}
+	delete(items, messageID)
+	if err := b.pending.Save(items); err != nil {
+		log.Printf("[bot] 保存进行中记录失败: %v", err)
+	}
+}
+
+// recoverPending 在启动时处理上次未完成的回答：把群里对应的卡片改成
+// "连接已断开，重新尝试"，并从会话历史中丢弃这些对话。
+func (b *bot) recoverPending(ctx context.Context) {
+	if b.pending == nil {
+		return
+	}
+	items, err := b.pending.Load()
+	if err != nil {
+		log.Printf("[bot] 读取进行中记录失败: %v", err)
+		return
+	}
+	if len(items) == 0 {
+		return
+	}
+	log.Printf("[bot] 检测到 %d 条上次未完成的回答，正在回滚...", len(items))
+	for _, it := range items {
+		b.dropSession(it.SessionKey)
+		_ = b.patchCard(ctx, it.MessageID, cardWithText("⚠️ 连接已断开，重新尝试"))
+	}
+	if err := b.pending.Save(map[string]pendingItem{}); err != nil {
+		log.Printf("[bot] 清空进行中记录失败: %v", err)
+	}
+}
+
+// dropSession 丢弃指定会话的历史与进行中状态（busy 锁、已记录的实体）。
+func (b *bot) dropSession(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if s := b.sessions[key]; s != nil {
+		s.history = []llmMessage{}
+		s.compressed = false
+		s.busy = false
+		s.entities = nil
+		b.saveLocked()
+	}
 }
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
