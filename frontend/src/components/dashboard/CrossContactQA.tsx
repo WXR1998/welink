@@ -128,65 +128,83 @@ interface ProgressStep {
   timestamp: number;
 }
 
-// 进度步骤映射：将后端的 step 名称映射为可读的步骤编号和标签
-const STEP_MAP: Record<string, { index: number; total: number; label: string }> = {
-  decompose:        { index: 1, total: 4, label: '分解问题' },
-  resolve_entities: { index: 1, total: 4, label: '解析实体' },
-  query_expansion:  { index: 2, total: 4, label: '扩展查询' },
-  vector_search:    { index: 2, total: 4, label: '向量检索记忆' },
-  bm25_search:      { index: 2, total: 4, label: 'BM25关键词检索' },
-  vecmsg_search:    { index: 2, total: 4, label: '搜索原始聊天记录embedding' },
-  expanded_search:  { index: 2, total: 4, label: '扩展子查询检索' },
-  search_facts:     { index: 2, total: 4, label: '向量检索记忆事实' },
-  rrf_fusion:       { index: 3, total: 4, label: '融合排序' },
-  rerank:           { index: 3, total: 4, label: '精排候选' },
-  extract_sources:  { index: 3, total: 4, label: '提取源聊天记录' },
-};
-
-// 将 ProgressStep 格式化为 "Step [1/4] 标签 | [2/5]" 的形式
-function formatProgressStep(ps: ProgressStep): string {
-  const meta = STEP_MAP[ps.step];
-  if (!meta) return ps.detail;
-  // 从 detail 中提取 [current/total] 子进度
-  const subMatch = ps.detail.match(/^\[(\d+)\/(\d+)\]/);
-  const subProgress = subMatch ? ` | ${subMatch[0]}` : '';
-  return `Step [${meta.index}/${meta.total}] ${meta.label}${subProgress}`;
+// 进度阶段定义：一根总进度条分成 4 个大段，每段再按自己的子步骤细分。
+// 前 3 段由后端 progress 事件驱动；第 4 段“生成回答”在检索/排序流程收尾后点亮。
+interface ProgressPhase {
+  key: string;
+  label: string;
+  steps: string[]; // 属于该大段的 step 名（按出现顺序）
 }
 
-// 最新 3 条的滚动进度条：
-// 窗口固定 3 行，当第 4 条出现时，整体上移一行、最老一条淡出，
-// 最新一条从下方淡入。内部用 FLIP 式过渡（先记录上一长度，再在渲染后
-// 把轨道从 -20px 平移到 0），让滑动/淡入淡出连贯。
-const MAX_VISIBLE_STEPS = 3;
-function ProgressTicker({ steps }: { steps: ProgressStep[] }) {
-  const id = React.useId().replace(/:/g, '');
-  // 窗口固定 3 行：不足 3 条时内容贴底显示；超过 3 条时最新 3 条可见，
-  // 最老一条淡出（被挤出顶部）、最新一条从下方淡入。
-  const raw = steps.slice(-(MAX_VISIBLE_STEPS + 1));
-  const overflow = steps.length > MAX_VISIBLE_STEPS;
+const PHASES: ProgressPhase[] = [
+  { key: 'decompose', label: '分解问题', steps: ['decompose', 'resolve_entities'] },
+  {
+    key: 'search',
+    label: '语义检索',
+    steps: ['query_expansion', 'vector_search', 'bm25_search', 'vecmsg_search', 'expanded_search', 'search_facts', 'comention_search'],
+  },
+  {
+    key: 'rank',
+    label: '融合精排',
+    steps: ['rrf_fusion', 'rerank', 'extract_sources', 'raw_lookup'],
+  },
+  { key: 'answer', label: '生成回答', steps: [] },
+];
+
+// 从一批 progress 事件推导每个大段的进度：
+// 返回每个大段 { done: 是否完成, active: 是否进行中, subDone: 段内完成的小段数, subTotal: 段内小段总数 }
+function derivePhaseProgress(steps: ProgressStep[]): { done: boolean; active: boolean; subDone: number; subTotal: number }[] {
+  const seenSteps = new Set(steps.map(ps => ps.step));
+  // 每个 step 属于哪个大段
+  const phaseIdxOf = (step: string): number => {
+    const i = PHASES.findIndex(ph => ph.steps.includes(step));
+    return i < 0 ? -1 : i;
+  };
+  const seenPhaseIdxs = Array.from(seenSteps).map(phaseIdxOf).filter(i => i >= 0);
+  const maxSeenIdx = seenPhaseIdxs.length ? Math.max(...seenPhaseIdxs) : -1;
+
+  return PHASES.map((ph, idx) => {
+    if (ph.steps.length === 0) {
+      // 生成回答段：检索/排序阶段（idx 2 及之前）全部走完即点亮
+      const ready = maxSeenIdx >= PHASES.length - 2; // 已进入融合精排（rank）
+      return { done: false, active: ready, subDone: 0, subTotal: 0 };
+    }
+    const subDone = ph.steps.filter(step => seenSteps.has(step)).length;
+    const subTotal = ph.steps.length;
+    // 有大段已推进到本段之后 → 本段视为完成（不苛求可选的子步骤都出现）
+    const movedPast = seenPhaseIdxs.some(i => i > idx);
+    const done = movedPast || subDone >= subTotal;
+    // 已到达本段（出现过大段内任意子步骤）且未完成 → 进行中
+    const active = !done && seenPhaseIdxs.includes(idx) && idx <= maxSeenIdx + 1;
+    return { done, active, subDone, subTotal };
+  });
+}
+
+// 4 大段 + 段内细分的总进度条。整根走完，一次回答流程结束。
+function ProgressBar({ steps, title }: { steps: ProgressStep[]; title: string }) {
+  const phases = derivePhaseProgress(steps);
 
   return (
-    <div className="mt-1.5 pl-1">
-      <style>{`
-        .ticker-${id} { position: relative; height: ${MAX_VISIBLE_STEPS * 20}px; overflow: hidden;
-          display: flex; flex-direction: column; justify-content: flex-end; }
-        .ticker-${id} .ticker-track { display: flex; flex-direction: column; width: 100%; }
-        .ticker-${id} .row { display: flex; align-items: center; gap: 6px; height: 20px; line-height: 20px;
-          opacity: 1; transform: translateY(0); flex-shrink: 0; }
-        .ticker-${id} .row.enter { opacity: 0; animation: ticker-in-${id} 0.3s ease forwards; }
-        .ticker-${id} .row.leave { opacity: 0; transition: opacity 0.28s ease; }
-        @keyframes ticker-in-${id} { from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); } }
-      `}</style>
-      <div className={`ticker-${id}`}>
-        {raw.map((ps, idx) => {
-          const isOldest = idx === 0 && overflow && steps.length > 1;
-          const isNewest = idx === raw.length - 1;
+    <div className="mt-1.5 space-y-1.5">
+      {title && (
+        <div className="text-[11px] text-gray-500 dark:text-gray-400 break-words leading-snug">
+          {title}
+        </div>
+      )}
+      <div className="flex gap-1">
+        {phases.map((ph, idx) => {
+          const pct = ph.subTotal > 0 ? Math.round((ph.subDone / ph.subTotal) * 100) : (ph.active || ph.done ? 100 : 0);
           return (
-            <div key={ps.timestamp + '-' + idx}
-                 className={`row ${isOldest ? 'leave' : ''} ${isNewest ? 'enter' : ''}`}>
-              <span className="text-gray-300 text-[9px]">✓</span>
-              <span className="break-all text-[10px] text-gray-400">{formatProgressStep(ps)}</span>
+            <div key={idx} className="flex-1">
+              <div className={`text-center text-[9px] leading-none mb-1 truncate ${ph.done ? 'text-[#07c160]' : ph.active ? 'text-[#576b95]' : 'text-gray-300 dark:text-gray-600'}`}>
+                {PHASES[idx].label}
+              </div>
+              <div className="h-1.5 rounded-full bg-gray-100 dark:bg-white/10 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${ph.done ? 'bg-[#07c160]' : ph.active ? 'bg-[#576b95]' : 'bg-gray-200 dark:bg-white/15'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
             </div>
           );
         })}
@@ -1046,7 +1064,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                       {msg.content}
                     </span>
                     {msg.progressSteps && msg.progressSteps.length >= 1 && (
-                      <ProgressTicker steps={msg.progressSteps} />
+                      <ProgressBar steps={msg.progressSteps} title={msg.content} />
                     )}
                   </div>
                 ) : (

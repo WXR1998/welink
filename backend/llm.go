@@ -1241,10 +1241,11 @@ func testLLMConn(prefs Preferences) (string, error) {
 // ─── 辅助 ──────────────────────────────────────────────────────────────────────
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(runes[:n]) + "…"
 }
 
 // LLMTestStats 携带 LLM 连接测试的统计数据。
