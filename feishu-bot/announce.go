@@ -12,6 +12,19 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+// cnLocation 返回东八区（Asia/Shanghai）时区；加载失败时回退到本地时区。
+var cnLocation = func() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
+		return loc
+	}
+	return time.Local
+}()
+
+// cnNow 返回东八区当前时间（用于群公告中的启动时间与连接状态时间）。
+func cnNow() time.Time {
+	return time.Now().In(cnLocation)
+}
+
 // docx 块类型枚举（见飞书 docx/v1 BlockType）
 const (
 	docxBlockHeading1 = 3

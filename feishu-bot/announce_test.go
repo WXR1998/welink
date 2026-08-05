@@ -51,3 +51,10 @@ func TestBuildAnnouncementBlocksContainsStartupTime(t *testing.T) {
 		t.Fatalf("startup time should be present")
 	}
 }
+
+func TestCnNowAtEast8(t *testing.T) {
+	now := cnNow()
+	if _, off := now.Zone(); off != 8*3600 {
+		t.Fatalf("expected UTC+8 offset, got %d", off)
+	}
+}
