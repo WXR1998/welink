@@ -87,7 +87,7 @@ func filterVecMessagesByScope(hits []VecMessageHit, chatID string, prefs Prefere
 	return out
 }
 
-// injectFeishuGroupPrompt 把 chat_id 对应的群补充提示追加到 system prompt。
+// injectFeishuGroupPrompt 把 chat_id 对应的群补充提示插入到 system prompt 的固定开场白之后。
 // 返回注入后的 messages；未配置或提示为空时原样返回。
 func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences) []LLMMessage {
 	if chatID == "" {
@@ -98,9 +98,18 @@ func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences
 		return msgs
 	}
 	injected := "\n\n【本群补充提示】\n" + prompt + "\n"
+	// 定位机器人固定的系统开场白，补充提示紧跟其后（位于会话历史和检索上下文之前）。
+	const introMarker = "使用 Markdown 排版。\n"
 	for i := range msgs {
 		if msgs[i].Role == "system" {
-			msgs[i].Content += injected
+			content := msgs[i].Content
+			if idx := strings.Index(content, introMarker); idx >= 0 {
+				at := idx + len(introMarker)
+				msgs[i].Content = content[:at] + injected + content[at:]
+			} else {
+				// 找不到固定开场白（如其它调用方），退回追加到 system 末尾。
+				msgs[i].Content += injected
+			}
 			return msgs
 		}
 	}
