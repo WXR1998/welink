@@ -397,8 +397,15 @@ func buildDataContext(d *memorySearchData) string {
 // 返回回答文本与此次调用的 token 用量（可能为 nil）。
 func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string) (string, *analyzeUsage, error) {
 	var sys strings.Builder
-	sys.WriteString("你是 WeLink 的跨联系人 AI 助手，根据检索到的聊天记录回答用户问题。\n")
-	sys.WriteString("要求：用中文回答，简洁清晰；直接回答问题；数据不足时诚实说明；使用 Markdown 排版。\n")
+	sys.WriteString("你是 WeLink 的跨联系人 AI 助手，用户刚问了一个关于微信聊天记录的问题。\n")
+	sys.WriteString("以下是从数据库中检索到的相关数据，请基于这些数据回答用户的问题。\n")
+	sys.WriteString("要求：\n")
+	sys.WriteString("1. 用中文回答，简洁清晰\n")
+	sys.WriteString("2. 直接回答问题，不要废话\n")
+	sys.WriteString("3. 如果数据不足以回答，诚实说明\n")
+	sys.WriteString("4. 使用 Markdown 排版。\n")
+	sys.WriteString("5. 如果涉及多个联系人，用列表列出并简要说明\n")
+	sys.WriteString("6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。\n")
 	if len(history) > 0 {
 		sys.WriteString("\n以下是本会话之前的问题与回答，供连续追问参考：\n")
 		for _, m := range history {

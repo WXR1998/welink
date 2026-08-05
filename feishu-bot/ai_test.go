@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,5 +118,29 @@ func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
 	}
 	if d == nil || len(d.ResolvedEntities) != 1 {
 		t.Fatalf("unexpected result: %+v", d)
+	}
+}
+
+func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := new(strings.Builder)
+		_, _ = io.Copy(buf, r.Body)
+		gotBody = buf.String()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &Config{WeLinkBaseURL: server.URL}
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	if err != nil {
+		t.Fatalf("analyzeQuestion returned error: %v", err)
+	}
+	if !strings.Contains(gotBody, "说明其依据的聊天记录原文") || !strings.Contains(gotBody, "作为佐证") {
+		t.Fatalf("system prompt missing evidence requirement, body=%s", gotBody)
+	}
+	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
+		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
 	}
 }
