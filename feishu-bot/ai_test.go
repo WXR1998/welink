@@ -143,6 +143,9 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if !strings.Contains(gotBody, "都不要遗漏") {
 		t.Fatalf("system prompt missing exhaustive open-request requirement, body=%s", gotBody)
 	}
+	if !strings.Contains(gotBody, "不要自行变化") {
+		t.Fatalf("system prompt missing unified output format requirement, body=%s", gotBody)
+	}
 	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
 		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
 	}

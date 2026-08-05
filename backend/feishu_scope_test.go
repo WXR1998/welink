@@ -118,13 +118,13 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 		},
 	}
 
-	// 已有 system 消息 → 补充提示作为第 8 点插在第 7 点（开放性请求要求）之后
-	msgs := []LLMMessage{{Role: "system", Content: "要求：\n7. 开放性请求请尽量给出详尽内容，都不要遗漏。\n下面是正文"}, {Role: "user", Content: "hi"}}
+	// 已有 system 消息 → 补充提示作为第 9 点插在第 8 点（格式化输出要求）之后
+	msgs := []LLMMessage{{Role: "system", Content: "要求：\n8. 格式化输出请严格套用统一格式，不要自行变化。\n下面是正文"}, {Role: "user", Content: "hi"}}
 	got := injectFeishuGroupPrompt(msgs, "oc_g1", prefs)
 	if len(got) != 2 {
 		t.Fatalf("expected length 2, got %d", len(got))
 	}
-	want := "要求：\n7. 开放性请求请尽量给出详尽内容，都不要遗漏。\n8. 本群成员主要使用粤语交流。\n下面是正文"
+	want := "要求：\n8. 格式化输出请严格套用统一格式，不要自行变化。\n9. 本群成员主要使用粤语交流。\n下面是正文"
 	if got[0].Content != want {
 		t.Fatalf("unexpected system content: %q", got[0].Content)
 	}
@@ -132,7 +132,7 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 	// 无固定开场白 → 回退追加到 system 末尾
 	msgs3 := []LLMMessage{{Role: "system", Content: "base"}, {Role: "user", Content: "hi"}}
 	got3 := injectFeishuGroupPrompt(msgs3, "oc_g1", prefs)
-	if got3[0].Content != "base\n\n8. 本群成员主要使用粤语交流。\n" {
+	if got3[0].Content != "base\n\n9. 本群成员主要使用粤语交流。\n" {
 		t.Fatalf("unexpected fallback system content: %q", got3[0].Content)
 	}
 
