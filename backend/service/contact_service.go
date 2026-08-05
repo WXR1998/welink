@@ -2804,6 +2804,7 @@ func hasWordChar(s string) bool {
 type GroupInfo struct {
 	Username      string `json:"username"`
 	Name          string `json:"name"`       // 群名（remark 或 nickname）
+	Nickname      string `json:"nickname,omitempty"` // 原始群名（nick_name），与 Name 不同时才有值
 	SmallHeadURL  string `json:"small_head_url"`
 	TotalMessages int64  `json:"total_messages"`
 	MemberCount   int    `json:"member_count"`
@@ -2972,7 +2973,7 @@ func (s *ContactService) loadGroups() []GroupInfo {
 			name := g.remark; if name == "" { name = g.nick }; if name == "" { name = g.uname }
 			mu.Lock()
 			result = append(result, GroupInfo{
-				Username: g.uname, Name: name, SmallHeadURL: g.avatar,
+				Username: g.uname, Name: name, Nickname: g.nick, SmallHeadURL: g.avatar,
 				TotalMessages: total, MemberCount: realMemberCount,
 				FirstMessage: s.formatTime(firstTs), LastMessage: s.formatTime(lastTs),
 				FirstMessageTs: firstTs, LastMessageTs: lastTs,

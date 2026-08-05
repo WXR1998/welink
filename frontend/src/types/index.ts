@@ -400,6 +400,7 @@ export interface GlobalSearchGroup {
 export interface GroupInfo {
   username: string;
   name: string;
+  nickname?: string;             // 原始群名（与备注不同时才有值）
   small_head_url: string;
   total_messages: number;
   member_count: number;

@@ -50,6 +50,9 @@ func resolveSourceName(contactKey string, svc *service.ContactService) string {
 		uname := strings.TrimPrefix(contactKey, "group:")
 		for _, g := range svc.GetGroups() {
 			if g.Username == uname {
+				if g.Nickname != "" && g.Nickname != g.Name {
+					return fmt.Sprintf("群聊「%s」（原名「%s」）", g.Name, g.Nickname)
+				}
 				return "群聊「" + g.Name + "」"
 			}
 		}
@@ -365,6 +368,9 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 			groupIndex[strings.ToLower(g.Name)] = key
 			displayNames[key] = g.Name
 		}
+		if g.Nickname != "" && g.Nickname != g.Name {
+			groupIndex[strings.ToLower(g.Nickname)] = key
+		}
 		groupIndex[strings.ToLower(g.Username)] = key
 	}
 
@@ -440,13 +446,18 @@ func ResolveGroupName(groupName string, svc *service.ContactService) string {
 	}
 	lower := strings.ToLower(groupName)
 	for _, g := range svc.GetGroups() {
-		if strings.ToLower(g.Name) == lower || strings.ToLower(g.Username) == lower {
+		if strings.ToLower(g.Name) == lower ||
+			strings.ToLower(g.Username) == lower ||
+			(g.Nickname != "" && strings.ToLower(g.Nickname) == lower) {
 			return "group:" + g.Username
 		}
 	}
 	// 模糊匹配
 	for _, g := range svc.GetGroups() {
-		if strings.Contains(strings.ToLower(g.Name), lower) || strings.Contains(lower, strings.ToLower(g.Name)) {
+		nameLower := strings.ToLower(g.Name)
+		nickLower := strings.ToLower(g.Nickname)
+		if strings.Contains(nameLower, lower) || strings.Contains(lower, nameLower) ||
+			(g.Nickname != "" && (strings.Contains(nickLower, lower) || strings.Contains(lower, nickLower))) {
 			return "group:" + g.Username
 		}
 	}
