@@ -15,6 +15,7 @@ import {
 import { groupsApi } from '../../services/api';
 import type { GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { captureCardToPng } from '../../utils/exportPng';
 import { useToast } from '../common/Toast';
 import { welinkBrandHTML } from './_shared';
@@ -352,7 +353,7 @@ const ROIRow: React.FC<{ entry: Scored; rank: number }> = ({ entry, rank }) => {
       )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <div className="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{g.name}</div>
+          <div className="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{getGroupDisplayName(g)}</div>
           <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${meta.bg}`}>
             {meta.icon}{meta.label}
           </span>
@@ -463,7 +464,7 @@ const ShareRow: React.FC<{
       <div style={{ width: 32, height: 32, borderRadius: 8, background: '#eef1f7' }} />
     )}
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: muted ? '#8a94a6' : '#1d1d1f', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: muted ? '#8a94a6' : '#1d1d1f', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getGroupDisplayName(g)}</div>
       <div style={{ fontSize: 11, color: '#8a94a6', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {reason || `${fmtNum(g.total_messages)} 条历史`}
       </div>

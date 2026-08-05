@@ -54,7 +54,7 @@ export const GroupYearReviewModal: React.FC<Props> = ({ username, fallbackName, 
 
   const handleGenerateCover = () => {
     if (!data?.highlight) return;
-    const prompt = `抽象艺术风格的年度回顾封面，主题：${data.group_name} ${data.year} 年。氛围：${data.highlight.slice(0, 200)}。要求：构图大气、色彩温暖、不出现具体人物面孔、不出现文字、聚焦光影与意境。`;
+    const prompt = `抽象艺术风格的年度回顾封面，主题：${fallbackName} ${data.year} 年。氛围：${data.highlight.slice(0, 200)}。要求：构图大气、色彩温暖、不出现具体人物面孔、不出现文字、聚焦光影与意境。`;
     void coverTask.submit({
       prompt,
       size: '1024x1024',
@@ -294,7 +294,7 @@ export const GroupYearReviewModal: React.FC<Props> = ({ username, fallbackName, 
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xl">📖</span>
             <span className="text-base font-bold text-[#1d1d1f] dk-text truncate">
-              {data?.group_name || fallbackName} · {year} 年报
+              {fallbackName} · {year} 年报
             </span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">

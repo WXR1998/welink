@@ -9,6 +9,7 @@ import type { GroupInfo, GroupDetail, ContactStats, GroupChatMessage } from '../
 import { SearchContextModal, type SearchContextTarget } from '../search/SearchContextModal';
 import { groupsApi } from '../../services/api';
 import { exportGroupCsv, exportGroupTxt, EXPORT_LIMIT, parseExportResult } from '../../utils/exportChat';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { CalendarHeatmap } from '../contact/CalendarHeatmap';
 import { GroupDayChatPanel } from './GroupDayChatPanel';
 import { GroupChatReplay } from './GroupChatReplay';
@@ -348,7 +349,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
             </div>
           )}
           <div>
-            <h3 className={`dk-text text-2xl sm:text-3xl font-black text-[#1d1d1f]${privacyMode ? ' privacy-blur' : ''}`}>{group.name}</h3>
+            <h3 className={`dk-text text-2xl sm:text-3xl font-black text-[#1d1d1f]${privacyMode ? ' privacy-blur' : ''}`}>{getGroupDisplayName(group)}</h3>
             <p className="text-xs text-gray-400 mt-1 flex flex-wrap items-center gap-1.5">
               <span>{group.total_messages.toLocaleString()} 条消息</span>
               {(group.first_message_ts || group.first_message_time) && (
@@ -393,7 +394,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
         {tab === 'ai' && (
           <LLMAnalysisTab
             username={group.username}
-            displayName={group.name}
+            displayName={getGroupDisplayName(group)}
             isGroup={true}
             totalMessages={group.total_messages}
             onOpenSettings={onOpenSettings}
@@ -401,7 +402,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
         )}
 
         {tab === 'replay' && (
-          <GroupChatReplay username={group.username} groupName={group.name} />
+          <GroupChatReplay username={group.username} groupName={getGroupDisplayName(group)} />
         )}
 
         {tab === 'sim' && (
@@ -1001,7 +1002,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
           username={group.username}
           date={dayPanel.date}
           dayCount={dayPanel.count}
-          groupName={group.name}
+          groupName={getGroupDisplayName(group)}
           onClose={() => setDayPanel(null)}
         />
       )}
@@ -1019,7 +1020,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
           onClose={() => setForgeOpen(false)}
           skillType="group"
           username={group.username}
-          displayName={group.name}
+          displayName={getGroupDisplayName(group)}
           onOpenSettings={onOpenSettings}
         />
       )}
@@ -1037,7 +1038,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
       {showYearReview && (
         <GroupYearReviewModal
           username={group.username}
-          fallbackName={group.name}
+          fallbackName={getGroupDisplayName(group)}
           onClose={() => setShowYearReview(false)}
         />
       )}
@@ -1046,7 +1047,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({ group, onClo
         return (
           <GroupMemberModal
             groupUsername={group.username}
-            groupName={group.name}
+            groupName={getGroupDisplayName(group)}
             memberWxid={memberDetail.wxid}
             memberName={memberDetail.speaker}
             onClose={() => setMemberDetail(null)}
@@ -1262,7 +1263,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{g.name}</div>
+                      <div className={`text-sm font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{getGroupDisplayName(g)}</div>
                       <div className="h-1.5 bg-gray-100 dark:bg-white/10 rounded-full mt-1 overflow-hidden">
                         <div
                           className="h-full rounded-full"
@@ -1370,7 +1371,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
                           <Users size={16} strokeWidth={2} />
                         </div>
                       )}
-                      <div className={`font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{group.name}</div>
+                      <div className={`font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{getGroupDisplayName(group)}</div>
                     </div>
                   </td>
                   <td className="px-3 py-3.5 text-sm">
@@ -1454,7 +1455,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({ allContacts, onContactCl
                   </div>
                 )}
                 <div className="min-w-0">
-                  <div className={`font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{group.name}</div>
+                  <div className={`font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>{getGroupDisplayName(group)}</div>
                   <div className="text-xs text-gray-400 mt-0.5 truncate">
                     {(group.member_count ?? 0) > 0 && <span>{group.member_count} 人 · </span>}
                     {group.total_messages.toLocaleString()} 条

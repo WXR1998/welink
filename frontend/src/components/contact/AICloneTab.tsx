@@ -7,6 +7,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, Sparkles, RotateCcw, Users, Brain, BarChart3, MessageSquare, CheckCircle2, Share2, Check, Play, Square, Eraser } from 'lucide-react';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { contactsApi } from '../../services/api';
 import { generateCloneChatImage } from '../../utils/shareImage';
 import { RevealLink } from '../common/RevealLink';
@@ -564,7 +565,7 @@ export const AICloneTab: React.FC<Props> = ({ username, displayName, avatarUrl, 
                   {g.small_head_url ? (
                     <img loading="lazy" src={avatarSrc(g.small_head_url)} alt="" className="w-4 h-4 rounded-sm object-cover" />
                   ) : <Users size={12} />}
-                  <span className={privacyMode ? 'privacy-blur' : ''}>{g.name}</span>
+                  <span className={privacyMode ? 'privacy-blur' : ''}>{getGroupDisplayName(g)}</span>
                 </button>
               ))}
             </div>

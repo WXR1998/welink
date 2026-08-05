@@ -14,6 +14,7 @@ import {
 import { groupsApi } from '../../services/api';
 import type { GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { captureCardToPng } from '../../utils/exportPng';
 import { useToast } from '../common/Toast';
 import { welinkBrandHTML } from './_shared';
@@ -97,7 +98,7 @@ export const GoldenQuotes: React.FC = () => {
       const r = await axios.get<GQResp>('/api/groups/golden-quotes', {
         params: { room: picked.username, limit: 10 },
       });
-      setData(r.data);
+      setData({ ...r.data, group_name: getGroupDisplayName(picked) });
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } }; message?: string })
         ?.response?.data?.error || (e as Error).message || '生成失败';
@@ -176,7 +177,7 @@ export const GoldenQuotes: React.FC = () => {
                 {g.small_head_url && (
                   <img src={avatarSrc(g.small_head_url) || ''} alt="" className="w-4 h-4 rounded-full object-cover" />
                 )}
-                <span className="max-w-[14em] truncate">{g.name || g.username}</span>
+                <span className="max-w-[14em] truncate">{getGroupDisplayName(g)}</span>
                 <span className={`text-[10px] ${sel ? 'opacity-80' : 'text-gray-400'}`}>
                   {fmtNum(g.total_messages || 0)}
                 </span>
@@ -188,7 +189,7 @@ export const GoldenQuotes: React.FC = () => {
         <div className="flex items-center justify-between mt-3">
           <div className="text-xs text-gray-500 dark:text-gray-400">
             {picked
-              ? <>已选：<strong className="text-[#1d1d1f] dark:text-gray-100">{picked.name || picked.username}</strong></>
+              ? <>已选：<strong className="text-[#1d1d1f] dark:text-gray-100">{getGroupDisplayName(picked)}</strong></>
               : '请先选一个群'}
           </div>
           <button

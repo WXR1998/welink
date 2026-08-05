@@ -36,6 +36,7 @@ const TabLoading: React.FC = () => (
 import { useWordCloud } from '../../hooks/useContacts';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface ContactModalProps {
   contact: ContactStats | null;
@@ -641,7 +642,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ contact, onClose, on
                 ) : (
                   <Users size={11} strokeWidth={2} />
                 )}
-                <span className={privacyMode ? 'privacy-blur' : ''}>{g.name}</span>
+                <span className={privacyMode ? 'privacy-blur' : ''}>{getGroupDisplayName(g)}</span>
               </button>
             ))}
           </div>

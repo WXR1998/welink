@@ -7,6 +7,7 @@ import { X, Users, Search, Loader2, UserCheck, ArrowLeftRight } from 'lucide-rea
 import type { ContactStats, CommonCircleResult } from '../../types';
 import { contactsApi } from '../../services/api';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 
 interface Props {
@@ -199,7 +200,7 @@ export const CommonCirclePanel: React.FC<Props> = ({ contacts, onClose }) => {
                       )}
                       <div className="flex-1 min-w-0">
                         <div className={`text-sm font-bold text-[#1d1d1f] dk-text truncate${privacyMode ? ' privacy-blur' : ''}`}>
-                          {g.name}
+                          {getGroupDisplayName(g)}
                         </div>
                         <div className="text-[10px] text-gray-400">{g.member_count} 人</div>
                       </div>

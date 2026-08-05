@@ -10,6 +10,7 @@ import type {
 } from '../../types';
 import { tasksApi } from '../../services/api';
 import { useToast } from '../common/Toast';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface Props {
   task: ScheduledTask | null; // null = 新建
@@ -77,7 +78,7 @@ export const TaskEditModal: React.FC<Props> = ({ task, contacts, groups, onClose
     // 目标名快照
     let targetName = '';
     if (targetKind === 'contact') targetName = contactName(sortedContacts.find(c => c.username === targetId) || ({} as ContactStats)) || targetId;
-    else if (targetKind === 'group') targetName = (sortedGroups.find(g => g.username === targetId)?.name) || targetId;
+    else if (targetKind === 'group') targetName = getGroupDisplayName(sortedGroups.find(g => g.username === targetId) || { username: targetId });
 
     const payload: Partial<ScheduledTask> = {
       name: name.trim(),
@@ -166,7 +167,7 @@ export const TaskEditModal: React.FC<Props> = ({ task, contacts, groups, onClose
                 <option value="">— 选择{targetKind === 'contact' ? '联系人' : '群'} —</option>
                 {targetKind === 'contact'
                   ? sortedContacts.map(c => <option key={c.username} value={c.username}>{contactName(c)}</option>)
-                  : sortedGroups.map(g => <option key={g.username} value={g.username}>{g.name}</option>)}
+                  : sortedGroups.map(g => <option key={g.username} value={g.username}>{getGroupDisplayName(g)}</option>)}
               </select>
             )}
           </div>

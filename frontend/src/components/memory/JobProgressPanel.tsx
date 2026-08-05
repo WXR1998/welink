@@ -3,6 +3,7 @@ import { Loader2, Square, ChevronDown, ChevronUp, Pin, PinOff, Trash2, Check, X 
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface Job {
   key: string;
@@ -60,7 +61,7 @@ export const JobProgressPanel: React.FC<Props> = ({ contacts, groups }) => {
     }
     for (const g of groups) {
       m.set(g.username, {
-        name: g.name || g.username,
+        name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
         isGroup: true,
       });

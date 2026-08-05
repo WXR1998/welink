@@ -121,6 +121,7 @@ export interface SocialBreadthPoint {
 export interface CommonCircleGroup {
   username: string;
   name: string;
+  nickname?: string;
   small_head_url: string;
   member_count: number;
   other_members: string[];

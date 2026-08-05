@@ -20,6 +20,7 @@ import {
   type ExportConfigDTO,
 } from '../../services/api';
 import type { ContactStats, GroupInfo } from '../../types';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface ExportCenterPageProps {
   contacts: ContactStats[];
@@ -92,6 +93,14 @@ export const ExportCenterPage: React.FC<ExportCenterPageProps> = ({ contacts, gr
 
   const sortedContacts = useMemo(() => [...contacts].sort((a, b) => b.total_messages - a.total_messages), [contacts]);
   const sortedGroups = useMemo(() => [...groups].sort((a, b) => b.total_messages - a.total_messages), [groups]);
+
+  const labelFor = (c: ContactStats | GroupInfo): string => {
+    if ('name' in c && !('remark' in c)) {
+      return getGroupDisplayName(c as GroupInfo);
+    }
+    const contact = c as ContactStats;
+    return contact.remark || contact.nickname || contact.username;
+  };
 
   const yearOptions = useMemo(() => {
     let minYear = new Date().getFullYear();
@@ -272,7 +281,7 @@ export const ExportCenterPage: React.FC<ExportCenterPageProps> = ({ contacts, gr
                     <option value="">选择对象...</option>
                     {(sel.conversationIsGroup ? sortedGroups : sortedContacts).map((c) => (
                       <option key={c.username} value={c.username}>
-                        {(('remark' in c ? c.remark : '') || ('nickname' in c ? c.nickname : '') || ('name' in c ? c.name : '') || c.username)} ({c.total_messages})
+                        {labelFor(c)} ({c.total_messages})
                       </option>
                     ))}
                   </select>
@@ -308,7 +317,7 @@ export const ExportCenterPage: React.FC<ExportCenterPageProps> = ({ contacts, gr
                     <option key={c.username} value={`contact:${c.username}`}>{(c.remark || c.nickname || c.username)}</option>
                   ))}
                   {sortedGroups.map((g) => (
-                    <option key={g.username} value={`group:${g.username}`}>[群] {g.name || g.username}</option>
+                    <option key={g.username} value={`group:${g.username}`}>[群] {getGroupDisplayName(g)}</option>
                   ))}
                   <option value="ai-home:cross_qa">AI 首页 · 跨联系人问答</option>
                 </select>
@@ -339,7 +348,7 @@ export const ExportCenterPage: React.FC<ExportCenterPageProps> = ({ contacts, gr
                   <option value="">选择...</option>
                   {(sel.memoryIsGroup ? sortedGroups : sortedContacts).map((c) => (
                     <option key={c.username} value={c.username}>
-                      {(('remark' in c ? c.remark : '') || ('nickname' in c ? c.nickname : '') || ('name' in c ? c.name : '') || c.username)}
+                      {labelFor(c)}
                     </option>
                   ))}
                 </select>

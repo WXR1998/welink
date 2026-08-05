@@ -3,6 +3,7 @@ import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon,
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { JobProgressPanel } from './JobProgressPanel';
 import { BatchExtractPanel } from './BatchExtractPanel';
 import { RelativeTime } from '../common/RelativeTime';
@@ -623,7 +624,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     }
     for (const g of groups) {
       m.set(g.username, {
-        name: g.name || g.username,
+        name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
         isGroup: true,
       });
@@ -1064,7 +1065,7 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     for (const g of groups) {
       all.push({
         key: 'group:' + g.username,
-        name: g.name || g.username,
+        name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
         isGroup: true,
       });

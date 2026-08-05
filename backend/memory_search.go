@@ -366,7 +366,11 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 		key := "group:" + g.Username
 		if g.Name != "" {
 			groupIndex[strings.ToLower(g.Name)] = key
-			displayNames[key] = g.Name
+			displayName := g.Name
+			if g.Nickname != "" && g.Nickname != g.Name {
+				displayName = g.Name + "（" + g.Nickname + "）"
+			}
+			displayNames[key] = displayName
 		}
 		if g.Nickname != "" && g.Nickname != g.Name {
 			groupIndex[strings.ToLower(g.Nickname)] = key

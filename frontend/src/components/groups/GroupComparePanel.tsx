@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { X, TrendingUp } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import type { GroupInfo } from '../../types';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 
 interface Props {
@@ -19,13 +20,16 @@ export const GroupComparePanel: React.FC<Props> = ({ groups, onClose }) => {
   const { privacyMode } = usePrivacyMode();
 
   const barData = useMemo(() => {
-    return groups.map((g, i) => ({
-      name: g.name.length > 8 ? g.name.slice(0, 8) + '...' : g.name,
-      fullName: g.name,
-      messages: g.total_messages,
-      members: g.member_count,
-      color: COLORS[i % COLORS.length],
-    }));
+    return groups.map((g, i) => {
+      const displayName = getGroupDisplayName(g);
+      return {
+        name: displayName.length > 8 ? displayName.slice(0, 8) + '...' : displayName,
+        fullName: displayName,
+        messages: g.total_messages,
+        members: g.member_count,
+        color: COLORS[i % COLORS.length],
+      };
+    });
   }, [groups]);
 
   // 计算每个群的日均消息
@@ -107,7 +111,7 @@ export const GroupComparePanel: React.FC<Props> = ({ groups, onClose }) => {
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
                       <span className={`font-bold text-[#1d1d1f] dk-text truncate max-w-[200px]${privacyMode ? ' privacy-blur' : ''}`}>
-                        {g.name}
+                        {getGroupDisplayName(g)}
                       </span>
                     </div>
                   </td>

@@ -3870,6 +3870,7 @@ func (s *ContactService) buildSharedGroupCounts() map[string]int {
 type CommonCircleGroup struct {
 	Username     string   `json:"username"`
 	Name         string   `json:"name"`
+	Nickname     string   `json:"nickname,omitempty"` // 原始群名（与 Name 不同时才有值）
 	SmallHeadURL string   `json:"small_head_url"`
 	MemberCount  int      `json:"member_count"`  // 该群总成员数
 	OtherMembers []string `json:"other_members"` // 除两人之外的其他成员名
@@ -3934,7 +3935,7 @@ func (s *ContactService) GetCommonCircle(user1, user2 string) *CommonCircleResul
 	}
 
 	// 查所有现有群的元信息（name, avatar）
-	groupMeta := make(map[string]struct{ name, avatar string })
+	groupMeta := make(map[string]struct{ name, nick, avatar string })
 	gRows, _ := s.dbMgr.ContactDB.Query(
 		`SELECT username, COALESCE(remark,''), COALESCE(nick_name,''), COALESCE(small_head_url,'') FROM contact WHERE username LIKE '%@chatroom'`)
 	if gRows != nil {
@@ -3948,7 +3949,7 @@ func (s *ContactService) GetCommonCircle(user1, user2 string) *CommonCircleResul
 			if name == "" {
 				name = uname
 			}
-			groupMeta[uname] = struct{ name, avatar string }{name, avatar}
+			groupMeta[uname] = struct{ name, nick, avatar string }{name, nick, avatar}
 		}
 		gRows.Close()
 	}
@@ -4020,6 +4021,7 @@ func (s *ContactService) GetCommonCircle(user1, user2 string) *CommonCircleResul
 		sharedGroups = append(sharedGroups, CommonCircleGroup{
 			Username:     r.username,
 			Name:         meta.name,
+			Nickname:     meta.nick,
 			SmallHeadURL: meta.avatar,
 			MemberCount:  memberCount,
 			OtherMembers: members,
@@ -4490,6 +4492,9 @@ func (s *ContactService) GlobalSearch(ctx context.Context, q, searchType string)
 				if name == "" {
 					name = username
 				}
+				if nickname != "" && nickname != name {
+					name = name + "（" + nickname + "）"
+				}
 				// 抢 sem 之前 close 让出连接给 scanOne，不然扫描全卡在等 ContactDB 这个连接
 				select {
 				case <-ctx.Done():
@@ -4651,6 +4656,9 @@ func (s *ContactService) GetDayActivity(date string) (contacts []CalendarDayEntr
 			}
 			if name == "" {
 				name = uname
+			}
+			if nick != "" && nick != name {
+				name = name + "（" + nick + "）"
 			}
 			groups = append(groups, CalendarDayEntry{
 				Username: uname, DisplayName: name, SmallHeadURL: avatar,

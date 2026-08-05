@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Bot, Search, X } from 'lucide-react';
 import type { ContactStats, GroupInfo } from '../../../types';
+import { getGroupDisplayName } from '../../../utils/formatters';
 
 interface ScopeData {
   feishu_group_scope: Record<string, string[]>;
@@ -52,7 +53,7 @@ export const FeishuScopeSection: React.FC<{
 
   const groupLabel = (id: string): string => {
     const g = allGroups.find((x) => x.username === id);
-    return g ? g.name : id;
+    return g ? getGroupDisplayName(g) : id;
   };
   const contactLabel = (id: string): string => {
     const c = allContacts.find((x) => x.username === id || x.remark === id || x.nickname === id);
@@ -300,7 +301,7 @@ const FeishuGroupCard: React.FC<FeishuGroupCardProps> = ({
                   on ? 'bg-[#07c160] text-white border-[#07c160]' : 'bg-white border-gray-200 text-gray-600 hover:border-[#07c160] dk-card dk-border'
                 }`}
               >
-                {g.name}
+                {getGroupDisplayName(g)}
               </button>
             );
           })}

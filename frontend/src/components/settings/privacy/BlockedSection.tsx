@@ -2,6 +2,7 @@ import React from 'react';
 import { ShieldOff, User, Users } from 'lucide-react';
 import { TagList, AddInput } from '../shared';
 import type { ContactStats, GroupInfo } from '../../../types';
+import { getGroupDisplayName } from '../../../utils/formatters';
 
 export const BlockedSection: React.FC<{
   blockedUsers: string[];
@@ -24,7 +25,7 @@ export const BlockedSection: React.FC<{
   };
   const groupLabelFor = (id: string): string => {
     const g = allGroups.find((g) => g.username === id || g.name === id);
-    return g ? g.name : id;
+    return g ? getGroupDisplayName(g) : id;
   };
 
   return (

@@ -86,6 +86,22 @@ export const getContactDisplayName = (contact: {
 };
 
 /**
+ * 获取群聊显示名称：当群名与原始群名不同时，显示为 `群名（群原名）`。
+ */
+export const getGroupDisplayName = (group: {
+  name?: string;
+  nickname?: string;
+  username?: string;
+}): string => {
+  const display = group.name || group.username || '未知群聊';
+  const original = group.nickname?.trim();
+  if (original && original !== display) {
+    return `${display}（${original}）`;
+  }
+  return display;
+};
+
+/**
  * 截断单条聊天记录内容，防止超长消息撑爆 prompt。
  * 按字符数（rune）计算，中英文均算 1 个字符。
  */

@@ -3,6 +3,7 @@ import { Loader2, Plus, X, Check, Play, Trash2, Layers, Square, ChevronDown, Che
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface BatchTask {
   id: number;
@@ -44,7 +45,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
     }
     for (const g of groups) {
       m.set(g.username, {
-        name: g.name || g.username,
+        name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
       });
     }
@@ -339,7 +340,7 @@ export const BatchExtractPanel: React.FC<Props> = ({ contacts, groups }) => {
                       }`}
                     >
                       {selected ? <Check size={14} /> : <div className="w-3.5" />}
-                      <span className="truncate">{g.name || g.username}</span>
+                      <span className="truncate">{getGroupDisplayName(g)}</span>
                       <span className="text-xs text-gray-400 ml-auto">{g.total_messages} 条</span>
                     </button>
                   );

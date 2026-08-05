@@ -15,7 +15,7 @@ import { contactsApi, groupsApi } from '../../services/api';
 import { usePrivacyMode } from '../../contexts/PrivacyModeContext';
 import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { isAIConfigError } from '../../utils/aiError';
-import { truncateMsgContent } from '../../utils/formatters';
+import { truncateMsgContent, getGroupDisplayName } from '../../utils/formatters';
 import { AIConfigNotice } from '../common/AIConfigNotice';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -31,7 +31,7 @@ type SelectableItem =
 
 function itemName(item: SelectableItem): string {
   if (item.kind === 'contact') return item.data.remark || item.data.nickname || item.data.username;
-  return item.data.name || item.data.username;
+  return getGroupDisplayName(item.data);
 }
 
 function itemAvatar(item: SelectableItem): string | undefined {
@@ -211,7 +211,7 @@ const SubjectPicker: React.FC<{
             <>
               <div className={`px-3 pt-2 pb-1 text-[10px] font-black text-gray-300 dark:text-gray-500 uppercase tracking-widest ${filteredContacts.length > 0 ? 'border-t border-gray-50 dark:border-white/5' : ''}`}>群聊</div>
               {filteredGroups.map(g => {
-                const name = g.name || g.username;
+                const name = getGroupDisplayName(g);
                 const avatar = g.small_head_url;
                 return (
                   <button
@@ -571,8 +571,8 @@ export const AIHomePage: React.FC<AIHomePageProps> = ({
     }
     if (topGroup) {
       out.push({
-        label: `${topGroup.name} 最近在聊什么`,
-        prompt: `${topGroup.name}这个群最近一个月聊的最多的话题有哪些？主要发言的人是谁？`,
+        label: `${getGroupDisplayName(topGroup)} 最近在聊什么`,
+        prompt: `${getGroupDisplayName(topGroup)}这个群最近一个月聊的最多的话题有哪些？主要发言的人是谁？`,
         target: { kind: 'group', data: topGroup },
       });
     }

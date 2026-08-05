@@ -3,6 +3,7 @@ import { Activity, Zap } from 'lucide-react';
 import api from '../../services/api';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface TokenUsage {
   model: string;
@@ -97,7 +98,7 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
     }
     for (const g of groups) {
       m.set(g.username, {
-        name: g.name || g.username,
+        name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
       });
     }

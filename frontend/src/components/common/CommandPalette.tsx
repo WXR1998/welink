@@ -19,6 +19,7 @@ import { useLock } from '../../contexts/LockContext';
 import { emitToast } from './Toast';
 import { canReveal } from '../../utils/reveal';
 import { buildPinyinIndex, matchPinyin } from '../../utils/pinyin';
+import { getGroupDisplayName } from '../../utils/formatters';
 import { useEscape } from '../../hooks/useEscape';
 
 interface Props {
@@ -127,7 +128,7 @@ export const CommandPalette: React.FC<Props> = ({
   })), [contacts]);
   const groupIndex = useMemo(() => groups.map(g => ({
     g,
-    idx: buildPinyinIndex(g.name || g.username),
+    idx: buildPinyinIndex((g.name + ' ' + (g.nickname || '')).trim() || g.username),
   })), [groups]);
 
   const openContact = (c: ContactStats) => {
@@ -138,7 +139,7 @@ export const CommandPalette: React.FC<Props> = ({
     onContactClick(c); onClose();
   };
   const openGroup = (g: GroupInfo) => {
-    pushRecent({ kind: 'group', id: 'group:' + g.username, payload: g.username, title: g.name, subtitle: '群聊' });
+    pushRecent({ kind: 'group', id: 'group:' + g.username, payload: g.username, title: getGroupDisplayName(g), subtitle: '群聊' });
     onGroupClick(g); onClose();
   };
 
@@ -191,7 +192,7 @@ export const CommandPalette: React.FC<Props> = ({
         result.push({
           kind: 'group',
           id: 'group:' + g.username,
-          title: g.name,
+          title: getGroupDisplayName(g),
           subtitle: '群聊',
           icon: <Users size={14} className="text-[#07c160]" />,
           onSelect: () => openGroup(g),

@@ -270,6 +270,9 @@ func echoSearchHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 				if name == "" {
 					name = st.Username
 				}
+				if g.IsGroup && st.Nickname != "" && st.Nickname != name {
+					name = name + "（" + st.Nickname + "）"
+				}
 				g.DisplayName = name
 				g.Avatar = st.SmallHeadURL
 			} else {

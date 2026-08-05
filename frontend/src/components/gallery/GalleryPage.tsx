@@ -13,6 +13,7 @@ import { Image as ImageIcon, Search, Star, X, Trash2, RefreshCw, Loader2, Downlo
 import { useImageTask } from '../../hooks/useImageTask';
 import { contactsApi, groupsApi } from '../../services/api';
 import { avatarSrc } from '../../utils/avatar';
+import { getGroupDisplayName } from '../../utils/formatters';
 
 interface UsedInEntry {
   kind: string;
@@ -118,7 +119,7 @@ export const GalleryPage: React.FC = () => {
       }
       for (const g of groups) {
         dir[g.username] = {
-          name: g.name || g.username,
+          name: getGroupDisplayName(g),
           avatar: g.small_head_url || '',
           kind: 'group',
         };
