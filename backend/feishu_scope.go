@@ -97,22 +97,23 @@ func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences
 	if prompt == "" {
 		return msgs
 	}
-	// 补充提示作为第 7 点追加在“支持论据/聊天记录”要求（第 6 点）之后。
-	injected := "\n\n7. " + prompt + "\n"
-	// 定位机器人 system 的固定要求结尾，把群补充信息作为第 7 点插入其后。
+	// 补充提示作为第 7 点追加在“支持论据/聊天记录”要求（第 6 点）之后，且不留空行。
 	const introMarker = "直到能完整表达该事件为止。\n"
+	// 命中锚点时直接接在行尾（无空行）；回退追加到末尾时才补空行分隔。
+	item := "7. " + prompt + "\n"
+	fallbackItem := "\n\n7. " + prompt + "\n"
 	for i := range msgs {
 		if msgs[i].Role == "system" {
 			content := msgs[i].Content
 			if idx := strings.Index(content, introMarker); idx >= 0 {
 				at := idx + len(introMarker)
-				msgs[i].Content = content[:at] + injected + content[at:]
+				msgs[i].Content = content[:at] + item + content[at:]
 			} else {
-				// 找不到固定开场白（如其它调用方），退回追加到 system 末尾。
-				msgs[i].Content += injected
+				// 找不到固定要求结尾（如其它调用方），退回追加到 system 末尾。
+				msgs[i].Content += fallbackItem
 			}
 			return msgs
 		}
 	}
-	return append(msgs, LLMMessage{Role: "system", Content: injected})
+	return append(msgs, LLMMessage{Role: "system", Content: item})
 }

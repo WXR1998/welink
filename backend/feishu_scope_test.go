@@ -124,7 +124,7 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected length 2, got %d", len(got))
 	}
-	want := "要求：\n6. 每段故事都要说明依据的聊天记录原文，直到能完整表达该事件为止。\n\n\n7. 本群成员主要使用粤语交流。\n下面是正文"
+	want := "要求：\n6. 每段故事都要说明依据的聊天记录原文，直到能完整表达该事件为止。\n7. 本群成员主要使用粤语交流。\n下面是正文"
 	if got[0].Content != want {
 		t.Fatalf("unexpected system content: %q", got[0].Content)
 	}
