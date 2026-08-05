@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera, CheckSquare } from 'lucide-react';
+import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera, CheckSquare, Tags } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -600,6 +600,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [hoverFactText, setHoverFactText] = useState('');
   const [hoverContactInfo, setHoverContactInfo] = useState<{ name: string; avatar?: string } | null>(null);
   const [hoverVisible, setHoverVisible] = useState(false);
+  const [aliasOpen, setAliasOpen] = useState(false);
+  const [aliasContactKey, setAliasContactKey] = useState<string>('');
+  const [aliasContactName, setAliasContactName] = useState('');
+  const [aliasList, setAliasList] = useState<string[]>([]);
+  const [aliasInput, setAliasInput] = useState('');
+  const [aliasBusy, setAliasBusy] = useState(false);
+  const [aliasErr, setAliasErr] = useState<string | null>(null);
 
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1050,6 +1057,58 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       setAddBusy(false);
     }
   };
+  const openAlias = async (key: string, name: string) => {
+    setAliasContactKey(key);
+    setAliasContactName(name);
+    setAliasInput('');
+    setAliasErr(null);
+    setAliasOpen(true);
+    await loadAliases(key);
+  };
+
+  const loadAliases = async (key: string) => {
+    setAliasBusy(true);
+    try {
+      const r = await axios.get<{ aliases: string[] }>('/api/memory/contact-aliases', { params: { contact_key: key } });
+      setAliasList(r.data.aliases || []);
+    } catch {
+      setAliasList([]);
+      setAliasErr('加载外号失败');
+    } finally {
+      setAliasBusy(false);
+    }
+  };
+
+  const addAlias = async () => {
+    const v = aliasInput.trim();
+    if (!v || !aliasContactKey) return;
+    setAliasBusy(true); setAliasErr(null);
+    try {
+      await axios.post('/api/memory/contact-aliases', { contact_key: aliasContactKey, alias: v });
+      setAliasInput('');
+      await loadAliases(aliasContactKey);
+    } catch (e: unknown) {
+      const anyE = e as { response?: { data?: { error?: string } }; message?: string };
+      setAliasErr(anyE?.response?.data?.error || anyE?.message || '添加失败');
+    } finally {
+      setAliasBusy(false);
+    }
+  };
+
+  const deleteAlias = async (alias: string) => {
+    if (!aliasContactKey) return;
+    setAliasBusy(true); setAliasErr(null);
+    try {
+      await axios.delete('/api/memory/contact-aliases', { params: { contact_key: aliasContactKey, alias } });
+      await loadAliases(aliasContactKey);
+    } catch (e: unknown) {
+      const anyE = e as { response?: { data?: { error?: string } }; message?: string };
+      setAliasErr(anyE?.response?.data?.error || anyE?.message || '删除失败');
+    } finally {
+      setAliasBusy(false);
+    }
+  };
+
   // 添加 modal 的联系人候选：所有 contacts + groups，按查询过滤
   const addCandidates = useMemo(() => {
     const q = addContactQuery.trim().toLowerCase();
@@ -1163,25 +1222,34 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
             {filteredContactStats.map(s => {
               const info = lookup(s.contact_key);
               const active = activeContact === s.contact_key;
+              const contactName = info?.name || stripKey(s.contact_key) || s.contact_key;
               return (
-                <button
-                  key={s.contact_key}
-                  onClick={() => setActiveContact(s.contact_key)}
-                  className={`w-full text-left px-2 py-1.5 rounded-xl text-sm flex items-center gap-2 transition-colors ${
-                    active ? 'bg-[#07c160]/10 text-[#07c160]' : 'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  {info?.avatar ? (
-                    <img src={info.avatar} alt="" className="w-6 h-6 rounded-lg object-cover shrink-0" />
-                  ) : (
-                    <FallbackAvatar name={info?.name || stripKey(s.contact_key)} size={24} rounded="rounded-lg" />
-                  )}
-                  <span className="truncate flex-1">{info?.name || stripKey(s.contact_key)}</span>
-                  {s.pinned_count > 0 && (
-                    <span className="text-[10px] text-amber-500">📌{s.pinned_count}</span>
-                  )}
-                  <span className="text-xs text-gray-400">{s.count}</span>
-                </button>
+                <div key={s.contact_key} className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => setActiveContact(s.contact_key)}
+                    className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-xl text-sm flex items-center gap-2 transition-colors ${
+                      active ? 'bg-[#07c160]/10 text-[#07c160]' : 'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {info?.avatar ? (
+                      <img src={info.avatar} alt="" className="w-6 h-6 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <FallbackAvatar name={contactName} size={24} rounded="rounded-lg" />
+                    )}
+                    <span className="truncate flex-1">{contactName}</span>
+                    {s.pinned_count > 0 && (
+                      <span className="text-[10px] text-amber-500">📌{s.pinned_count}</span>
+                    )}
+                    <span className="text-xs text-gray-400">{s.count}</span>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void openAlias(s.contact_key, contactName); }}
+                    title={`设置「${contactName}」的外号`}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-[#07c160] hover:bg-gray-100 dark:hover:bg-white/5 shrink-0"
+                  >
+                    <Tags size={13} />
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -1552,6 +1620,46 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         </div>
       )}
 
+
+
+      {/* 联系人外号管理 modal */}
+      {aliasOpen && (
+        <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/40 p-4" onClick={() => !aliasBusy && setAliasOpen(false)}>
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-100 dark:border-white/10 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold dk-text">外号管理</h3>
+              <button onClick={() => setAliasOpen(false)} className="text-gray-400 hover:text-gray-600"><XIcon size={16} /></button>
+            </div>
+            <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">为「{aliasContactName}」配置别名。别名会用于实体识别，并随置顶记忆注入 AI 上下文以确认人物指向。</p>
+
+            <div className="space-y-2">
+              {aliasList.length === 0 ? (
+                <div className="text-sm text-gray-400 px-3 py-3 text-center border border-dashed border-gray-200 dark:border-white/10 rounded-xl">还没有外号</div>
+              ) : aliasList.map(a => (
+                <div key={a} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10">
+                  <span className="text-sm dk-text">{a}</span>
+                  <button onClick={() => void deleteAlias(a)} disabled={aliasBusy} className="text-gray-400 hover:text-red-500" title="删除"><Trash2 size={14} /></button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <input
+                value={aliasInput}
+                onChange={(e) => setAliasInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void addAlias(); }}
+                placeholder="输入外号，回车添加"
+                className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm dk-text outline-none focus:border-[#07c160]"
+              />
+              <button onClick={addAlias} disabled={aliasBusy || !aliasInput.trim()} className="px-4 py-2 rounded-xl bg-[#07c160] text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1.5">
+                {aliasBusy && <Loader2 size={14} className="animate-spin" />}
+                添加
+              </button>
+            </div>
+            {aliasErr && <p className="mt-2 text-xs text-red-500">{aliasErr}</p>}
+          </div>
+        </div>
+      )}
       {/* hover 预览浮层 */}
       {hoverFactId !== null && hoverPos && (
         <>

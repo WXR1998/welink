@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,7 +174,7 @@ func looksLikeRawLookup(q string) bool {
 //
 // 降级策略：LLM 调用失败或解析失败时，返回 needs_memory=true + concepts=原始问题，
 // 保证流程不中断（最坏情况退化为全量搜索）。
-func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences, profileID string) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
+func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences, profileID string, svc *service.ContactService) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
 
 	// 获取置顶记忆，用于 LLM 理解外号/简称与实体的映射关系
@@ -186,6 +187,46 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 			fmt.Fprintf(&sb, "- %s\n", f.Fact)
 		}
 		pinnedBlock = sb.String()
+	}
+
+	// 联系人外号注册表：不再依赖置顶记忆声明别名，直接读取外号表供 LLM 归一化实体。
+	var aliasBlock string
+	{
+		allAliases, _ := GetAllContactAliases()
+		if len(allAliases) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n── 联系人外号对照表（用于把问题中的外号/简称还原为真实姓名）──\n")
+			mainName := func(key string) string {
+				if svc == nil {
+					return strings.TrimPrefix(key, "contact:")
+				}
+				uname := strings.TrimPrefix(key, "contact:")
+				for _, s := range svc.GetCachedStats() {
+					if s.Username == uname {
+						if s.Remark != "" {
+							return s.Remark
+						}
+						if s.Nickname != "" {
+							return s.Nickname
+						}
+					}
+				}
+				return uname
+			}
+			keys := make([]string, 0, len(allAliases))
+			for k := range allAliases {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				aliases := allAliases[k]
+				if len(aliases) == 0 {
+					continue
+				}
+				fmt.Fprintf(&sb, "- %s 又称：%s\n", mainName(k), strings.Join(aliases, "、"))
+			}
+			aliasBlock = sb.String()
+		}
 	}
 
 	// 构建上一轮分解结果的上下文（用于连续问答时沿用实体/概念/时间）
@@ -210,7 +251,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 
 	prompt := fmt.Sprintf(`你是 WeLink（微信聊天数据分析平台）的查询分析助手。
-分析用户的问题，判断是否需要检索聊天记忆库。%s%s
+分析用户的问题，判断是否需要检索聊天记忆库。%s%s%s
 
 今天是 %s。输出严格 JSON，不要任何解释或代码围栏：
 {"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD", "groups": ["群聊名"], "lookup_raw": false}
@@ -232,7 +273,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 - "你刚才说的再说一遍" → {"needs_memory": false, "entities": [], "concepts": [], "time_from": "", "time_to": "", "groups": [], "lookup_raw": false}
 - "那后来呢"（上一轮实体含"张三"）→ {"needs_memory": true, "entities": ["张三"], "concepts": ["后续发展"], "time_from": "", "time_to": "", "groups": [], "lookup_raw": false}
 - "把钟视航评价李佳轩那段原文贴出来" → {"needs_memory": true, "entities": ["钟视航", "李佳轩"], "concepts": ["评价"], "time_from": "", "time_to": "", "groups": [], "lookup_raw": true}
-- "刚才那句的原话怎么说"（上一轮实体含"钟视航"）→ {"needs_memory": true, "entities": ["钟视航"], "concepts": ["原话"], "time_from": "", "time_to": "", "groups": [], "lookup_raw": true}`, pinnedBlock, prevBlock, today)
+- "刚才那句的原话怎么说"（上一轮实体含"钟视航"）→ {"needs_memory": true, "entities": ["钟视航"], "concepts": ["原话"], "time_from": "", "time_to": "", "groups": [], "lookup_raw": true}`, aliasBlock, pinnedBlock, prevBlock, today)
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
@@ -330,12 +371,24 @@ type ResolvedEntity struct {
 //
 // 这是方案2的降噪关键：如果用户问"我和张三聊了什么"，只搜索
 // contact:张三 的 mem_facts，而不是全库扫描。
+
+// getContactAliasIndex 读取所有联系人在外号表里的别名映射。
+// 返回 contact_key"contact:xxx" → ["外号", ...]，供实体解析和上下文注入共用。
+func getContactAliasIndex() map[string][]string {
+	all, err := GetAllContactAliases()
+	if err != nil {
+		return nil
+	}
+	return all
+}
+
 func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedEntity {
 	if svc == nil || len(entities) == 0 {
 		return nil
 	}
 
 	contacts := svc.GetCachedStats()
+	aliasIndex := getContactAliasIndex()
 	groups := svc.GetGroups()
 
 	// 建索引：lower(name) → contact_key
@@ -359,6 +412,18 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 			contactIndex[strings.ToLower(c.Alias)] = key
 		}
 		contactIndex[strings.ToLower(c.Username)] = key
+	}
+
+	// 外号表：手动维护的联系人别名也纳入精确索引。
+	for key, aliases := range aliasIndex {
+		// 别名只用于联系人（key 以 contact: 开头）；display 名保持主名。
+		for _, al := range aliases {
+			t := strings.TrimSpace(al)
+			if t == "" {
+				continue
+			}
+			contactIndex[strings.ToLower(t)] = key
+		}
 	}
 
 	groupIndex := make(map[string]string) // lower(name) → "group:username"
@@ -496,13 +561,14 @@ func GetGroupKeysWithFacts() []string {
 
 // MemorySearchResponse 是 /api/ai/memory-search 的响应。
 type MemorySearchResponse struct {
-	Decomposition    *QueryDecomposition `json:"decomposition"`     // LLM 查询分解结果
-	ResolvedEntities []ResolvedEntity    `json:"resolved_entities"` // 实体名 → contact_key 解析结果
-	Facts            []MemFact           `json:"facts"`             // 匹配到的记忆事实
-	Sources          []FactSource        `json:"sources"`           // 记忆事实对应的源聊天记录
-	PinnedFacts      []MemFact           `json:"pinned_facts"`      // 置顶事实（始终注入）
-	TokenUsage       *StreamUsage        `json:"token_usage"`       // DecomposeQuery 消耗的 token
-	DecomposePrompt  []LLMMessage        `json:"decompose_prompt"`  // DecomposeQuery 发给 LLM 的原始 prompt
+	Decomposition        *QueryDecomposition  `json:"decomposition"`                    // LLM 查询分解结果
+	ResolvedEntities     []ResolvedEntity     `json:"resolved_entities"`                // 实体名 → contact_key 解析结果
+	Facts                []MemFact            `json:"facts"`                            // 匹配到的记忆事实
+	Sources              []FactSource         `json:"sources"`                          // 记忆事实对应的源聊天记录
+	PinnedFacts          []MemFact            `json:"pinned_facts"`                     // 置顶事实（始终注入）
+	PinnedContactAliases []PinnedContactAlias `json:"pinned_contact_aliases,omitempty"` // 注入置顶记忆的联系人外号，供 LLM 辨识人物
+	TokenUsage           *StreamUsage         `json:"token_usage"`                      // DecomposeQuery 消耗的 token
+	DecomposePrompt      []LLMMessage         `json:"decompose_prompt"`                 // DecomposeQuery 发给 LLM 的原始 prompt
 	// 增强检索结果
 	VecMessages     []VecMessageHit   `json:"vec_messages"`     // 双路检索：原始消息命中
 	ExpandedQueries []string          `json:"expanded_queries"` // 查询改写：扩展的子查询
@@ -600,7 +666,8 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 
 		// Step 1: LLM 查询分解
 		sendProgress("decompose", "正在用 LLM 分解问题...")
-		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID)
+		svc := getSvc()
+		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID, svc)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
@@ -620,7 +687,6 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			entityNames = strings.Join(decomp.Entities, "、")
 		}
 		sendProgress("resolve_entities", fmt.Sprintf("解析实体名: %s", entityNames))
-		svc := getSvc()
 		var resolvedEntities []ResolvedEntity
 		if decomp != nil && len(decomp.Entities) > 0 && svc != nil {
 			resolvedEntities = ResolveEntities(decomp.Entities, svc)
@@ -817,17 +883,35 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			saveConversationCandidates(body.ConversationKey, candidates)
 		}
 
+		pinnedContactAliases := buildPinnedContactAliases(pinnedFacts, func(key string) string {
+			if svc == nil {
+				return ""
+			}
+			uname := strings.TrimPrefix(key, "contact:")
+			for _, s := range svc.GetCachedStats() {
+				if s.Username == uname {
+					if s.Remark != "" {
+						return s.Remark
+					}
+					if s.Nickname != "" {
+						return s.Nickname
+					}
+				}
+			}
+			return ""
+		})
 		// 推送最终结果
 		close(keepaliveDone)
 		resp := MemorySearchResponse{
-			Decomposition:    decomp,
-			ResolvedEntities: resolvedEntities,
-			Facts:            allFacts,
-			Sources:          sources,
-			PinnedFacts:      pinnedFacts,
-			TokenUsage:       decompUsage,
-			DecomposePrompt:  decompPrompt,
-			VecMessages:      vecMessages,
+			Decomposition:        decomp,
+			ResolvedEntities:     resolvedEntities,
+			Facts:                allFacts,
+			Sources:              sources,
+			PinnedFacts:          pinnedFacts,
+			PinnedContactAliases: pinnedContactAliases,
+			TokenUsage:           decompUsage,
+			DecomposePrompt:      decompPrompt,
+			VecMessages:          vecMessages,
 		}
 		if enhancedResult != nil {
 			resp.ExpandedQueries = enhancedResult.ExpandedQueries

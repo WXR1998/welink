@@ -89,12 +89,19 @@ interface VecMessageHit {
   similarity: number;
 }
 
+interface PinnedContactAlias {
+  contact_key: string;
+  display_name?: string;
+  aliases: string[];
+}
+
 interface MemorySearchResponse {
   decomposition: QueryDecomposition;
   resolved_entities: ResolvedEntity[];
   facts: MemFact[];
   sources: FactSource[];
   pinned_facts: MemFact[];
+  pinned_contact_aliases?: PinnedContactAlias[];
   token_usage?: StreamUsage;
   decompose_prompt?: LLMMessage[];
   // 增强检索结果
@@ -246,6 +253,7 @@ function compactMemorySearchData(d: MemorySearchResponse): MemorySearchResponse 
     facts: [],
     sources: [],
     pinned_facts: d.pinned_facts,
+    pinned_contact_aliases: d.pinned_contact_aliases,
     token_usage: d.token_usage,
     rerank_used: d.rerank_used,
     vector_hits: d.vector_hits,
@@ -665,6 +673,15 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         dataContext += '\n【手工置顶的背景知识】\n';
         for (const pf of memData.pinned_facts) {
           dataContext += `- ${pf.fact}\n`;
+        }
+      }
+
+
+      if (memData.pinned_contact_aliases?.length) {
+        dataContext += '\n联系人外号（用于确认上下文里的人物指向）：\n';
+        for (const pca of memData.pinned_contact_aliases) {
+          const label = pca.display_name || pca.contact_key;
+          dataContext += `- ${label}（${pca.aliases.join('、')}）\n`;
         }
       }
 

@@ -71,14 +71,21 @@ type resolvedEntity struct {
 }
 
 // memorySearchData 是 memory-search result 中用于构建上下文的关键字段。
+type pinnedContactAlias struct {
+	ContactKey  string   `json:"contact_key"`
+	DisplayName string   `json:"display_name"`
+	Aliases     []string `json:"aliases"`
+}
+
 type memorySearchData struct {
-	Facts            []memFact       `json:"facts"`
-	Sources          []factSource    `json:"sources"`
-	PinnedFacts      []memFact       `json:"pinned_facts"`
-	VecMessages      []vecMessageHit `json:"vec_messages"`
-	RawHits          []rawExcerpt    `json:"raw_hits"`
-	ResolvedEntities []resolvedEntity `json:"resolved_entities"`
-	Decomposition *struct {
+	Facts                []memFact            `json:"facts"`
+	Sources              []factSource         `json:"sources"`
+	PinnedFacts          []memFact            `json:"pinned_facts"`
+	PinnedContactAliases []pinnedContactAlias `json:"pinned_contact_aliases,omitempty"`
+	VecMessages          []vecMessageHit      `json:"vec_messages"`
+	RawHits              []rawExcerpt         `json:"raw_hits"`
+	ResolvedEntities     []resolvedEntity     `json:"resolved_entities"`
+	Decomposition        *struct {
 		NeedsMemory bool `json:"needs_memory"`
 	} `json:"decomposition"`
 }
@@ -331,9 +338,20 @@ func buildDataContext(d *memorySearchData) string {
 	var sb strings.Builder
 
 	if len(d.PinnedFacts) > 0 {
+
 		sb.WriteString("\n【手工置顶的背景知识】\n")
 		for _, f := range d.PinnedFacts {
 			sb.WriteString("- " + f.Fact + "\n")
+		}
+		if len(d.PinnedContactAliases) > 0 {
+			sb.WriteString("\n联系人外号（用于确认上下文里的人物指向）：\n")
+			for _, pca := range d.PinnedContactAliases {
+				label := pca.DisplayName
+				if label == "" {
+					label = pca.ContactKey
+				}
+				sb.WriteString(fmt.Sprintf("- %s（%s）\n", label, strings.Join(pca.Aliases, "、")))
+			}
 		}
 	}
 
