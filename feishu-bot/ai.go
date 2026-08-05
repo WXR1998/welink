@@ -24,6 +24,7 @@ type memFact struct {
 	ContactKey string `json:"contact_key"`
 	Fact       string `json:"fact"`
 	Pinned     bool   `json:"pinned"`
+	SourceName string `json:"source_name,omitempty"`
 }
 
 // sourceMessage 与后端 SourceMessage 对应。
@@ -49,6 +50,7 @@ type vecMessageHit struct {
 	Sender     string  `json:"sender"`
 	Content    string  `json:"content"`
 	Similarity float32 `json:"similarity"`
+	SourceName string  `json:"source_name,omitempty"`
 }
 
 // rawExcerpt 与后端 RawExcerpt 对应。
@@ -334,9 +336,12 @@ func buildDataContext(d *memorySearchData) string {
 	if len(d.Facts) > 0 {
 		sb.WriteString("\n【从聊天记录中提炼的事实】\n")
 		for _, f := range d.Facts {
-			src := f.ContactKey
+			src := f.SourceName
 			if src == "" {
-				src = "未知"
+				src = f.ContactKey
+				if src == "" {
+					src = "未知"
+				}
 			}
 			sb.WriteString(fmt.Sprintf("- （来源：%s）%s\n", src, f.Fact))
 		}
@@ -352,9 +357,12 @@ func buildDataContext(d *memorySearchData) string {
 	if len(d.VecMessages) > 0 {
 		sb.WriteString("\n【原始消息向量检索结果】\n")
 		for _, vm := range d.VecMessages {
-			src := vm.ContactKey
+			src := vm.SourceName
 			if src == "" {
-				src = "未知"
+				src = vm.ContactKey
+				if src == "" {
+					src = "未知"
+				}
 			}
 			sb.WriteString(fmt.Sprintf("[%s %s %s]：%s\n", src, vm.Datetime, vm.Sender, vm.Content))
 		}

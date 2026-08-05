@@ -251,6 +251,7 @@ type VecMessageHit struct {
 	Sender     string  `json:"sender"`
 	Content    string  `json:"content"`
 	Similarity float32 `json:"similarity"`
+	SourceName string  `json:"source_name,omitempty"` // 可读来源名（如"群聊「xxx」"），由 API 层填充
 }
 
 // SearchVecMessagesFiltered 在 vec_messages 中执行向量语义检索。

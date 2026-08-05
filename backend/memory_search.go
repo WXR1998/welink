@@ -746,6 +746,18 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			allFacts = allFacts[:50]
 		}
 
+		// 为 Facts / PinnedFacts / VecMessages 填充可读来源名，
+		// 避免 LLM 上下文里出现 group:xxx@chatroom 这样的原始 key。
+		for i := range allFacts {
+			allFacts[i].SourceName = resolveSourceName(allFacts[i].ContactKey, svc)
+		}
+		for i := range pinnedFacts {
+			pinnedFacts[i].SourceName = resolveSourceName(pinnedFacts[i].ContactKey, svc)
+		}
+		for i := range vecMessages {
+			vecMessages[i].SourceName = resolveSourceName(vecMessages[i].ContactKey, svc)
+		}
+
 		// Step 4: 提取源聊天记录
 		sendProgress("extract_sources", fmt.Sprintf("从 %d 条记忆事实中提取源聊天记录...", len(allFacts)))
 		sources, _ := ExtractFactSources(allFacts, svc)
@@ -773,9 +785,12 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				}
 			}
 			for _, vm := range vecMessages {
-				src := vm.ContactKey
+				src := vm.SourceName
 				if src == "" {
-					src = "未知"
+					src = vm.ContactKey
+					if src == "" {
+						src = "未知"
+					}
 				}
 				add(src, vm.Datetime, vm.Sender, vm.Content)
 			}

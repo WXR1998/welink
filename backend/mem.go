@@ -130,6 +130,7 @@ type MemFact struct {
 	Pinned     bool   `json:"pinned"`
 	CreatedAt  int64  `json:"created_at,omitempty"`
 	UpdatedAt  int64  `json:"updated_at,omitempty"`
+	SourceName string `json:"source_name,omitempty"` // 可读来源名（如"群聊「xxx」"），由 API 层填充
 }
 
 // GetMemFacts 返回指定 key 的所有事实（按 id 升序）。
