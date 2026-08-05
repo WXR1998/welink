@@ -143,16 +143,16 @@ func openAIEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, er
 		"model": cfg.Model,
 		"input": texts,
 	})
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/embeddings", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
 
 	resp, err := withRetry(2, func(attempt int) (*http.Response, error) {
+		req, err := http.NewRequest("POST", cfg.BaseURL+"/embeddings", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if cfg.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		}
 		return httpClientFast.Do(req)
 	})
 	if err != nil {
@@ -190,13 +190,13 @@ func ollamaEmbeddingsBatch(texts []string, cfg EmbeddingConfig) ([][]float32, er
 		"model": cfg.Model,
 		"input": texts,
 	})
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/api/embed", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := withRetry(2, func(attempt int) (*http.Response, error) {
+		req, err := http.NewRequest("POST", cfg.BaseURL+"/api/embed", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
 		return httpClientFast.Do(req)
 	})
 	if err != nil {

@@ -1019,15 +1019,15 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 		reqBody.ReasoningEffort = cfg.reasoningEffort
 	}
 	body, _ := json.Marshal(reqBody)
-	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
 	llmStart := time.Now()
 	resp, err := withRetry(3, func(attempt int) (*http.Response, error) {
+		req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 		return httpClientLLMSync.Do(req)
 	})
 	durMs := time.Since(llmStart).Milliseconds()
