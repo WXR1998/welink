@@ -499,21 +499,28 @@ func extractAndStoreFacts(
 				storedEmbs = append(storedEmbs, dedupEmbs...)
 				if len(dedupFacts) > 0 {
 					tx, err := db.Begin()
-					if err == nil {
+					if err != nil {
+						fmt.Printf("[MEM-EXTRACT] ⚠️ db.Begin 失败: %v\n", err)
+					} else {
 						stmt, err := tx.Prepare(
 							"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)")
 						if err != nil {
 							tx.Rollback()
-						} else {
-							now := time.Now().Unix()
-							for j, emb := range dedupEmbs {
-								factWithMeta := timeRange + dedupFacts[j]
-								if _, err := stmt.Exec(key, factWithMeta, seg.Start, seg.End-1, encodeVec(emb), memFactVersion, now, now); err == nil {
-									total++
-								}
+							return total, fmt.Errorf("准备插入语句失败: %w", err)
+						}
+						now := time.Now().Unix()
+						for j, emb := range dedupEmbs {
+							factWithMeta := timeRange + dedupFacts[j]
+							if _, err := stmt.Exec(key, factWithMeta, seg.Start, seg.End-1, encodeVec(emb), memFactVersion, now, now); err != nil {
+								stmt.Close()
+								tx.Rollback()
+								return total, fmt.Errorf("插入事实失败: %w", err)
 							}
-							stmt.Close()
-							tx.Commit()
+							total++
+						}
+						stmt.Close()
+						if err := tx.Commit(); err != nil {
+							return total, fmt.Errorf("提交事务失败: %w", err)
 						}
 					}
 				}
