@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { Bot, X } from 'lucide-react';
+import { Bot, Search, X } from 'lucide-react';
 import type { ContactStats, GroupInfo } from '../../../types';
 
 interface ScopeData {
@@ -23,6 +23,8 @@ export const FeishuScopeSection: React.FC<{
   const [scope, setScope] = useState<Record<string, string[]>>({});
   const [drafts, setDrafts] = useState<Record<string, string[]>>({});
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
+  // group_username → [member_wxid, ...]，用于按群友名筛选群
+  const [memberships, setMemberships] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     axios
@@ -32,6 +34,10 @@ export const FeishuScopeSection: React.FC<{
         setDrafts(r.data.feishu_group_scope ?? {});
         setChatNames(r.data.feishu_bot_chats ?? {});
       })
+      .catch(() => {});
+    axios
+      .get<Record<string, string[]>>('/api/contacts/room-memberships')
+      .then((r) => setMemberships(r.data ?? {}))
       .catch(() => {});
   }, []);
 
@@ -51,6 +57,15 @@ export const FeishuScopeSection: React.FC<{
     if (key.startsWith('contact:')) return '联系人·' + contactLabel(key.slice(8));
     return key;
   };
+
+  // member wxid → display name，用于群友名搜索
+  const memberNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of allContacts) {
+      if (c.username) m.set(c.username, c.remark || c.nickname || c.username);
+    }
+    return m;
+  }, [allContacts]);
 
   const toggleKey = (chatID: string, key: string) => {
     setDrafts((prev) => {
@@ -93,82 +108,183 @@ export const FeishuScopeSection: React.FC<{
         </div>
       )}
 
-      {chatKeys.map((chatID) => {
-        const selected = drafts[chatID] ?? [];
-        return (
-          <div key={chatID} className="bg-white rounded-2xl border border-gray-100 p-6 mb-4 dk-card dk-border">
-            <div className="flex items-center gap-2 mb-2">
-              <h4 className="font-bold text-[#1d1d1f] dk-text">{chatNames[chatID] || chatID}</h4>
-              {dirtyKeys.has(chatID) && (
-                <button
-                  onClick={() => save(chatID)}
-                  className="ml-auto text-xs font-semibold px-3 py-1.5 bg-[#07c160] text-white rounded-lg hover:bg-[#06ad56] transition-colors"
-                >
-                  保存
-                </button>
-              )}
-            </div>
-
-            {/* 已选白名单 */}
-            <div className="min-h-[40px] flex flex-wrap gap-2 mb-3">
-              {selected.length === 0 && <span className="text-sm text-gray-400 self-center">未配置，默认放行全部</span>}
-              {selected.map((key) => (
-                <span key={key} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-[#07c160]/10 text-[#07c160]">
-                  {labelForKey(key)}
-                  <button onClick={() => toggleKey(chatID, key)} className="hover:text-red-500 transition-colors">
-                    <X size={13} />
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            {/* 微信/私聊选择 */}
-            <div className="text-xs text-gray-400 mb-2">点击下方条目加入白名单（再次点击移除）</div>
-            <div className="mb-2">
-              <div className="text-xs font-semibold text-gray-500 mb-1">微信群聊</div>
-              <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                {allGroups.map((g) => {
-                  const key = 'group:' + g.username;
-                  const on = selected.includes(key);
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => toggleKey(chatID, key)}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                        on ? 'bg-[#07c160] text-white border-[#07c160]' : 'bg-white border-gray-200 text-gray-600 hover:border-[#07c160] dk-card dk-border'
-                      }`}
-                    >
-                      {g.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-gray-500 mb-1">私聊联系人</div>
-              <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                {allContacts.map((c) => {
-                  const uname = c.username || '';
-                  const key = 'contact:' + uname;
-                  const on = selected.includes(key);
-                  if (!uname) return null;
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => toggleKey(chatID, key)}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                        on ? 'bg-[#07c160] text-white border-[#07c160]' : 'bg-white border-gray-200 text-gray-600 hover:border-[#07c160] dk-card dk-border'
-                      }`}
-                    >
-                      {c.remark || c.nickname || uname}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {chatKeys.map((chatID) => (
+        <FeishuGroupCard
+          key={chatID}
+          chatID={chatID}
+          chatName={chatNames[chatID] || chatID}
+          selected={drafts[chatID] ?? []}
+          dirty={dirtyKeys.has(chatID)}
+          allGroups={allGroups}
+          allContacts={allContacts}
+          memberships={memberships}
+          memberNameMap={memberNameMap}
+          groupLabel={groupLabel}
+          contactLabel={contactLabel}
+          labelForKey={labelForKey}
+          toggleKey={toggleKey}
+          save={save}
+        />
+      ))}
     </section>
+  );
+};
+
+interface FeishuGroupCardProps {
+  chatID: string;
+  chatName: string;
+  selected: string[];
+  dirty: boolean;
+  allGroups: GroupInfo[];
+  allContacts: ContactStats[];
+  memberships: Record<string, string[]>;
+  memberNameMap: Map<string, string>;
+  groupLabel: (id: string) => string;
+  contactLabel: (id: string) => string;
+  labelForKey: (key: string) => string;
+  toggleKey: (chatID: string, key: string) => void;
+  save: (chatID: string) => void;
+}
+
+const FeishuGroupCard: React.FC<FeishuGroupCardProps> = ({
+  chatID,
+  chatName,
+  selected,
+  dirty,
+  allGroups,
+  allContacts,
+  memberships,
+  memberNameMap,
+  groupLabel,
+  contactLabel,
+  labelForKey,
+  toggleKey,
+  save,
+}) => {
+  const [groupQuery, setGroupQuery] = useState('');
+  const [contactQuery, setContactQuery] = useState('');
+
+  // 筛选群聊：按群名或群友名匹配
+  const filteredGroups = useMemo(() => {
+    const q = groupQuery.trim().toLowerCase();
+    if (!q) return allGroups;
+    return allGroups.filter((g) => {
+      if (g.name.toLowerCase().includes(q)) return true;
+      // 检查群友名
+      const memberWxids = memberships[g.username] ?? [];
+      for (const wxid of memberWxids) {
+        const name = memberNameMap.get(wxid);
+        if (name && name.toLowerCase().includes(q)) return true;
+      }
+      return false;
+    });
+  }, [allGroups, groupQuery, memberships, memberNameMap]);
+
+  const filteredContacts = useMemo(() => {
+    const q = contactQuery.trim().toLowerCase();
+    if (!q) return allContacts;
+    return allContacts.filter((c) => {
+      const name = (c.remark || c.nickname || c.username || '').toLowerCase();
+      return name.includes(q);
+    });
+  }, [allContacts, contactQuery]);
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-6 mb-4 dk-card dk-border">
+      <div className="flex items-center gap-2 mb-2">
+        <h4 className="font-bold text-[#1d1d1f] dk-text">{chatName}</h4>
+        {dirty && (
+          <button
+            onClick={() => save(chatID)}
+            className="ml-auto text-xs font-semibold px-3 py-1.5 bg-[#07c160] text-white rounded-lg hover:bg-[#06ad56] transition-colors"
+          >
+            保存
+          </button>
+        )}
+      </div>
+
+      {/* 已选白名单 */}
+      <div className="min-h-[40px] flex flex-wrap gap-2 mb-3">
+        {selected.length === 0 && <span className="text-sm text-gray-400 self-center">未配置，默认放行全部</span>}
+        {selected.map((key) => (
+          <span key={key} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-[#07c160]/10 text-[#07c160]">
+            {labelForKey(key)}
+            <button onClick={() => toggleKey(chatID, key)} className="hover:text-red-500 transition-colors">
+              <X size={13} />
+            </button>
+          </span>
+        ))}
+      </div>
+
+      {/* 微信群聊 */}
+      <div className="mb-2">
+        <div className="text-xs font-semibold text-gray-500 mb-1">微信群聊</div>
+        <div className="relative mb-2">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={groupQuery}
+            onChange={(e) => setGroupQuery(e.target.value)}
+            placeholder="搜索群名或群友名…"
+            className="w-full text-sm pl-9 pr-3 py-2 rounded-lg border border-gray-200 focus:border-[#07c160] focus:outline-none dk-card dk-border"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+          {filteredGroups.map((g) => {
+            const key = 'group:' + g.username;
+            const on = selected.includes(key);
+            return (
+              <button
+                key={key}
+                onClick={() => toggleKey(chatID, key)}
+                className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                  on ? 'bg-[#07c160] text-white border-[#07c160]' : 'bg-white border-gray-200 text-gray-600 hover:border-[#07c160] dk-card dk-border'
+                }`}
+              >
+                {g.name}
+              </button>
+            );
+          })}
+          {filteredGroups.length === 0 && (
+            <span className="text-xs text-gray-400">无匹配群聊</span>
+          )}
+        </div>
+      </div>
+
+      {/* 私聊联系人 */}
+      <div>
+        <div className="text-xs font-semibold text-gray-500 mb-1">私聊联系人</div>
+        <div className="relative mb-2">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={contactQuery}
+            onChange={(e) => setContactQuery(e.target.value)}
+            placeholder="搜索联系人…"
+            className="w-full text-sm pl-9 pr-3 py-2 rounded-lg border border-gray-200 focus:border-[#07c160] focus:outline-none dk-card dk-border"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+          {filteredContacts.map((c) => {
+            const uname = c.username || '';
+            const key = 'contact:' + uname;
+            const on = selected.includes(key);
+            if (!uname) return null;
+            return (
+              <button
+                key={key}
+                onClick={() => toggleKey(chatID, key)}
+                className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                  on ? 'bg-[#07c160] text-white border-[#07c160]' : 'bg-white border-gray-200 text-gray-600 hover:border-[#07c160] dk-card dk-border'
+                }`}
+              >
+                {c.remark || c.nickname || uname}
+              </button>
+            );
+          })}
+          {filteredContacts.length === 0 && (
+            <span className="text-xs text-gray-400">无匹配联系人</span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };

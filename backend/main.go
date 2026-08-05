@@ -4285,6 +4285,12 @@ func serverMain() {
 			c.JSON(http.StatusOK, gin.H{"groups": getSvc().GetCommonGroupsForContacts(body.Usernames)})
 		})
 
+		// 获取全部群成员关系：group_username → [member_wxid, ...]
+		// 供前端在飞书群白名单设置中按群友名筛选群聊。
+		prot.GET("/contacts/room-memberships", func(c *gin.Context) {
+			c.JSON(http.StatusOK, getSvc().GetAllRoomMemberships())
+		})
+
 		// 获取联系人深度分析（小时/周/日历/深夜/红包/主动率）
 		prot.GET("/contacts/detail", func(c *gin.Context) {
 			uname := c.Query("username")

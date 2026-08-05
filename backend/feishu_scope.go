@@ -1,9 +1,13 @@
 package main
 
+import "strings"
+
 // applyFeishuScope 根据飞书群 chat_id 对应的白名单过滤 contact_key 集合。
 // 只做白名单：未配置该群的飞书群默认放行（兼容现状）。
-// 白名单同时包含群（group:xxx）和私聊（contact:xxx），一视同仁。
-// 命中白名单的 key 保留；不在白名单中的 key 从结果中剔除。
+// 群白名单（group:xxx）与私聊白名单（contact:xxx）互相独立：
+//   - 只配群白名单时，私聊默认全放行
+//   - 只配私聊白名单时，群聊默认全放行
+//   - 两者都配时，各自只放行白名单内的 key
 func applyFeishuScope(searchKeys []string, chatID string, prefs Preferences) []string {
 	if chatID == "" {
 		return searchKeys
@@ -12,15 +16,9 @@ func applyFeishuScope(searchKeys []string, chatID string, prefs Preferences) []s
 	if len(allowed) == 0 {
 		return searchKeys // 未配置 = 默认放行
 	}
-	allowSet := make(map[string]bool, len(allowed))
-	for _, k := range allowed {
-		if k != "" {
-			allowSet[k] = true
-		}
-	}
 	out := make([]string, 0, len(searchKeys))
 	for _, k := range searchKeys {
-		if allowSet[k] {
+		if isFeishuKeyAllowed(k, chatID, prefs) {
 			out = append(out, k)
 		}
 	}
@@ -29,6 +27,7 @@ func applyFeishuScope(searchKeys []string, chatID string, prefs Preferences) []s
 
 // isFeishuKeyAllowed 判断单个 contact_key 是否在当前飞书群白名单内。
 // 用于在全局共现检索等"不按 searchKeys"的路径上过滤命中项。
+// 群白名单与私聊白名单互相独立：某类别未配置白名单时该类别全放行。
 func isFeishuKeyAllowed(key, chatID string, prefs Preferences) bool {
 	if chatID == "" {
 		return true
@@ -37,10 +36,25 @@ func isFeishuKeyAllowed(key, chatID string, prefs Preferences) bool {
 	if len(allowed) == 0 {
 		return true
 	}
+	isGroupKey := strings.HasPrefix(key, "group:")
+	isContactKey := strings.HasPrefix(key, "contact:")
+	hasGroupWL, hasContactWL := false, false
 	for _, k := range allowed {
+		if strings.HasPrefix(k, "group:") {
+			hasGroupWL = true
+		} else if strings.HasPrefix(k, "contact:") {
+			hasContactWL = true
+		}
 		if k == key {
 			return true
 		}
+	}
+	// key 不在白名单内，但如果对应类别的白名单未配置，则默认放行
+	if isGroupKey && !hasGroupWL {
+		return true
+	}
+	if isContactKey && !hasContactWL {
+		return true
 	}
 	return false
 }
