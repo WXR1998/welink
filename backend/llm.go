@@ -670,6 +670,16 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	if cfg.model == "" {
 		return fmt.Errorf("未配置模型")
 	}
+	// 累计实际输出的字符数，用于在 provider 不返回 usage 时估算输出 token；
+	// 这样输出 token 会随每条回答的实际长短变化，而不是固定为 0。
+	outChars := 0
+	rawSend := send
+	send = func(chunk StreamChunk) {
+		if chunk.Delta != "" {
+			outChars += len(chunk.Delta)
+		}
+		rawSend(chunk)
+	}
 	// qwen3 等思考型模型在 Ollama CPU 上极慢，流式场景也禁用 thinking
 	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
 		cfg.noThink = true
@@ -847,7 +857,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 推送 token 使用信息：优先用 provider 返回的真实 usage，取不到再回退估算。
 	if usage.PromptTokens == 0 && usage.OutputTokens == 0 {
 		usage.PromptTokens = estimateMsgTokens(msgs)
-		usage.OutputTokens = 0
+		usage.OutputTokens = estimateTokens(strings.Repeat("x", outChars))
 	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.PromptTokens + usage.OutputTokens
