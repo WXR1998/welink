@@ -6,6 +6,8 @@ interface FeishuSession {
   key: string;
   chat_id?: string;
   user_id?: string;
+  chat_name?: string;
+  user_name?: string;
   created_at?: string;
   last_active: string;
   msg_count: number;
@@ -61,8 +63,14 @@ export const FeishuContextSection: React.FC = () => {
     return Number.isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false });
   };
 
-  const chatLabel = (s: FeishuSession) => (s.chat_id ? `群 ${s.chat_id}` : '单聊');
-  const userLabel = (s: FeishuSession) => (s.user_id ? `人 ${s.user_id}` : '未知用户');
+  const short = (v?: string) => {
+    if (!v) return '';
+    return v.length > 12 ? `${v.slice(0, 6)}…${v.slice(-4)}` : v;
+  };
+  const chatLabel = (s: FeishuSession) =>
+    s.chat_name ? `群 ${s.chat_name}` : s.chat_id ? `群 ${short(s.chat_id)}` : '单聊';
+  const userLabel = (s: FeishuSession) =>
+    s.user_name ? `人 ${s.user_name}` : s.user_id ? `人 ${short(s.user_id)}` : '未知用户';
 
   return (
     <section className="mb-8" data-section-id="feishu-context" data-settings-tags="飞书 上下文 会话 管理 feishu context session delete">

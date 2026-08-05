@@ -30,14 +30,17 @@ const (
 
 // bot 持有飞书通道与配置，并维护每个用户的独立会话。
 type bot struct {
-	cfg      *Config
-	client   *lark.Client
-	ch       types.Channel
-	store    *sessionStore
-	pending  *pendingStore
-	mu       sync.Mutex
-	sessions map[string]*session
-	announce *announcer
+	cfg         *Config
+	client      *lark.Client
+	ch          types.Channel
+	store       *sessionStore
+	pending     *pendingStore
+	mu          sync.Mutex
+	sessions    map[string]*session
+	announce    *announcer
+	chatNames   map[string]string            // chat_id -> 群名（管理端展示用，惰性填充）
+	memberNames map[string]map[string]string // chat_id -> (user_id -> 姓名)
+	nameCacheAt time.Time                    // 名字缓存刷新时间
 }
 
 // session 表示单个用户在单个群聊/单聊中的独立上下文。

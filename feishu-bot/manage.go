@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 // manageSession 是管理端点暴露的会话元数据（不含聊天正文，避免敏感内容外溢）。
@@ -14,6 +16,8 @@ type manageSession struct {
 	Key        string    `json:"key"`
 	ChatID     string    `json:"chat_id,omitempty"`
 	UserID     string    `json:"user_id,omitempty"`
+	ChatName   string    `json:"chat_name,omitempty"`
+	UserName   string    `json:"user_name,omitempty"`
 	CreatedAt  time.Time `json:"created_at,omitempty"`
 	LastActive time.Time `json:"last_active"`
 	MsgCount   int       `json:"msg_count"`
@@ -55,14 +59,25 @@ func (b *bot) startManageServer(ctx context.Context, addr string) func() {
 
 // listSessions 返回全部会话元数据（升序，配合前端展示）。
 func (b *bot) listSessions(w http.ResponseWriter, r *http.Request) {
+	b.ensureNames()
 	b.mu.Lock()
 	keys := make([]string, 0, len(b.sessions))
 	for k := range b.sessions {
 		keys = append(keys, k)
 	}
 	items := make([]manageSession, 0, len(keys))
+	needSave := false
 	for _, k := range keys {
 		s := b.sessions[k]
+		// 惰性清理：超过会话空闲 TTL 的上下文视为已过期，列出时直接清空并跳过。
+		if time.Since(s.lastActive) > sessionIdleTTL {
+			s.history = []llmMessage{}
+			s.createdAt = time.Now()
+			s.compressed = false
+			s.entities = nil
+			needSave = true
+			continue
+		}
 		chatID, userID := keyParts(k)
 		chars := 0
 		for _, m := range s.history {
@@ -72,10 +87,13 @@ func (b *bot) listSessions(w http.ResponseWriter, r *http.Request) {
 		if len(s.entities) > 0 {
 			entity = strings.Join(s.entities, "、")
 		}
+		chatName, userName := b.displayNameFromCache(chatID, userID)
 		items = append(items, manageSession{
 			Key:        k,
 			ChatID:     chatID,
 			UserID:     userID,
+			ChatName:   chatName,
+			UserName:   userName,
 			CreatedAt:  s.createdAt,
 			LastActive: s.lastActive,
 			MsgCount:   len(s.history),
@@ -83,6 +101,9 @@ func (b *bot) listSessions(w http.ResponseWriter, r *http.Request) {
 			Compressed: s.compressed,
 			Entity:     entity,
 		})
+	}
+	if needSave {
+		b.saveLocked()
 	}
 	b.mu.Unlock()
 	// 稳定排序：按最后活跃时间降序
@@ -141,4 +162,71 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// nameCacheTTL 控制群名/成员名的缓存刷新周期，避免管理端高频调用飞书 API。
+const nameCacheTTL = 5 * time.Minute
+
+// ensureNames 确保群名/成员名缓存可用；过期时在锁外刷新一次。
+func (b *bot) ensureNames() {
+	b.mu.Lock()
+	expired := b.nameCacheAt.IsZero() || time.Since(b.nameCacheAt) > nameCacheTTL
+	b.mu.Unlock()
+	if !expired {
+		return
+	}
+	b.refreshNames()
+}
+
+// refreshNames 在锁外拉取群名与成员名，完成后加锁写回缓存。
+func (b *bot) refreshNames() {
+	chatNames := b.enumerateChats()
+	memberNames := map[string]map[string]string{}
+	for chatID := range chatNames {
+		members := map[string]string{}
+		pageToken := ""
+		for {
+			req := larkim.NewGetChatMembersReqBuilder().
+				ChatId(chatID).
+				MemberIdType("open_id").
+				PageSize(100)
+			if pageToken != "" {
+				req.PageToken(pageToken)
+			}
+			ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			resp, err := b.client.Im.V1.ChatMembers.Get(ctxT, req.Build())
+			cancel()
+			if err != nil || !resp.Success() {
+				log.Printf("[manage] 获取群 %s 成员失败: err=%v code=%d msg=%s", chatID, err, resp.Code, resp.Msg)
+				break
+			}
+			for _, m := range resp.Data.Items {
+				if m.MemberId == nil || m.Name == nil {
+					continue
+				}
+				members[*m.MemberId] = *m.Name
+			}
+			if resp.Data.HasMore == nil || !*resp.Data.HasMore || resp.Data.PageToken == nil || *resp.Data.PageToken == "" {
+				break
+			}
+			pageToken = *resp.Data.PageToken
+		}
+		memberNames[chatID] = members
+	}
+	b.mu.Lock()
+	b.chatNames = chatNames
+	b.memberNames = memberNames
+	b.nameCacheAt = time.Now()
+	b.mu.Unlock()
+}
+
+// displayNameFromCache 从缓存读取群名与成员名。调用方须持有 b.mu。
+func (b *bot) displayNameFromCache(chatID, userID string) (chatName, userName string) {
+	if chatID != "" {
+		chatName = b.chatNames[chatID]
+		if userID != "" && b.memberNames[chatID] != nil {
+			userName = b.memberNames[chatID][userID]
+		}
+	}
+	return chatName, userName
 }
