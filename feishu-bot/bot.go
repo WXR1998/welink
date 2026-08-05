@@ -748,7 +748,8 @@ func cardJSONFinal(title, meta, text string) string {
 	return cardJSON(title, text, "")
 }
 
-// contextMetaLine 生成回答卡片上的上下文统计行：首条消息时间 + 本次 token 用量。
+// contextMetaLine 生成回答卡片上的一行小字灰色元信息：当前会话开始时间。
+// 用 Markdown 引用块渲染，飞书会把该行弱化为偏小偏灰的注释；不展示 token 统计。
 func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
 	b.mu.Lock()
 	s := b.sessions[key]
@@ -758,21 +759,11 @@ func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
 	}
 	b.mu.Unlock()
 
-	var parts []string
-	if !createdAt.IsZero() {
-		// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
-		parts = append(parts, "上下文始于 "+createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04"))
-	}
-	if usage != nil && (usage.TotalTokens > 0 || usage.PromptTokens > 0 || usage.OutputTokens > 0) {
-		parts = append(parts, fmt.Sprintf("本次 token %d（输入 %d / 输出 %d）", usage.TotalTokens, usage.PromptTokens, usage.OutputTokens))
-		if usage.CachedTokens > 0 {
-			parts = append(parts, fmt.Sprintf("缓存命中 %d", usage.CachedTokens))
-		}
-	}
-	if len(parts) == 0 {
+	if createdAt.IsZero() {
 		return ""
 	}
-	return strings.Join(parts, " · ")
+	// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
+	return "> 上下文始于 " + createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04")
 }
 
 // cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染

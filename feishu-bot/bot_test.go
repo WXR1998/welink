@@ -146,18 +146,17 @@ func TestNotifyMentionPrefix(t *testing.T) {
 
 func TestContextMetaLine(t *testing.T) {
 	created := time.Date(2026, 8, 5, 10, 0, 0, 0, time.Local)
-	usage := &analyzeUsage{PromptTokens: 200, OutputTokens: 30, TotalTokens: 230, CachedTokens: 120}
 	b := &bot{sessions: map[string]*session{
 		"group:oc_abc:ou_def": {createdAt: created},
 	}}
-	line := b.contextMetaLine("group:oc_abc:ou_def", usage)
-	if !strings.Contains(line, "上下文始于") || !strings.Contains(line, "本次 token 230") || !strings.Contains(line, "缓存命中 120") {
+	line := b.contextMetaLine("group:oc_abc:ou_def", nil)
+	if !strings.HasPrefix(line, "> 上下文始于") || strings.Contains(line, "token") {
 		t.Fatalf("unexpected meta line: %q", line)
 	}
-	// 无 usage
+	// 无 createdAt → 空行
 	line2 := b.contextMetaLine("group:oc_abc:ou_def", nil)
-	if !strings.Contains(line2, "上下文始于") || strings.Contains(line2, "token") {
-		t.Fatalf("unexpected meta line without usage: %q", line2)
+	if line2 == "" {
+		t.Fatalf("createdAt set should produce meta line")
 	}
 }
 
@@ -170,5 +169,8 @@ func TestContextMetaLine_ShowsUTC8(t *testing.T) {
 	line := b.contextMetaLine("group:oc_abc:ou_def", nil)
 	if !strings.Contains(line, "上下文始于 08-05 18:00") {
 		t.Fatalf("expected UTC+8 time, got: %q", line)
+	}
+	if !strings.HasPrefix(line, "> ") {
+		t.Fatalf("expected blockquote prefix, got: %q", line)
 	}
 }
