@@ -35,8 +35,8 @@ export const FeishuScopeSection: React.FC<{
       .catch(() => {});
   }, []);
 
-  // 合并：上报的飞书群 + 已配置白名单的 chat_id（去重保序）
-  const chatKeys = Array.from(new Set([...Object.keys(scope), ...Object.keys(drafts)]));
+  // 合并：上报的飞书群(chatNames) + 已配置白名单的 chat_id（去重保序）
+  const chatKeys = Array.from(new Set([...Object.keys(chatNames), ...Object.keys(scope), ...Object.keys(drafts)]));
 
   const groupLabel = (id: string): string => {
     const g = allGroups.find((x) => x.username === id);
