@@ -169,7 +169,7 @@ func (a *announcer) tick(ctx context.Context) {
 
 // update 以当前连接状态对指定批次群重写公告（先清空再重建）。
 func (a *announcer) update(ctx context.Context, chatIDs []string, connected bool) error {
-	blocks := buildAnnouncementBlocks(connected, time.Now())
+	blocks := buildAnnouncementBlocks(connected, cnNow())
 	var firstErr error
 	for _, chatID := range chatIDs {
 		if err := a.replaceAnnouncement(ctx, chatID, blocks); err != nil {

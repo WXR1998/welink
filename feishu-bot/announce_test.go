@@ -57,4 +57,10 @@ func TestCnNowAtEast8(t *testing.T) {
 	if _, off := now.Zone(); off != 8*3600 {
 		t.Fatalf("expected UTC+8 offset, got %d", off)
 	}
+	base := time.Now().Truncate(time.Minute)
+	cn := base.In(cnLocation)
+	utc := base.In(time.UTC)
+	if cn.Format("2006-01-02 15:04") != utc.Add(8*time.Hour).Format("2006-01-02 15:04") {
+		t.Fatalf("expected +8h vs UTC, cn=%s utc=%s", cn.Format("15:04"), utc.Format("15:04"))
+	}
 }
