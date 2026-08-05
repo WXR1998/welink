@@ -9,6 +9,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkdocx "github.com/larksuite/oapi-sdk-go/v3/service/docx/v1"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 // docx 块类型枚举（见飞书 docx/v1 BlockType）
@@ -20,7 +21,8 @@ const (
 	docxBlockDivider  = 22
 )
 
-// announcer 维护目标群公告：启动时写入“已重启完成”，心跳检测后台连接状态。
+// announcer 维护机器人所在各群公告：启动时写入“已重启完成”，心跳检测后台连接状态。
+// 群列表自动发现（调飞书 im/v1 chat/list），并在状态变化时对每个群更新公告。
 type announcer struct {
 	cfg    *Config
 	client *lark.Client
@@ -38,25 +40,72 @@ func newAnnouncer(cfg *Config, client *lark.Client) *announcer {
 	return &announcer{cfg: cfg, client: client, connected: true}
 }
 
-// startup 开机时更新公告为“已重启完成”，并记录启动时间与初始连接状态。
+// chatIDs 返回机器人所在的所有群 chat_id。
+// 若配置了 ANNOUNCE_CHAT_ID（逗号分隔），则只维护这些群；否则自动发现全部群。
+func (a *announcer) chatIDs(ctx context.Context) []string {
+	if a.client == nil {
+		return nil
+	}
+	if a.cfg.AnnounceChatID != "" {
+		return splitList(a.cfg.AnnounceChatID)
+	}
+	var ids []string
+	pageToken := ""
+	for {
+		req := larkim.NewListChatReqBuilder().
+			PageSize(100).
+			SortType("ByCreateTimeAsc")
+		if pageToken != "" {
+			req.PageToken(pageToken)
+		}
+		ctxT, cancel := context.WithTimeout(ctx, 20*time.Second)
+		resp, err := a.client.Im.V1.Chat.List(ctxT, req.Build())
+		cancel()
+		if err != nil {
+			log.Printf("[announce] 获取群列表失败: %v", err)
+			return ids
+		}
+		if !resp.Success() {
+			log.Printf("[announce] 获取群列表失败: code=%d msg=%s", resp.Code, resp.Msg)
+			return ids
+		}
+		for _, c := range resp.Data.Items {
+			if c.ChatId != nil && *c.ChatId != "" {
+				ids = append(ids, *c.ChatId)
+			}
+		}
+		if resp.Data.HasMore == nil || !*resp.Data.HasMore || resp.Data.PageToken == nil || *resp.Data.PageToken == "" {
+			break
+		}
+		pageToken = *resp.Data.PageToken
+	}
+	return ids
+}
+
+// startup 开机时为每个群更新公告为“已重启完成”，并记录启动时间与初始连接状态。
 func (a *announcer) startup(ctx context.Context, connected bool) {
-	if a == nil || a.cfg == nil || a.cfg.AnnounceChatID == "" || a.client == nil {
+	if a == nil || a.cfg == nil || a.client == nil {
 		return
 	}
 	a.mu.Lock()
 	a.started = true
 	a.connected = connected
 	a.mu.Unlock()
-	if err := a.update(ctx, connected); err != nil {
+	ids := a.chatIDs(ctx)
+	if len(ids) == 0 {
+		log.Printf("[announce] 没有发现需要维护公告的群")
+		return
+	}
+	if err := a.update(ctx, ids, connected); err != nil {
 		log.Printf("[announce] 启动更新公告失败: %v", err)
 	} else {
-		log.Printf("[announce] 群公告已更新（已重启完成）")
+		log.Printf("[announce] 群公告已更新（已重启完成），共 %d 个群", len(ids))
 	}
 }
 
-// runHeartbeat 周期检测后台连接状态，按状态变化更新公告。
+// runHeartbeat 周期检测后台连接状态，按状态变化更新所有群公告。
 func (a *announcer) runHeartbeat(ctx context.Context) {
-	if a == nil || a.cfg == nil || a.cfg.AnnounceChatID == "" || a.cfg.HeartbeatInterval <= 0 {
+	if a == nil || a.cfg == nil || a.cfg.HeartbeatInterval <= 0 {
 		return
 	}
 	ticker := time.NewTicker(a.cfg.HeartbeatInterval)
@@ -93,7 +142,11 @@ func (a *announcer) tick(ctx context.Context) {
 	a.mu.Unlock()
 
 	if shouldSend {
-		if err := a.update(ctx, up); err != nil {
+		ids := a.chatIDs(ctx)
+		if len(ids) == 0 {
+			return
+		}
+		if err := a.update(ctx, ids, up); err != nil {
 			log.Printf("[announce] 更新公告失败: %v", err)
 			return
 		}
@@ -105,21 +158,24 @@ func (a *announcer) tick(ctx context.Context) {
 	}
 }
 
-// update 以当前连接状态重写群公告（先清空再重建）。
-func (a *announcer) update(ctx context.Context, connected bool) error {
-	if a.cfg.AnnounceChatID == "" || a.client == nil {
-		return nil
-	}
+// update 以当前连接状态对指定批次群重写公告（先清空再重建）。
+func (a *announcer) update(ctx context.Context, chatIDs []string, connected bool) error {
 	blocks := buildAnnouncementBlocks(connected, time.Now())
-	if err := a.replaceAnnouncement(ctx, blocks); err != nil {
-		return err
+	var firstErr error
+	for _, chatID := range chatIDs {
+		if err := a.replaceAnnouncement(ctx, chatID, blocks); err != nil {
+			log.Printf("[announce] 更新群 %s 公告失败: %v", chatID, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
 	}
-	return nil
+	return firstErr
 }
 
-// replaceAnnouncement 先删除根块下所有子块，再创建新的公告块。
-func (a *announcer) replaceAnnouncement(ctx context.Context, blocks []*larkdocx.Block) error {
-	chatID := a.cfg.AnnounceChatID
+// replaceAnnouncement 在指定群先删除根块下所有子块，再创建新的公告块。
+func (a *announcer) replaceAnnouncement(ctx context.Context, chatID string, blocks []*larkdocx.Block) error {
 	rootID := chatID // 页面根块 block_id 即为 chat_id
 
 	// 1. 列出根块的子块数量

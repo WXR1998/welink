@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -82,13 +86,12 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 	})
 	b.recoverPending(ctx)
 
-	// 群公告 + 心跳：启动时写入“已重启完成”，并周期性检测后台连接
-	if cfg.AnnounceChatID != "" {
-		b.announce = newAnnouncer(cfg, client)
-		up := b.backendStatus(ctx)
-		b.announce.startup(ctx, up)
-		go b.announce.runHeartbeat(ctx)
-	}
+	// 群公告 + 心跳：启动时为 bot 所在各群写入“已重启完成”，并周期性检测后台连接。
+	// ANNOUNCE_CHAT_ID 可指定要维护的群（逗号分隔）；留空则自动发现 bot 所在全部群。
+	b.announce = newAnnouncer(cfg, client)
+	up := b.backendStatus(ctx)
+	b.announce.startup(ctx, up)
+	go b.announce.runHeartbeat(ctx)
 
 	return b, nil
 }
@@ -101,7 +104,68 @@ func (b *bot) backendStatus(ctx context.Context) bool {
 // run 启动飞书长连接（阻塞直到退出）。
 func (b *bot) run(ctx context.Context) error {
 	log.Printf("[bot] 正在启动飞书长连接，app_id=%s", b.cfg.FeishuAppID)
+	go b.syncFeishuChats(ctx)
 	return b.ch.Start(ctx)
+}
+
+// syncFeishuChats 枚举 bot 所在的所有飞书群（chat_id -> 群名），
+// 上报给 WeLink 后端，供前端为每个飞书群配置白名单。
+// 非阻塞：失败仅打日志，不影响主流程。
+func (b *bot) syncFeishuChats(ctx context.Context) {
+	if b.client == nil {
+		return
+	}
+	ctxT, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	chats := map[string]string{}
+	iter, err := b.client.Im.V1.Chat.ListByIterator(ctxT, larkim.NewListChatReqBuilder().PageSize(100).Build())
+	if err != nil {
+		log.Printf("[bot] 枚举飞书群列表失败: %v", err)
+		return
+	}
+	for {
+		ok, item, err := iter.Next()
+		if err != nil {
+			log.Printf("[bot] 读取飞书群列表分页失败: %v", err)
+			break
+		}
+		if !ok || item == nil || item.ChatId == nil {
+			break
+		}
+		name := ""
+		if item.Name != nil {
+			name = *item.Name
+		}
+		chats[*item.ChatId] = name
+	}
+	if len(chats) == 0 {
+		log.Printf("[bot] 未枚举到任何飞书群")
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]any{"chats": chats})
+	req, err := http.NewRequestWithContext(ctxT, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("[bot] 构造飞书群列表上报请求失败: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if b.cfg.WeLinkToken != "" {
+		req.Header.Set("Authorization", "Bearer "+b.cfg.WeLinkToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[bot] 上报飞书群列表失败: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[bot] 上报飞书群列表失败: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return
+	}
+	log.Printf("[bot] 已上报 %d 个飞书群到 WeLink 后端", len(chats))
 }
 
 // handleMessage 收到消息后异步处理，避免阻塞飞书 3 秒事件约束。
@@ -177,6 +241,20 @@ func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, questio
 	b.processCard(ctx, msg, question, sessionKey)
 }
 
+// chatIDFromSession 从 session key 中提取飞书群 chat_id。
+// 群聊 session key 格式为 group:<chatID>:<senderID>；单聊没有群 chat_id。
+func chatIDFromSession(sessionKey string) string {
+	if !strings.HasPrefix(sessionKey, "group:") {
+		return ""
+	}
+	rest := strings.TrimPrefix(sessionKey, "group:")
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) < 1 {
+		return ""
+	}
+	return parts[0]
+}
+
 // processCard 用卡片流式回答，回复时引用用户的原始提问。
 // 先发送初始卡片并登记 pending（便于崩溃后回滚），回答完成后移除登记。
 func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
@@ -203,7 +281,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	// lastPct 记录上次渲染的百分比，保证进度条只增不减
 	// （total 动态增长时 current/total 可能下降，这里在渲染层强制单调）。
 	lastPct := -1
-	answer, errMsg := b.answer(ctx, sessionKey, question, func(stage string, current, total int) {
+	answer, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage string, current, total int) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
 		if stage == "search" {
@@ -365,7 +443,7 @@ func (b *bot) dropSession(key string) {
 }
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
-func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgress func(stage string, current, total int)) (string, string) {
+func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage string, current, total int)) (string, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
@@ -376,7 +454,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgres
 	tracker := newProgressTracker()
 
 	// 1. memory-search 跨联系人检索（进度回调打印日志 + 驱动卡片进度；无实体则中止）
-	data, err := memorySearch(ctx, b.cfg, question, convKey, hasPriorEntity,
+	data, err := memorySearch(ctx, b.cfg, question, convKey, chatID, hasPriorEntity,
 		func(step, detail string) {
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
 			if onProgress != nil {
@@ -428,7 +506,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, question string, onProgres
 	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）
-	answer, err := analyzeQuestion(ctx, b.cfg, question, convKey, history, dataContext)
+	answer, err := analyzeQuestion(ctx, b.cfg, chatID, question, convKey, history, dataContext)
 	if err != nil {
 		return "", "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}

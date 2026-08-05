@@ -36,7 +36,7 @@ type Config struct {
 	// LLM 模型名称（覆盖后端 profile 中的模型）
 	LLMModel string
 
-	// 用于维护群公告的目标群 chat_id；为空则不维护公告
+	// 需要维护群公告的群 chat_id（逗号分隔）；留空则自动发现 bot 所在全部群
 	AnnounceChatID string
 
 	// 心跳检测间隔与断连公告限频（默认见 loadConfig）

@@ -24,7 +24,7 @@ func TestAnalyzeQuestion_AccumulatesSSE(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL, WeLinkToken: "tok"}
-	answer, err := analyzeQuestion(context.Background(), cfg, "你好", "feishu:p2p:u", nil, "")
+	answer, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestAnalyzeQuestion_PropagatesError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, err := analyzeQuestion(context.Background(), cfg, "你好", "feishu:p2p:u", nil, "")
+	_, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "生成失败") {
 		t.Fatalf("expected error, got %v", err)
 	}
@@ -61,7 +61,7 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	var steps []string
-	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", false,
+	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", "", false,
 		func(step, detail string) {
 			steps = append(steps, step)
 		},
@@ -88,7 +88,7 @@ func TestMemorySearch_AbortsOnEntityNotFound(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", false,
+	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
 		func(step, detail string) {},
 		func(names []string) {},
 	)
@@ -108,7 +108,7 @@ func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", false,
+	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
 		func(step, detail string) {},
 		func(names []string) {},
 	)

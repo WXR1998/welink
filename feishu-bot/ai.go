@@ -100,6 +100,7 @@ type memorySearchRequest struct {
 	ProfileID       string `json:"profile_id"`
 	ConversationKey string `json:"conversation_key"`
 	Model           string `json:"model,omitempty"`
+	ChatID          string `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
 // analyzeRequest 对应 POST /api/ai/analyze（cross-contact 模式）。
@@ -112,6 +113,7 @@ type analyzeRequest struct {
 	Query           string       `json:"query"`
 	ConversationKey string       `json:"conversation_key"`
 	Model           string       `json:"model,omitempty"`
+	ChatID          string       `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
 // analyzeChunk 解析后端 /api/ai/analyze 的 SSE data 帧。
@@ -213,12 +215,13 @@ var errEntityNotFound = fmt.Errorf("问题中指定的联系人/群名未在数�
 // memorySearch 调用 POST /api/ai/memory-search，返回检索结果与过程。
 // hasPriorEntity 表示会话历史里是否已有明确实体（追问时可放行无实体问题）。
 // onResolveEntities 在收到 resolve_entities 进度时回调，可在无实体时主动中止。
-func memorySearch(ctx context.Context, cfg *Config, query, convKey string, hasPriorEntity bool, cb func(step, detail string), onResolveEntities func(names []string)) (*memorySearchData, error) {
+func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, hasPriorEntity bool, cb func(step, detail string), onResolveEntities func(names []string)) (*memorySearchData, error) {
 	payload, _ := json.Marshal(memorySearchRequest{
 		Query:           query,
 		ProfileID:       cfg.DefaultProfileID,
 		ConversationKey: convKey,
 		Model:           cfg.LLMModel,
+		ChatID:          chatID,
 	})
 
 	var result *memorySearchData
@@ -373,7 +376,7 @@ func buildDataContext(d *memorySearchData) string {
 }
 
 // analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
-func analyzeQuestion(ctx context.Context, cfg *Config, query, convKey string, history []llmMessage, dataContext string) (string, error) {
+func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string) (string, error) {
 	var sys strings.Builder
 	sys.WriteString("你是 WeLink 的跨联系人 AI 助手，根据检索到的聊天记录回答用户问题。\n")
 	sys.WriteString("要求：用中文回答，简洁清晰；直接回答问题；数据不足时诚实说明；使用 Markdown 排版。\n")
@@ -405,6 +408,7 @@ func analyzeQuestion(ctx context.Context, cfg *Config, query, convKey string, hi
 		Query:           query,
 		ConversationKey: convKey,
 		Model:           cfg.LLMModel,
+		ChatID:          chatID,
 	})
 
 	var answer strings.Builder
