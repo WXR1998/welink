@@ -116,46 +116,63 @@ func (b *bot) syncFeishuChats() {
 	if b.client == nil {
 		return
 	}
-	// 先等 WS 建立、tenant token 就绪，再枚举（失败重试几次）
+	// 等 WS 建立、tenant token 就绪后枚举（失败重试几次）
 	for attempt := 1; attempt <= 5; attempt++ {
-		ctxT, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		chats := map[string]string{}
-		iter, err := b.client.Im.V1.Chat.ListByIterator(ctxT, larkim.NewListChatReqBuilder().PageSize(100).Build())
-		if err == nil {
-			for {
-				ok, item, err := iter.Next()
-				if err != nil {
-					log.Printf("[bot] 读取飞书群列表分页失败: %v", err)
-					break
-				}
-				if !ok || item == nil || item.ChatId == nil {
-					break
-				}
-				name := ""
-				if item.Name != nil {
-					name = *item.Name
-				}
-				chats[*item.ChatId] = name
-			}
-		} else {
-			log.Printf("[bot] 枚举飞书群列表失败(第%d次): %v", attempt, err)
-		}
-
+		chats := b.enumerateChats()
 		if len(chats) > 0 {
-			cancel()
-			b.reportFeishuChats(ctxT, chats)
+			b.reportFeishuChats(chats)
 			return
 		}
-		cancel()
 		time.Sleep(5 * time.Second)
 	}
 	log.Printf("[bot] 多次尝试后仍未枚举到飞书群")
 }
 
+// enumerateChats 用 Chat.List 单页列出 bot 所在群（chat_id -> 群名），
+// 每页独立超时，按 HasMore 分页。复用公告功能的稳定实现模式。
+func (b *bot) enumerateChats() map[string]string {
+	chats := map[string]string{}
+	pageToken := ""
+	for {
+		req := larkim.NewListChatReqBuilder().PageSize(100).SortType("ByCreateTimeAsc")
+		if pageToken != "" {
+			req.PageToken(pageToken)
+		}
+		ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		resp, err := b.client.Im.V1.Chat.List(ctxT, req.Build())
+		cancel()
+		if err != nil {
+			log.Printf("[bot] 枚举飞书群列表失败: %v", err)
+			return chats
+		}
+		if !resp.Success() {
+			log.Printf("[bot] 枚举飞书群列表失败: code=%d msg=%s", resp.Code, resp.Msg)
+			return chats
+		}
+		for _, ch := range resp.Data.Items {
+			if ch.ChatId == nil || *ch.ChatId == "" {
+				continue
+			}
+			name := ""
+			if ch.Name != nil {
+				name = *ch.Name
+			}
+			chats[*ch.ChatId] = name
+		}
+		if resp.Data.HasMore == nil || !*resp.Data.HasMore || resp.Data.PageToken == nil || *resp.Data.PageToken == "" {
+			break
+		}
+		pageToken = *resp.Data.PageToken
+	}
+	return chats
+}
+
 // reportFeishuChats 把枚举到的飞书群列表上报给 WeLink 后端。
-func (b *bot) reportFeishuChats(ctx context.Context, chats map[string]string) {
+func (b *bot) reportFeishuChats(chats map[string]string) {
+	ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	payload, _ := json.Marshal(map[string]any{"chats": chats})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctxT, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("[bot] 构造飞书群列表上报请求失败: %v", err)
 		return
