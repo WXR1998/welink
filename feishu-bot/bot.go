@@ -116,16 +116,20 @@ func (b *bot) syncFeishuChats() {
 	if b.client == nil {
 		return
 	}
-	// 等 WS 建立、tenant token 就绪后枚举（失败重试几次）
-	for attempt := 1; attempt <= 5; attempt++ {
+	// 等 WS 建立、tenant token 就绪后枚举并上报（任一步失败都重试几次）
+	for attempt := 1; attempt <= 6; attempt++ {
 		chats := b.enumerateChats()
 		if len(chats) > 0 {
-			b.reportFeishuChats(chats)
-			return
+			if b.reportFeishuChats(chats) {
+				return
+			}
+			log.Printf("[bot] 上报飞书群列表失败，稍后重试 (第%d次)", attempt)
+		} else {
+			log.Printf("[bot] 本次未枚举到飞书群，稍后重试 (第%d次)", attempt)
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(8 * time.Second)
 	}
-	log.Printf("[bot] 多次尝试后仍未枚举到飞书群")
+	log.Printf("[bot] 多次尝试后仍未成功上报飞书群列表")
 }
 
 // enumerateChats 用 Chat.List 单页列出 bot 所在群（chat_id -> 群名），
@@ -167,15 +171,15 @@ func (b *bot) enumerateChats() map[string]string {
 	return chats
 }
 
-// reportFeishuChats 把枚举到的飞书群列表上报给 WeLink 后端。
-func (b *bot) reportFeishuChats(chats map[string]string) {
+// reportFeishuChats 把枚举到的飞书群列表上报给 WeLink 后端。成功返回 true。
+func (b *bot) reportFeishuChats(chats map[string]string) bool {
 	ctxT, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	payload, _ := json.Marshal(map[string]any{"chats": chats})
 	req, err := http.NewRequestWithContext(ctxT, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("[bot] 构造飞书群列表上报请求失败: %v", err)
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if b.cfg.WeLinkToken != "" {
@@ -184,15 +188,16 @@ func (b *bot) reportFeishuChats(chats map[string]string) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("[bot] 上报飞书群列表失败: %v", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("[bot] 上报飞书群列表失败: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		return
+		return false
 	}
 	log.Printf("[bot] 已上报 %d 个飞书群到 WeLink 后端", len(chats))
+	return true
 }
 
 // handleMessage 收到消息后异步处理，避免阻塞飞书 3 秒事件约束。
