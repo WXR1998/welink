@@ -789,8 +789,9 @@ func cardJSON(title, text, progress string) string {
 	return fmt.Sprintf(`{"schema":"2.0","config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":%q}},"body":{"elements":[%s]}}`, title, elem)
 }
 
-// progressBar 返回一个 n/5 格的 emoji 进度条行。
-// maxProgressCells 限制进度条格数，避免在消息框内被换行成两行。
+// progressBar 返回一个固定格数的等宽进度条行。
+// 进度条用几何块字符 █/░（跨平台等宽、不会被替换成 emoji），
+// 百分比数字包在反引号里由飞书卡片按等宽字体渲染，跳动时宽度不变。
 const maxProgressCells = 10
 
 func progressBar(current, total int) string {
@@ -815,5 +816,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("**%d%%** %s%s", pct, strings.Repeat("🟩", filled), strings.Repeat("⬜", empty))
+	return fmt.Sprintf("`%d%%` %s%s", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
 }

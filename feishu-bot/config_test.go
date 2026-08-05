@@ -50,7 +50,7 @@ func TestCardJSONWithProgress(t *testing.T) {
 	if !strings.Contains(card, `"🔎 正在检索"`) || !strings.Contains(card, `"正文"`) {
 		t.Fatalf("card missing title/body: %s", card)
 	}
-	if !strings.Contains(card, "60%") || !strings.Contains(card, "🟩🟩🟩") {
+	if !strings.Contains(card, "`60%`") || !strings.Contains(card, "███") {
 		t.Fatalf("progress bar missing: %s", card)
 	}
 	if !strings.Contains(card, `"lark_md"`) && !strings.Contains(card, `"markdown"`) {
@@ -59,10 +59,10 @@ func TestCardJSONWithProgress(t *testing.T) {
 }
 
 func TestProgressBar(t *testing.T) {
-	if got := progressBar(0, 5); strings.Contains(got, "🟩") {
+	if got := progressBar(0, 5); strings.Contains(got, "█") {
 		t.Fatalf("0 progress should have no filled: %s", got)
 	}
-	if got := progressBar(5, 5); strings.Contains(got, "⬜") {
+	if got := progressBar(5, 5); strings.Contains(got, "░") {
 		t.Fatalf("100%% progress should have no empty: %s", got)
 	}
 	if got := progressBar(7, 5); got != progressBar(5, 5) {
@@ -73,29 +73,28 @@ func TestProgressBar(t *testing.T) {
 func TestProgressBarCellCap(t *testing.T) {
 	// 无论 total 大小，格子数始终固定为 maxProgressCells，按百分比涂色。
 	got := progressBar(10, 100) // 10%
-	if strings.Count(got, "🟩")+strings.Count(got, "⬜") != maxProgressCells {
+	if strings.Count(got, "█")+strings.Count(got, "░") != maxProgressCells {
 		t.Fatalf("cell count should always be %d: %s", maxProgressCells, got)
 	}
 	expect := maxProgressCells / 10
-	if c := strings.Count(got, "🟩"); c != expect {
+	if c := strings.Count(got, "█"); c != expect {
 		t.Fatalf("10%% should fill %d of %d cells, got %d: %s", expect, maxProgressCells, c, got)
 	}
 	// 小 total 时格子数不变，不因 N/M 学习而变化
 	small := progressBar(2, 5) // 40%
-	if strings.Count(small, "🟩")+strings.Count(small, "⬜") != maxProgressCells {
+	if strings.Count(small, "█")+strings.Count(small, "░") != maxProgressCells {
 		t.Fatalf("small totals still use %d cells: %s", maxProgressCells, small)
 	}
 	expect = maxProgressCells * 40 / 100
-	if c := strings.Count(small, "🟩"); c != expect {
+	if c := strings.Count(small, "█"); c != expect {
 		t.Fatalf("40%% should fill %d of %d, got %d: %s", expect, maxProgressCells, c, small)
 	}
 	// 25%（50/200）按百分比填格
 	expect = maxProgressCells * 25 / 100
-	if c := strings.Count(progressBar(50, 200), "🟩"); c != expect {
+	if c := strings.Count(progressBar(50, 200), "█"); c != expect {
 		t.Fatalf("25%% should fill %d of %d, got %d", expect, maxProgressCells, c)
 	}
 }
-
 
 func TestLoadConfig_LLMModelDefault(t *testing.T) {
 	os.Setenv("FEISHU_APP_ID", "cli_x")
