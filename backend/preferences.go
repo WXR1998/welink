@@ -195,6 +195,9 @@ type Preferences struct {
 	// 飞书 bot 枚举到的群列表（chat_id -> 群名），供前端下拉展示。
 	FeishuBotChats map[string]string `json:"feishu_bot_chats,omitempty"` // chat_id -> chat name
 
+	// 飞书 bot：每个飞书群（chat_id）补充给 AI 的提示信息，注入到 system prompt。
+	FeishuGroupPrompts map[string]string `json:"feishu_group_prompts,omitempty"` // chat_id -> prompt text
+
 	// 屏幕锁定（纯前端覆盖层，微信 PC Cmd+L 同思路）
 	// PIN 用 bcrypt 哈希（salt 内嵌），由后端 /api/lock/* 负责验证
 	LockPinHash     string `json:"lock_pin_hash,omitempty"`

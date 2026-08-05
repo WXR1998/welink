@@ -86,3 +86,23 @@ func filterVecMessagesByScope(hits []VecMessageHit, chatID string, prefs Prefere
 	}
 	return out
 }
+
+// injectFeishuGroupPrompt 把 chat_id 对应的群补充提示追加到 system prompt。
+// 返回注入后的 messages；未配置或提示为空时原样返回。
+func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences) []LLMMessage {
+	if chatID == "" {
+		return msgs
+	}
+	prompt := strings.TrimSpace(prefs.FeishuGroupPrompts[chatID])
+	if prompt == "" {
+		return msgs
+	}
+	injected := "\n\n【本群补充提示】\n" + prompt + "\n"
+	for i := range msgs {
+		if msgs[i].Role == "system" {
+			msgs[i].Content += injected
+			return msgs
+		}
+	}
+	return append(msgs, LLMMessage{Role: "system", Content: injected})
+}

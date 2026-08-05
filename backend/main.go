@@ -1070,9 +1070,13 @@ func serverMain() {
 		if p.FeishuBotChats == nil {
 			p.FeishuBotChats = map[string]string{}
 		}
+		if p.FeishuGroupPrompts == nil {
+			p.FeishuGroupPrompts = map[string]string{}
+		}
 		c.JSON(http.StatusOK, gin.H{
-			"feishu_group_scope": p.FeishuGroupScope,
-			"feishu_bot_chats":   p.FeishuBotChats,
+			"feishu_group_scope":   p.FeishuGroupScope,
+			"feishu_bot_chats":     p.FeishuBotChats,
+			"feishu_group_prompts": p.FeishuGroupPrompts,
 		})
 	})
 
@@ -1094,6 +1098,26 @@ func serverMain() {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"feishu_group_scope": existing.FeishuGroupScope})
+	})
+
+	// 飞书 bot：每个飞书群（chat_id）补充给 AI 的提示信息。
+	// GET 随 feishu-scope 一起返回；PUT 只更新提示信息，保留其他配置。
+	api.PUT("/preferences/feishu-group-prompts", func(c *gin.Context) {
+		var body struct {
+			FeishuGroupPrompts map[string]string `json:"feishu_group_prompts"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.FeishuGroupPrompts == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+			return
+		}
+		existing := loadPreferences()
+		existing.FeishuGroupPrompts = body.FeishuGroupPrompts
+		if err := savePreferences(existing); err != nil {
+			log.Printf("[PREFS] 保存飞书群补充提示失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"feishu_group_prompts": existing.FeishuGroupPrompts})
 	})
 
 	// 飞书 bot 上报自己加入的群列表（chat_id -> 群名），供前端配置白名单用。
@@ -1754,7 +1778,8 @@ func serverMain() {
 			Query            string       `json:"query"`             // 当前用户问题（用于找原文/选择候选）
 			ConversationKey  string       `json:"conversation_key"`  // 当前 AI 会话 key，用于后端读回前序原文候选
 			CandidateSources []RawExcerpt `json:"candidate_sources"` // 前序对话中已检索到的原文候选（兼容旧前端）
-		Model            string       `json:"model"`              // 可选：覆盖 profile 中的模型
+			ChatID           string       `json:"chat_id,omitempty"` // 飞书群 chat_id，用于注入该群补充提示
+			Model            string       `json:"model"`             // 可选：覆盖 profile 中的模型
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1773,6 +1798,9 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 API Key 或完成 Google 授权"})
 			return
 		}
+
+		// 飞书群补充提示：每个飞书群可配置一段额外信息，注入到 system prompt。
+		body.Messages = injectFeishuGroupPrompt(body.Messages, body.ChatID, prefs)
 
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {

@@ -30,7 +30,7 @@ func TestApplyFeishuScope_GroupOnlyAllowsAllContacts(t *testing.T) {
 	keys := []string{"group:群A", "group:群B", "contact:zhangsan", "contact:lisi"}
 	got := applyFeishuScope(keys, "oc_group1", prefs)
 	want := map[string]bool{
-		"group:群A":          true,
+		"group:群A":         true,
 		"contact:zhangsan": true,
 		"contact:lisi":     true,
 	}
@@ -53,8 +53,8 @@ func TestApplyFeishuScope_ContactOnlyAllowsAllGroups(t *testing.T) {
 	keys := []string{"group:群A", "group:群B", "contact:zhangsan", "contact:lisi"}
 	got := applyFeishuScope(keys, "oc_group1", prefs)
 	want := map[string]bool{
-		"group:群A":          true,
-		"group:群B":          true,
+		"group:群A":         true,
+		"group:群B":         true,
 		"contact:zhangsan": true,
 	}
 	if len(got) != 3 {
@@ -108,5 +108,39 @@ func TestFilterMemFactsByScope_GroupOnlyKeepsContactFacts(t *testing.T) {
 	}
 	if !seen["group:群A"] || !seen["contact:lisi"] {
 		t.Fatalf("expected group:群A + contact:lisi, got %+v", got)
+	}
+}
+
+func TestInjectFeishuGroupPrompt(t *testing.T) {
+	prefs := Preferences{
+		FeishuGroupPrompts: map[string]string{
+			"oc_g1": "本群成员主要使用粤语交流。",
+		},
+	}
+
+	// 已有 system 消息 → 追加到末尾
+	msgs := []LLMMessage{{Role: "system", Content: "base"}, {Role: "user", Content: "hi"}}
+	got := injectFeishuGroupPrompt(msgs, "oc_g1", prefs)
+	if len(got) != 2 {
+		t.Fatalf("expected length 2, got %d", len(got))
+	}
+	if got[0].Content != "base\n\n【本群补充提示】\n本群成员主要使用粤语交流。\n" {
+		t.Fatalf("unexpected system content: %q", got[0].Content)
+	}
+
+	// 无 system 消息 → 插入 system
+	msgs2 := []LLMMessage{{Role: "user", Content: "hi"}}
+	got2 := injectFeishuGroupPrompt(msgs2, "oc_g1", prefs)
+	if len(got2) != 2 || got2[1].Role != "system" {
+		t.Fatalf("expected appended system message, got %+v", got2)
+	}
+
+	// 未配置 / chat_id 为空 / 提示为空 → 原样返回
+	if out := injectFeishuGroupPrompt(msgs, "", prefs); len(out) != 2 {
+		t.Fatalf("empty chat_id should be no-op")
+	}
+	empty := Preferences{FeishuGroupPrompts: map[string]string{"oc_g1": "   "}}
+	if out := injectFeishuGroupPrompt(msgs, "oc_g1", empty); len(out) != 2 {
+		t.Fatalf("blank prompt should be no-op")
 	}
 }

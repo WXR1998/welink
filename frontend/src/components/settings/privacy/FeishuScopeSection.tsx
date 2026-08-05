@@ -6,6 +6,7 @@ import type { ContactStats, GroupInfo } from '../../../types';
 interface ScopeData {
   feishu_group_scope: Record<string, string[]>;
   feishu_bot_chats: Record<string, string>;
+  feishu_group_prompts: Record<string, string>;
 }
 
 /**
@@ -22,6 +23,9 @@ export const FeishuScopeSection: React.FC<{
   const [chatNames, setChatNames] = useState<Record<string, string>>({});
   const [scope, setScope] = useState<Record<string, string[]>>({});
   const [drafts, setDrafts] = useState<Record<string, string[]>>({});
+  const [groupPrompts, setGroupPrompts] = useState<Record<string, string>>({});
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [promptDirty, setPromptDirty] = useState<Set<string>>(new Set());
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   // group_username → [member_wxid, ...]，用于按群友名筛选群
   const [memberships, setMemberships] = useState<Record<string, string[]>>({});
@@ -33,6 +37,8 @@ export const FeishuScopeSection: React.FC<{
         setScope(r.data.feishu_group_scope ?? {});
         setDrafts(r.data.feishu_group_scope ?? {});
         setChatNames(r.data.feishu_bot_chats ?? {});
+        setGroupPrompts(r.data.feishu_group_prompts ?? {});
+        setPromptDrafts(r.data.feishu_group_prompts ?? {});
       })
       .catch(() => {});
     axios
@@ -92,6 +98,26 @@ export const FeishuScopeSection: React.FC<{
     }
   };
 
+  const updatePrompt = (chatID: string, value: string) => {
+    setPromptDrafts((prev) => ({ ...prev, [chatID]: value }));
+    setPromptDirty((prev) => new Set(prev).add(chatID));
+  };
+
+  const savePrompt = async (chatID: string) => {
+    const next = { ...promptDrafts };
+    setGroupPrompts(next);
+    try {
+      await axios.put('/api/preferences/feishu-group-prompts', { feishu_group_prompts: next });
+      setPromptDirty((prev) => {
+        const s = new Set(prev);
+        s.delete(chatID);
+        return s;
+      });
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <section className="mb-8" data-section-id="feishu-scope" data-settings-tags="飞书 群 白名单 问答 feishu scope whitelist">
       <div className="flex items-center gap-2 mb-3">
@@ -114,6 +140,8 @@ export const FeishuScopeSection: React.FC<{
           chatID={chatID}
           chatName={chatNames[chatID] || chatID}
           selected={drafts[chatID] ?? []}
+          prompt={promptDrafts[chatID] ?? ''}
+          promptDirty={promptDirty.has(chatID)}
           dirty={dirtyKeys.has(chatID)}
           allGroups={allGroups}
           allContacts={allContacts}
@@ -124,6 +152,8 @@ export const FeishuScopeSection: React.FC<{
           labelForKey={labelForKey}
           toggleKey={toggleKey}
           save={save}
+          updatePrompt={updatePrompt}
+          savePrompt={savePrompt}
         />
       ))}
     </section>
@@ -134,6 +164,8 @@ interface FeishuGroupCardProps {
   chatID: string;
   chatName: string;
   selected: string[];
+  prompt: string;
+  promptDirty: boolean;
   dirty: boolean;
   allGroups: GroupInfo[];
   allContacts: ContactStats[];
@@ -144,12 +176,16 @@ interface FeishuGroupCardProps {
   labelForKey: (key: string) => string;
   toggleKey: (chatID: string, key: string) => void;
   save: (chatID: string) => void;
+  updatePrompt: (chatID: string, value: string) => void;
+  savePrompt: (chatID: string) => void;
 }
 
 const FeishuGroupCard: React.FC<FeishuGroupCardProps> = ({
   chatID,
   chatName,
   selected,
+  prompt,
+  promptDirty,
   dirty,
   allGroups,
   allContacts,
@@ -160,6 +196,8 @@ const FeishuGroupCard: React.FC<FeishuGroupCardProps> = ({
   labelForKey,
   toggleKey,
   save,
+  updatePrompt,
+  savePrompt,
 }) => {
   const [groupQuery, setGroupQuery] = useState('');
   const [contactQuery, setContactQuery] = useState('');
@@ -201,6 +239,28 @@ const FeishuGroupCard: React.FC<FeishuGroupCardProps> = ({
             保存
           </button>
         )}
+      </div>
+
+      {/* 补充给 AI 的信息 */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-xs font-semibold text-gray-500">补充给 AI 的信息</div>
+          {promptDirty && (
+            <button
+              onClick={() => savePrompt(chatID)}
+              className="text-xs font-semibold px-3 py-1.5 bg-[#07c160] text-white rounded-lg hover:bg-[#06ad56] transition-colors"
+            >
+              保存提示
+            </button>
+          )}
+        </div>
+        <textarea
+          value={prompt}
+          onChange={(e) => updatePrompt(chatID, e.target.value)}
+          rows={3}
+          placeholder="例如：本群成员主要使用粤语交流，回答时请保持简洁……"
+          className="w-full text-sm p-3 rounded-lg border border-gray-200 focus:border-[#07c160] focus:outline-none resize-y dk-card dk-border"
+        />
       </div>
 
       {/* 已选白名单 */}
