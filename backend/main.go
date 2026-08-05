@@ -1060,6 +1060,62 @@ func serverMain() {
 		c.JSON(http.StatusOK, sanitizeForResponse(existing))
 	})
 
+	// 飞书 bot：每个飞书群（chat_id）允许访问的白名单 contact_key。
+	// GET 返回当前全部白名单映射供前端编辑。
+	api.GET("/preferences/feishu-scope", func(c *gin.Context) {
+		p := loadPreferences()
+		if p.FeishuGroupScope == nil {
+			p.FeishuGroupScope = map[string][]string{}
+		}
+		if p.FeishuBotChats == nil {
+			p.FeishuBotChats = map[string]string{}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"feishu_group_scope": p.FeishuGroupScope,
+			"feishu_bot_chats":   p.FeishuBotChats,
+		})
+	})
+
+	// PUT /preferences/feishu-scope body: { feishu_group_scope: { chat_id: [keys...] } }
+	// 只更新飞书群白名单，保留其他配置。
+	api.PUT("/preferences/feishu-scope", func(c *gin.Context) {
+		var body struct {
+			FeishuGroupScope map[string][]string `json:"feishu_group_scope"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.FeishuGroupScope == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+			return
+		}
+		existing := loadPreferences()
+		existing.FeishuGroupScope = body.FeishuGroupScope
+		if err := savePreferences(existing); err != nil {
+			log.Printf("[PREFS] 保存飞书群白名单失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"feishu_group_scope": existing.FeishuGroupScope})
+	})
+
+	// 飞书 bot 上报自己加入的群列表（chat_id -> 群名），供前端配置白名单用。
+	// 飞书网关启动 / 定时调用。
+	api.PUT("/preferences/feishu-bot-chats", func(c *gin.Context) {
+		var body struct {
+			Chats map[string]string `json:"chats"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.Chats == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+			return
+		}
+		existing := loadPreferences()
+		existing.FeishuBotChats = body.Chats
+		if err := savePreferences(existing); err != nil {
+			log.Printf("[PREFS] 保存飞书群列表失败: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"chats": existing.FeishuBotChats})
+	})
+
 	// 导出文件的下载目录（仅 App 模式用）。单独一个端点：改这个不应触发重建索引。
 	// 空值 = 清空用户配置，回落到平台默认（~/Downloads）。
 	api.PUT("/preferences/download-dir", func(c *gin.Context) {

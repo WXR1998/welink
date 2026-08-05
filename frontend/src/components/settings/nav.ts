@@ -45,6 +45,7 @@ export const SECTIONS: SectionMeta[] = [
   // 数据
   { id: 'profiles',  title: '多账号',     icon: Users,      groupId: 'data' },
   { id: 'backup',    title: 'AI 备份',    icon: Bot,        groupId: 'data' },
+  { id: 'feishu-scope', title: '飞书群问答白名单', icon: Bot,        groupId: 'data' },
   { id: 'forecast',  title: '关系预测忽略', icon: Sparkles,   groupId: 'data' },
   { id: 'preferences', title: '配置管理', icon: Settings,   groupId: 'data' },
 

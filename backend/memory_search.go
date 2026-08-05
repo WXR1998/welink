@@ -517,7 +517,8 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			ProfileID             string              `json:"profile_id"`
 			ConversationKey       string              `json:"conversation_key"`
 			PreviousDecomposition *QueryDecomposition `json:"previous_decomposition"`
-		Model                  string              `json:"model"` // 可选：覆盖 profile 中的模型
+			Model                 string              `json:"model"`             // 可选：覆盖 profile 中的模型
+			ChatID                string              `json:"chat_id,omitempty"` // 飞书群 chat_id，用于白名单过滤
 		}
 		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Query) == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query 必填"})
@@ -694,6 +695,9 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			}
 		}
 
+		// 飞书群白名单过滤：只保留该飞书群允许访问的 contact_key
+		searchKeys = applyFeishuScope(searchKeys, body.ChatID, prefs)
+
 		// ── 增强检索：BM25 + 双路 + 查询改写 + Rerank ──
 		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID, svc, func(step, detail string) {
 			sendProgress(step, detail)
@@ -731,6 +735,11 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				pinnedFacts = append(pinnedFacts, pf...)
 			}
 		}
+
+		// 飞书群白名单过滤：剔除不在允许范围内的记忆事实、置顶事实与原始消息命中
+		allFacts = filterMemFactsByScope(allFacts, body.ChatID, prefs)
+		pinnedFacts = filterMemFactsByScope(pinnedFacts, body.ChatID, prefs)
+		vecMessages = filterVecMessagesByScope(vecMessages, body.ChatID, prefs)
 
 		// 截断到 50
 		if len(allFacts) > 50 {

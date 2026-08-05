@@ -19,6 +19,7 @@ import { RecordingSection } from './privacy/RecordingSection';
 import { DisplaySection } from './display/DisplaySection';
 import { BlockedSection } from './privacy/BlockedSection';
 import { LockSection } from './privacy/LockSection';
+import { FeishuScopeSection } from './privacy/FeishuScopeSection';
 // AI
 import { AIConfigGroup } from './ai/AIConfigGroup';
 import { PromptTemplateSection } from './ai/PromptTemplateSection';
@@ -182,6 +183,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         return <AIBackupSection key={id} isAppMode={isAppMode} />;
       case 'forecast':
         return <ForecastIgnoreSection key={id} allContacts={allContacts} privacyMode={privacyMode} />;
+      case 'feishu-scope':
+        return <FeishuScopeSection key={id} allContacts={allContacts} allGroups={allGroups} />;
       case 'preferences':
         return <PreferencesSection key={id} />;
       case 'basic':

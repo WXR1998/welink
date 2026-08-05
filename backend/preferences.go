@@ -187,6 +187,14 @@ type Preferences struct {
 	BlockedGroups []string `json:"blocked_groups"`
 	PrivacyMode   bool     `json:"privacy_mode,omitempty"`
 
+	// 飞书 bot：每个飞书群（chat_id）只允许问答访问的白名单 contact_key。
+	// 只做白名单（含群 group:xxx 与私聊 contact:xxx，一视同仁）。
+	// 未配置的飞书群 = 默认放行（兼容现状）。
+	FeishuGroupScope map[string][]string `json:"feishu_group_scope,omitempty"` // chat_id -> allowed contact_keys
+
+	// 飞书 bot 枚举到的群列表（chat_id -> 群名），供前端下拉展示。
+	FeishuBotChats map[string]string `json:"feishu_bot_chats,omitempty"` // chat_id -> chat name
+
 	// 屏幕锁定（纯前端覆盖层，微信 PC Cmd+L 同思路）
 	// PIN 用 bcrypt 哈希（salt 内嵌），由后端 /api/lock/* 负责验证
 	LockPinHash     string `json:"lock_pin_hash,omitempty"`
