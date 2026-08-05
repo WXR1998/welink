@@ -604,7 +604,7 @@ func cardJSON(title, text, progress string) string {
 
 // progressBar 返回一个 n/5 格的 emoji 进度条行。
 // maxProgressCells 限制进度条格数，避免在消息框内被换行成两行。
-const maxProgressCells = 20
+const maxProgressCells = 10
 
 func progressBar(current, total int) string {
 	if current < 0 {
