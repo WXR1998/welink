@@ -140,6 +140,9 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if !strings.Contains(gotBody, "说明其依据的聊天记录原文") || !strings.Contains(gotBody, "作为佐证") {
 		t.Fatalf("system prompt missing evidence requirement, body=%s", gotBody)
 	}
+	if !strings.Contains(gotBody, "都不要遗漏") {
+		t.Fatalf("system prompt missing exhaustive open-request requirement, body=%s", gotBody)
+	}
 	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
 		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
 	}

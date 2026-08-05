@@ -97,11 +97,11 @@ func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences
 	if prompt == "" {
 		return msgs
 	}
-	// 补充提示作为第 7 点追加在“支持论据/聊天记录”要求（第 6 点）之后，且不留空行。
-	const introMarker = "直到能完整表达该事件为止。\n"
+	// 补充提示作为第 8 点追加在“开放性请求要多给信息”要求（第 7 点）之后，且不留空行。
+	const introMarker = "都不要遗漏。\n"
 	// 命中锚点时直接接在行尾（无空行）；回退追加到末尾时才补空行分隔。
-	item := "7. " + prompt + "\n"
-	fallbackItem := "\n\n7. " + prompt + "\n"
+	item := "8. " + prompt + "\n"
+	fallbackItem := "\n\n8. " + prompt + "\n"
 	for i := range msgs {
 		if msgs[i].Role == "system" {
 			content := msgs[i].Content
