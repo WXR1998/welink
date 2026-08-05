@@ -12,13 +12,9 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-// cnLocation 返回东八区（Asia/Shanghai）时区；加载失败时回退到本地时区。
-var cnLocation = func() *time.Location {
-	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
-		return loc
-	}
-	return time.Local
-}()
+// cnLocation 东八区固定时区（UTC+8）。中国境内全年无夏令时，直接使用固定偏移，
+// 不依赖容器镜像是否内置 tzdata，保证在任何镜像里都能得到东八区时间。
+var cnLocation = time.FixedZone("CST", 8*3600)
 
 // cnNow 返回东八区当前时间（用于群公告中的启动时间与连接状态时间）。
 func cnNow() time.Time {
