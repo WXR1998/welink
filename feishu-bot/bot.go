@@ -104,48 +104,58 @@ func (b *bot) backendStatus(ctx context.Context) bool {
 // run 启动飞书长连接（阻塞直到退出）。
 func (b *bot) run(ctx context.Context) error {
 	log.Printf("[bot] 正在启动飞书长连接，app_id=%s", b.cfg.FeishuAppID)
-	go b.syncFeishuChats(ctx)
+	// 后台枚举飞书群并上报，与主生命周期 context 解耦
+	go b.syncFeishuChats()
 	return b.ch.Start(ctx)
 }
 
 // syncFeishuChats 枚举 bot 所在的所有飞书群（chat_id -> 群名），
 // 上报给 WeLink 后端，供前端为每个飞书群配置白名单。
 // 非阻塞：失败仅打日志，不影响主流程。
-func (b *bot) syncFeishuChats(ctx context.Context) {
+func (b *bot) syncFeishuChats() {
 	if b.client == nil {
 		return
 	}
-	ctxT, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	// 先等 WS 建立、tenant token 就绪，再枚举（失败重试几次）
+	for attempt := 1; attempt <= 5; attempt++ {
+		ctxT, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		chats := map[string]string{}
+		iter, err := b.client.Im.V1.Chat.ListByIterator(ctxT, larkim.NewListChatReqBuilder().PageSize(100).Build())
+		if err == nil {
+			for {
+				ok, item, err := iter.Next()
+				if err != nil {
+					log.Printf("[bot] 读取飞书群列表分页失败: %v", err)
+					break
+				}
+				if !ok || item == nil || item.ChatId == nil {
+					break
+				}
+				name := ""
+				if item.Name != nil {
+					name = *item.Name
+				}
+				chats[*item.ChatId] = name
+			}
+		} else {
+			log.Printf("[bot] 枚举飞书群列表失败(第%d次): %v", attempt, err)
+		}
 
-	chats := map[string]string{}
-	iter, err := b.client.Im.V1.Chat.ListByIterator(ctxT, larkim.NewListChatReqBuilder().PageSize(100).Build())
-	if err != nil {
-		log.Printf("[bot] 枚举飞书群列表失败: %v", err)
-		return
-	}
-	for {
-		ok, item, err := iter.Next()
-		if err != nil {
-			log.Printf("[bot] 读取飞书群列表分页失败: %v", err)
-			break
+		if len(chats) > 0 {
+			cancel()
+			b.reportFeishuChats(ctxT, chats)
+			return
 		}
-		if !ok || item == nil || item.ChatId == nil {
-			break
-		}
-		name := ""
-		if item.Name != nil {
-			name = *item.Name
-		}
-		chats[*item.ChatId] = name
+		cancel()
+		time.Sleep(5 * time.Second)
 	}
-	if len(chats) == 0 {
-		log.Printf("[bot] 未枚举到任何飞书群")
-		return
-	}
+	log.Printf("[bot] 多次尝试后仍未枚举到飞书群")
+}
 
+// reportFeishuChats 把枚举到的飞书群列表上报给 WeLink 后端。
+func (b *bot) reportFeishuChats(ctx context.Context, chats map[string]string) {
 	payload, _ := json.Marshal(map[string]any{"chats": chats})
-	req, err := http.NewRequestWithContext(ctxT, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, b.cfg.WeLinkBaseURL+"/api/preferences/feishu-bot-chats", bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("[bot] 构造飞书群列表上报请求失败: %v", err)
 		return
