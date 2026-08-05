@@ -33,6 +33,7 @@ type bot struct {
 	pending    *pendingStore
 	mu         sync.Mutex
 	sessions   map[string]*session
+	announce   *announcer
 }
 
 // session 表示单个用户在单个群聊/单聊中的独立上下文。
@@ -80,7 +81,21 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 		return nil
 	})
 	b.recoverPending(ctx)
+
+	// 群公告 + 心跳：启动时写入“已重启完成”，并周期性检测后台连接
+	if cfg.AnnounceChatID != "" {
+		b.announce = newAnnouncer(cfg, client)
+		up := b.backendStatus(ctx)
+		b.announce.startup(ctx, up)
+		go b.announce.runHeartbeat(ctx)
+	}
+
 	return b, nil
+}
+
+// backendStatus 探测一次 WeLink 后端可达性（用于群公告初始连接状态）。
+func (b *bot) backendStatus(ctx context.Context) bool {
+	return backendStatusUp(ctx, b.cfg)
 }
 
 // run 启动飞书长连接（阻塞直到退出）。

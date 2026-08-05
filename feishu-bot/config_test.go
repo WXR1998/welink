@@ -124,3 +124,46 @@ func TestLoadConfig_LLMModelDefault(t *testing.T) {
 		t.Fatalf("expected custom model, got %q", cfg.LLMModel)
 	}
 }
+
+func TestLoadConfig_AnnounceChatIDAndHeartbeat(t *testing.T) {
+	os.Setenv("FEISHU_APP_ID", "cli_x")
+	os.Setenv("FEISHU_APP_SECRET", "secret")
+	defer func() {
+		os.Unsetenv("FEISHU_APP_ID")
+		os.Unsetenv("FEISHU_APP_SECRET")
+		os.Unsetenv("ANNOUNCE_CHAT_ID")
+		os.Unsetenv("HEARTBEAT_INTERVAL_SEC")
+		os.Unsetenv("DISCONNECT_COOLDOWN_MIN")
+	}()
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AnnounceChatID != "" {
+		t.Fatalf("expected empty announce chat id, got %q", cfg.AnnounceChatID)
+	}
+	if cfg.HeartbeatInterval.String() != "30s" {
+		t.Fatalf("expected default 30s heartbeat, got %v", cfg.HeartbeatInterval)
+	}
+	if cfg.DisconnectCooldown.String() != "1h0m0s" {
+		t.Fatalf("expected default 1h cooldown, got %v", cfg.DisconnectCooldown)
+	}
+
+	os.Setenv("ANNOUNCE_CHAT_ID", "oc_abc123")
+	os.Setenv("HEARTBEAT_INTERVAL_SEC", "60")
+	os.Setenv("DISCONNECT_COOLDOWN_MIN", "10")
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AnnounceChatID != "oc_abc123" {
+		t.Fatalf("expected announce chat id, got %q", cfg.AnnounceChatID)
+	}
+	if cfg.HeartbeatInterval.String() != "1m0s" {
+		t.Fatalf("expected 1m heartbeat, got %v", cfg.HeartbeatInterval)
+	}
+	if cfg.DisconnectCooldown.String() != "10m0s" {
+		t.Fatalf("expected 10m cooldown, got %v", cfg.DisconnectCooldown)
+	}
+}

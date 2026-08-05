@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config 汇总飞书网关的全部设置。
@@ -33,6 +35,13 @@ type Config struct {
 
 	// LLM 模型名称（覆盖后端 profile 中的模型）
 	LLMModel string
+
+	// 用于维护群公告的目标群 chat_id；为空则不维护公告
+	AnnounceChatID string
+
+	// 心跳检测间隔与断连公告限频（默认见 loadConfig）
+	HeartbeatInterval time.Duration
+	DisconnectCooldown time.Duration
 }
 
 // loadConfig 从环境变量读配置；可用 FEISHU_CONFIG 指向 JSON 覆盖。
@@ -47,6 +56,9 @@ func loadConfig() (*Config, error) {
 		SessionStorePath:  os.Getenv("SESSION_STORE_PATH"),
 		AllowedUsers:      splitList(os.Getenv("ALLOWED_USERS")),
 		LLMModel:          getenv("LLM_MODEL", "lingjun.internal/deepseek-v4-flash"),
+		AnnounceChatID:    os.Getenv("ANNOUNCE_CHAT_ID"),
+		HeartbeatInterval: time.Duration(getenvInt("HEARTBEAT_INTERVAL_SEC", 30)) * time.Second,
+		DisconnectCooldown: time.Duration(getenvInt("DISCONNECT_COOLDOWN_MIN", 60)) * time.Minute,
 	}
 
 	if p := os.Getenv("FEISHU_CONFIG"); p != "" {
@@ -64,6 +76,9 @@ func loadConfig() (*Config, error) {
 			SessionStorePath string   `json:"session_store_path"`
 			AllowedUsers     []string `json:"allowed_users"`
 			LLMModel         string   `json:"llm_model"`
+			AnnounceChatID   string   `json:"announce_chat_id"`
+			HeartbeatIntervalSec int `json:"heartbeat_interval_sec"`
+			DisconnectCooldownMin int `json:"disconnect_cooldown_min"`
 		}
 		if err := json.Unmarshal(b, &overrides); err != nil {
 			return nil, err
@@ -76,6 +91,13 @@ func loadConfig() (*Config, error) {
 		applyOverride(&cfg.StreamMode, strings.ToLower(overrides.StreamMode))
 		applyOverride(&cfg.SessionStorePath, overrides.SessionStorePath)
 		applyOverride(&cfg.LLMModel, overrides.LLMModel)
+		applyOverride(&cfg.AnnounceChatID, overrides.AnnounceChatID)
+		if overrides.HeartbeatIntervalSec > 0 {
+			cfg.HeartbeatInterval = time.Duration(overrides.HeartbeatIntervalSec) * time.Second
+		}
+		if overrides.DisconnectCooldownMin > 0 {
+			cfg.DisconnectCooldown = time.Duration(overrides.DisconnectCooldownMin) * time.Minute
+		}
 		if len(overrides.AllowedUsers) > 0 {
 			cfg.AllowedUsers = overrides.AllowedUsers
 		}
@@ -105,6 +127,15 @@ func applyOverride(dst *string, v string) {
 
 func trimSlash(s string) string {
 	return strings.TrimRight(s, "/")
+}
+
+func getenvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func splitList(s string) []string {

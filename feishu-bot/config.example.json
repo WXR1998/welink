@@ -6,5 +6,10 @@
   "default_profile_id": "",
   "stream_mode": "md",
   "session_store_path": "/var/lib/welink-feishu/sessions.json",
-  "allowed_users": ["ou_xxxxxxxx"]
+  "allowed_users": [
+    "ou_xxxxxxxx"
+  ],
+  "announce_chat_id": "oc_xxxxxxxx",
+  "heartbeat_interval_sec": 30,
+  "disconnect_cooldown_min": 60
 }

@@ -50,6 +50,9 @@ services:
       - SESSION_STORE_PATH=/var/lib/welink-feishu/sessions.json
       - ALLOWED_USERS=${ALLOWED_USERS:-}
       - STREAM_MODE=${STREAM_MODE:-md}
+      - ANNOUNCE_CHAT_ID=${ANNOUNCE_CHAT_ID:-}
+      - HEARTBEAT_INTERVAL_SEC=${HEARTBEAT_INTERVAL_SEC:-30}
+      - DISCONNECT_COOLDOWN_MIN=${DISCONNECT_COOLDOWN_MIN:-60}
     volumes:
       - dev-feishu-bot-sessions:/var/lib/welink-feishu
     restart: unless-stopped
