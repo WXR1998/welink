@@ -72,7 +72,13 @@ func newBot(ctx context.Context, cfg *Config) (*bot, error) {
 		pending:  newPendingStore(cfg.SessionStorePath),
 		sessions: loaded,
 	}
-	b.ch = channel.NewChannel(client, wsClient)
+	// 该版本 SDK 会按 chat_id 把消息塞进同一个 per-chat pipeline 做合并/串行派发：
+	// 若某个人的问题处理较慢（如检索超时），会阻塞同群其他人的消息。
+	// 把批处理冲刷延时设为 0，消息不再批量合并、也不做整群串行，各自独立派发。
+	safetyCfg := types.DefaultChannelConfig().Safety
+	safetyCfg.Batch.DelayMs = 0
+	safetyCfg.Batch.LongDelayMs = 0
+	b.ch = channel.NewChannel(client, wsClient, types.WithSafetyConfig(safetyCfg))
 
 	b.ch.OnError(func(err error) {
 		log.Printf("[bot] 飞书通道错误: %v", err)
