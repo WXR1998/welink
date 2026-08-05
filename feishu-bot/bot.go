@@ -760,7 +760,8 @@ func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
 
 	var parts []string
 	if !createdAt.IsZero() {
-		parts = append(parts, "上下文始于 "+createdAt.Format("01-02 15:04"))
+		// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
+		parts = append(parts, "上下文始于 "+createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04"))
 	}
 	if usage != nil && (usage.TotalTokens > 0 || usage.PromptTokens > 0 || usage.OutputTokens > 0) {
 		parts = append(parts, fmt.Sprintf("本次 token %d（输入 %d / 输出 %d）", usage.TotalTokens, usage.PromptTokens, usage.OutputTokens))

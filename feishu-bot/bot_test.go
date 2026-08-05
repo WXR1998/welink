@@ -160,3 +160,15 @@ func TestContextMetaLine(t *testing.T) {
 		t.Fatalf("unexpected meta line without usage: %q", line2)
 	}
 }
+
+func TestContextMetaLine_ShowsUTC8(t *testing.T) {
+	// 传入的 createdAt 为 UTC 时间 10:00，卡片应显示东八区 18:00，而不是 UTC 的 10:00。
+	created := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	b := &bot{sessions: map[string]*session{
+		"group:oc_abc:ou_def": {createdAt: created},
+	}}
+	line := b.contextMetaLine("group:oc_abc:ou_def", nil)
+	if !strings.Contains(line, "上下文始于 08-05 18:00") {
+		t.Fatalf("expected UTC+8 time, got: %q", line)
+	}
+}
