@@ -1043,7 +1043,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
                 msg.role === 'user'
                   ? 'bg-[#07c160] text-white rounded-br-sm'
                   : msg.searching
-                    ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-300 text-xs italic'
+                    ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-300 text-xs italic w-[340px] max-w-[70vw] min-w-0'
                     : 'bg-[#f0f0f0] dark:bg-white/10 rounded-bl-sm'
               }`}>
                 {msg.role === 'assistant' && !msg.searching ? (
