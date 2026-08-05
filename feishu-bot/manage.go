@@ -24,6 +24,8 @@ type manageSession struct {
 	Chars      int       `json:"chars"`
 	Compressed bool      `json:"compressed,omitempty"`
 	Entity     string    `json:"entity,omitempty"`
+	// ContentPreview 是截断到 maxContextPreviewBytes 的上下文正文预览。
+	ContentPreview string `json:"content_preview,omitempty"`
 }
 
 // startManageServer 启动内部管理 HTTP 服务，返回可停止的函数。
@@ -89,17 +91,18 @@ func (b *bot) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		chatName, userName := b.displayNameFromCache(chatID, userID)
 		items = append(items, manageSession{
-			Key:        k,
-			ChatID:     chatID,
-			UserID:     userID,
-			ChatName:   chatName,
-			UserName:   userName,
-			CreatedAt:  s.createdAt,
-			LastActive: s.lastActive,
-			MsgCount:   len(s.history),
-			Chars:      chars,
-			Compressed: s.compressed,
-			Entity:     entity,
+			Key:            k,
+			ChatID:         chatID,
+			UserID:         userID,
+			ChatName:       chatName,
+			UserName:       userName,
+			CreatedAt:      s.createdAt,
+			LastActive:     s.lastActive,
+			MsgCount:       len(s.history),
+			Chars:          chars,
+			Compressed:     s.compressed,
+			Entity:         entity,
+			ContentPreview: b.contextPreview(s),
 		})
 	}
 	if needSave {
@@ -163,6 +166,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// maxContextPreviewBytes 限制管理端返回的上下文正文预览大小（20KB）。
+const maxContextPreviewBytes = 20 * 1024
 
 // nameCacheTTL 控制群名/成员名的缓存刷新周期，避免管理端高频调用飞书 API。
 const nameCacheTTL = 5 * time.Minute
@@ -229,4 +235,28 @@ func (b *bot) displayNameFromCache(chatID, userID string) (chatName, userName st
 		}
 	}
 	return chatName, userName
+}
+
+// contextPreview 把会话历史拼成可读文本并截断到 maxContextPreviewBytes 字节。
+func (b *bot) contextPreview(s *session) string {
+	if s == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, m := range s.history {
+		role := "AI"
+		if m.Role == "user" {
+			role = "用户"
+		} else if m.Role == "system" {
+			role = "系统"
+		}
+		sb.WriteString("【" + role + "】")
+		sb.WriteString(m.Content)
+		sb.WriteString("\n\n")
+	}
+	raw := sb.String()
+	if len(raw) <= maxContextPreviewBytes {
+		return raw
+	}
+	return raw[:maxContextPreviewBytes] + "\n…[已截断]"
 }

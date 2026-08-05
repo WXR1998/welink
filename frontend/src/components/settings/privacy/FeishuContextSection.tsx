@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { Bot, RefreshCw, Trash2 } from 'lucide-react';
+import { Bot, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
 
 interface FeishuSession {
   key: string;
@@ -14,6 +14,7 @@ interface FeishuSession {
   chars: number;
   compressed?: boolean;
   entity?: string;
+  content_preview?: string;
 }
 
 /**
@@ -143,6 +144,18 @@ export const FeishuContextSection: React.FC = () => {
             {s.entity && (
               <div className="text-xs text-gray-400 mt-2">最近实体：{s.entity}</div>
             )}
+
+            <details className="mt-3 group">
+              <summary className="inline-flex items-center gap-1 text-xs font-semibold text-[#07c160] cursor-pointer select-none">
+                <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+                {s.content_preview ? '查看上下文内容' : '上下文为空'}
+              </summary>
+              {s.content_preview && (
+                <pre className="mt-2 text-xs whitespace-pre-wrap break-words text-gray-600 max-h-96 overflow-y-auto bg-gray-50 rounded-lg p-3 dk-card dk-border">
+                  {s.content_preview}
+                </pre>
+              )}
+            </details>
           </div>
         ))}
       </div>
