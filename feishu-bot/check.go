@@ -171,7 +171,7 @@ func runSmoke(ctx context.Context, cfg *Config, question string) error {
 	}
 
 	fmt.Println("[2/2] analyze 生成回答...")
-	answer, err := analyzeQuestion(ctx, cfg, "", question, convKey, nil, ctxData)
+	answer, _, err := analyzeQuestion(ctx, cfg, "", question, convKey, nil, ctxData)
 	if err != nil {
 		fmt.Printf("  ✗ analyze 失败: %v\n", err)
 		return err
@@ -188,4 +188,3 @@ func runSmoke(ctx context.Context, cfg *Config, question string) error {
 func runSmokeEntity(ctx context.Context, cfg *Config) error {
 	return runSmoke(ctx, cfg, "我和邓凯文最近聊了什么？")
 }
-

@@ -39,6 +39,7 @@ type StreamUsage struct {
 	PromptTokens int `json:"prompt_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+	CachedTokens int `json:"cached_tokens,omitempty"` // 命中的 prompt cache token（provider 返回 0/未知时省略）
 }
 
 // RagMeta 携带 RAG 检索统计信息及命中消息（在 LLM 流式响应前发送）。
@@ -627,12 +628,15 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	// Token 统计：记录输出 token
 	outputTokens := estimateTokens(strings.Repeat("x", outputChars))
 	recordTokenUsage(cfg.model, "chat", promptTokens, outputTokens, time.Since(llmStart).Milliseconds())
-	// 推送 token 使用信息给前端
-	send(StreamChunk{Usage: &StreamUsage{
-		PromptTokens:  promptTokens,
-		OutputTokens:  outputTokens,
-		TotalTokens:   promptTokens + outputTokens,
-	}})
+	// OpenAI 兼容流式在内部推送真实 usage；其余 provider 由这里用估算兜底。
+	switch cfg.provider {
+	case "claude", "bedrock", "vertex":
+		send(StreamChunk{Usage: &StreamUsage{
+			PromptTokens: promptTokens,
+			OutputTokens: outputTokens,
+			TotalTokens:  promptTokens + outputTokens,
+		}})
+	}
 	return err
 }
 
@@ -718,6 +722,18 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	thinkBuf := ""
 	parseFails := 0 // 累计 chunk 解析失败数，超阈值即中止，避免静默丢数据（H3）
 	gotDone := false // 是否收到 [DONE] 标记
+	// 流式响应通常把 usage 放在最后一个 chunk，这里解析并透传给上层。
+	// 不同提供商字段不同：OpenAI 用 usage.prompt_tokens_details.cached_tokens，
+	// DeepSeek 用 usage.prompt_cache_hit_tokens；取到哪个用哪个，取不到即 0。
+	var usage struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		OutputTokens        int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -736,6 +752,15 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 					Reasoning string `json:"reasoning"` // Ollama 思考型模型的推理增量
 				} `json:"delta"`
 			} `json:"choices"`
+			Usage *struct {
+				PromptTokens        int `json:"prompt_tokens"`
+				CompletionTokens    int `json:"completion_tokens"`
+				TotalTokens         int `json:"total_tokens"`
+				PromptTokensDetails struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+				PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			parseFails++
@@ -744,6 +769,13 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 				return fmt.Errorf("响应流多次解析失败（%d 次），结果可能不完整，请重试", parseFails)
 			}
 			continue
+		}
+		if chunk.Usage != nil {
+			usage.PromptTokens = chunk.Usage.PromptTokens
+			usage.OutputTokens = chunk.Usage.CompletionTokens
+			usage.TotalTokens = chunk.Usage.TotalTokens
+			usage.PromptTokensDetails.CachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			usage.PromptCacheHitTokens = chunk.Usage.PromptCacheHitTokens
 		}
 		if len(chunk.Choices) > 0 {
 			d := chunk.Choices[0].Delta
@@ -812,6 +844,24 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
 	}
 	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	// 推送 token 使用信息：优先用 provider 返回的真实 usage，取不到再回退估算。
+	if usage.PromptTokens == 0 && usage.OutputTokens == 0 {
+		usage.PromptTokens = estimateMsgTokens(msgs)
+		usage.OutputTokens = 0
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.OutputTokens
+	}
+	cached := usage.PromptTokensDetails.CachedTokens
+	if cached == 0 {
+		cached = usage.PromptCacheHitTokens
+	}
+	send(StreamChunk{Usage: &StreamUsage{
+		PromptTokens: usage.PromptTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		CachedTokens: cached,
+	}})
 	return scanner.Err()
 }
 

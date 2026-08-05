@@ -33,6 +33,7 @@ services:
       - GIN_MODE=release
       - DEMO_MODE=true
       - DATA_DIR=/app/demo-data
+      - FEISHU_BOT_MANAGE_URL=http://dev-feishu-bot:8111
     restart: unless-stopped
 
   dev-feishu-bot:
@@ -48,6 +49,7 @@ services:
       - WELINK_TOKEN=${WELINK_TOKEN:-}
       - LLM_MODEL=${LLM_MODEL:-lingjun.internal/deepseek-v4-flash}
       - SESSION_STORE_PATH=/var/lib/welink-feishu/sessions.json
+      - MANAGE_ADDR=:8111
       - ALLOWED_USERS=${ALLOWED_USERS:-}
       - STREAM_MODE=${STREAM_MODE:-md}
       - ANNOUNCE_CHAT_ID=${ANNOUNCE_CHAT_ID:-}

@@ -11,6 +11,7 @@ import (
 // sessionDump 是 session 的可序列化形态，只持久化需要跨重启保留的字段。
 type sessionDump struct {
 	History    []llmMessage `json:"history"`
+	CreatedAt  time.Time    `json:"created_at,omitempty"`
 	LastActive time.Time    `json:"last_active"`
 	Version    uint64       `json:"version"`
 	Entities   []string     `json:"entities,omitempty"`
@@ -47,6 +48,7 @@ func (st *sessionStore) Load() (map[string]*session, error) {
 	for k, d := range dumps {
 		out[k] = &session{
 			history:    d.History,
+			createdAt:  d.CreatedAt,
 			lastActive: d.LastActive,
 			version:    d.Version,
 			entities:   d.Entities,
@@ -64,6 +66,7 @@ func (st *sessionStore) Save(sessions map[string]*session) error {
 	for k, s := range sessions {
 		dumps[k] = sessionDump{
 			History:    s.history,
+			CreatedAt:  s.createdAt,
 			LastActive: s.lastActive,
 			Version:    s.version,
 			Entities:   s.entities,

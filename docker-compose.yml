@@ -21,6 +21,7 @@ services:
     environment:
       - GIN_MODE=release
       - PREFERENCES_PATH=/app/prefs/preferences.json
+      - FEISHU_BOT_MANAGE_URL=http://feishu-bot:8111
     # 让容器内能通过 host.docker.internal 访问宿主机上的服务
     # （例如本机 docker run 的 openai-edge-tts:5050，或 Ollama:11434）。
     # macOS / Windows Docker Desktop / OrbStack 默认就支持；这里加 extra_hosts
@@ -50,6 +51,7 @@ services:
       - WELINK_TOKEN=${WELINK_TOKEN:-}
       - LLM_MODEL=${LLM_MODEL:-lingjun.internal/deepseek-v4-flash}
       - SESSION_STORE_PATH=/var/lib/welink-feishu/sessions.json
+      - MANAGE_ADDR=:8111
       - ALLOWED_USERS=${ALLOWED_USERS:-}
       - STREAM_MODE=${STREAM_MODE:-md}
       - ANNOUNCE_CHAT_ID=${ANNOUNCE_CHAT_ID:-}

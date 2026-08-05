@@ -14,35 +14,36 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
+	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
-	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
 const (
-	maxHistoryMsgs = 12  // 上下文达到该消息数时触发压缩
-	maxHistoryChars = 24000 // 上下文文本达到该字符数时触发压缩
-	sessionIdleTTL = 2 * time.Hour // 2 小时无新提问自动新开会话
+	maxHistoryMsgs  = 12            // 上下文达到该消息数时触发压缩
+	maxHistoryChars = 24000         // 上下文文本达到该字符数时触发压缩
+	sessionIdleTTL  = 2 * time.Hour // 2 小时无新提问自动新开会话
 )
 
 // bot 持有飞书通道与配置，并维护每个用户的独立会话。
 type bot struct {
-	cfg        *Config
-	client     *lark.Client
-	ch         types.Channel
-	store      *sessionStore
-	pending    *pendingStore
-	mu         sync.Mutex
-	sessions   map[string]*session
-	announce   *announcer
+	cfg      *Config
+	client   *lark.Client
+	ch       types.Channel
+	store    *sessionStore
+	pending  *pendingStore
+	mu       sync.Mutex
+	sessions map[string]*session
+	announce *announcer
 }
 
 // session 表示单个用户在单个群聊/单聊中的独立上下文。
 type session struct {
 	history    []llmMessage // 完整问答历史（user + assistant）
+	createdAt  time.Time    // 本次会话/上下文的开始时间（清空后重新计时）
 	lastActive time.Time    // 最近一次提问时间
 	compressed bool         // 是否已做过压缩摘要（供日志/调试）
 	busy       bool         // 该会话是否正在回答中（冷却锁）
@@ -260,12 +261,13 @@ func (b *bot) releaseBusy(key string) {
 func (b *bot) sessionLocked(key string) *session {
 	s := b.sessions[key]
 	if s == nil {
-		s = &session{history: []llmMessage{}, lastActive: time.Now()}
+		s = &session{history: []llmMessage{}, createdAt: time.Now(), lastActive: time.Now()}
 		b.sessions[key] = s
 	}
 	// 超过 2 小时没新提问 → 丢弃旧上下文，新起一个会话
 	if time.Since(s.lastActive) > sessionIdleTTL {
 		s.history = []llmMessage{}
+		s.createdAt = time.Now()
 		s.compressed = false
 	}
 	return s
@@ -319,7 +321,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	// lastPct 记录上次渲染的百分比，保证进度条只增不减
 	// （total 动态增长时 current/total 可能下降，这里在渲染层强制单调）。
 	lastPct := -1
-	answer, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage string, current, total int) {
+	answer, usage, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage string, current, total int) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
 		if stage == "search" {
@@ -354,7 +356,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	}
 
 	b.untrackPending(messageID)
-	_ = b.patchCard(ctx, messageID, cardJSON("✅ 回答完成", answer, ""))
+	_ = b.patchCard(ctx, messageID, cardJSONFinal("✅ 回答完成", b.contextMetaLine(sessionKey, usage), answer))
 	b.remember(sessionKey, question, answer)
 	go b.maybeCompress(context.Background(), sessionKey)
 
@@ -481,7 +483,8 @@ func (b *bot) dropSession(key string) {
 }
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
-func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage string, current, total int)) (string, string) {
+// 返回回答文本、本次 LLM token 用量（可能为 nil）与错误信息。
+func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage string, current, total int)) (string, *analyzeUsage, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
@@ -513,12 +516,12 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	)
 	if err != nil {
 		if err == errMissingEntity {
-			return "", "请指定要查询的联系人/群名（例如“我和邓凯文最近聊了什么？”），或先在本会话指定一次实体对象。"
+			return "", nil, "请指定要查询的联系人/群名（例如“我和邓凯文最近聊了什么？”），或先在本会话指定一次实体对象。"
 		}
 		if err == errEntityNotFound {
-			return "", "未找到你指定的联系人/群名，请确认姓名后重试。"
+			return "", nil, "未找到你指定的联系人/群名，请确认姓名后重试。"
 		}
-		return "", "跨联系人检索失败，请稍后重试。\n\n" + err.Error()
+		return "", nil, "跨联系人检索失败，请稍后重试。\n\n" + err.Error()
 	}
 
 	// 若本轮结果里解析出了实体，也记录下来
@@ -544,11 +547,11 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）
-	answer, err := analyzeQuestion(ctx, b.cfg, chatID, question, convKey, history, dataContext)
+	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, question, convKey, history, dataContext)
 	if err != nil {
-		return "", "生成回答失败，请稍后重试。\n\n" + err.Error()
+		return "", usage, "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}
-	return answer, ""
+	return answer, usage, ""
 }
 
 func (b *bot) historyOf(key string) []llmMessage {
@@ -607,9 +610,24 @@ func (b *bot) maybeCompress(ctx context.Context, key string) {
 	b.mu.Unlock()
 
 	log.Printf("[bot] %s 会话上下文过长，开始异步压缩 (version=%d)", key, triggerVersion)
+	// 在群聊中发起上下文压缩时，发一条提示消息，让群成员知道旧上下文正在被自动摘要。
+	if chatID := chatIDFromSession(key); chatID != "" {
+		go b.sendCompressNotice(context.Background(), chatID)
+	}
 	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	b.compress(cctx, key, triggerVersion, msgs)
+}
+
+// sendCompressNotice 在指定飞书群发送一条上下文压缩提示。
+func (b *bot) sendCompressNotice(ctx context.Context, chatID string) {
+	ctxT, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, _ = b.ch.Send(ctxT, &types.SendInput{
+		ChatID:  chatID,
+		MsgType: "text",
+		Text:    "当前会话上下文较长，正在自动压缩为摘要以延续后续追问。",
+	})
 }
 
 // shouldCompressLocked 判断是否达到压缩阈值，调用方须持有 b.mu。
@@ -717,6 +735,40 @@ func cleanMention(content string) string {
 
 func cardWithText(text string) string {
 	return cardJSON("AI 回答", text, "")
+}
+
+// cardJSONFinal 生成回答完成卡片，meta 为非空时在正文上方渲染一行元信息。
+func cardJSONFinal(title, meta, text string) string {
+	if meta != "" {
+		text = meta + "\n\n" + text
+	}
+	return cardJSON(title, text, "")
+}
+
+// contextMetaLine 生成回答卡片上的上下文统计行：首条消息时间 + 本次 token 用量。
+func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
+	b.mu.Lock()
+	s := b.sessions[key]
+	var createdAt time.Time
+	if s != nil {
+		createdAt = s.createdAt
+	}
+	b.mu.Unlock()
+
+	var parts []string
+	if !createdAt.IsZero() {
+		parts = append(parts, "上下文始于 "+createdAt.Format("01-02 15:04"))
+	}
+	if usage != nil && (usage.TotalTokens > 0 || usage.PromptTokens > 0 || usage.OutputTokens > 0) {
+		parts = append(parts, fmt.Sprintf("本次 token %d（输入 %d / 输出 %d）", usage.TotalTokens, usage.PromptTokens, usage.OutputTokens))
+		if usage.CachedTokens > 0 {
+			parts = append(parts, fmt.Sprintf("缓存命中 %d", usage.CachedTokens))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ")
 }
 
 // cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染

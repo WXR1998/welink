@@ -54,6 +54,11 @@ func main() {
 		log.Fatalf("[main] 初始化飞书 bot 失败: %v", err)
 	}
 
+	// 启动内部管理服务（可选）：供后端/前端查看/删除会话上下文。
+	if cfg.ManageAddr != "" {
+		_ = b.startManageServer(ctx, cfg.ManageAddr)
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		errc <- b.run(ctx)

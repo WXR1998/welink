@@ -118,11 +118,20 @@ type analyzeRequest struct {
 	ChatID          string       `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
+// analyzeUsage 携带本次 analyze 的 LLM token 用量（机器人侧镜像）。
+type analyzeUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
 // analyzeChunk 解析后端 /api/ai/analyze 的 SSE data 帧。
 type analyzeChunk struct {
-	Delta string `json:"delta,omitempty"`
-	Done  bool   `json:"done,omitempty"`
-	Error string `json:"error,omitempty"`
+	Delta string        `json:"delta,omitempty"`
+	Done  bool          `json:"done,omitempty"`
+	Error string        `json:"error,omitempty"`
+	Usage *analyzeUsage `json:"usage,omitempty"`
 }
 
 // complete 调用 POST /api/ai/complete，用非流式补全做上下文压缩摘要。
@@ -384,7 +393,9 @@ func buildDataContext(d *memorySearchData) string {
 }
 
 // analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
-func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string) (string, error) {
+// analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
+// 返回回答文本与此次调用的 token 用量（可能为 nil）。
+func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string) (string, *analyzeUsage, error) {
 	var sys strings.Builder
 	sys.WriteString("你是 WeLink 的跨联系人 AI 助手，根据检索到的聊天记录回答用户问题。\n")
 	sys.WriteString("要求：用中文回答，简洁清晰；直接回答问题；数据不足时诚实说明；使用 Markdown 排版。\n")
@@ -420,6 +431,7 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 	})
 
 	var answer strings.Builder
+	var usage *analyzeUsage
 	err := doSSE(ctx, cfg, "/api/ai/analyze", payload, func(data []byte) error {
 		var ch analyzeChunk
 		if err := json.Unmarshal(data, &ch); err != nil {
@@ -431,10 +443,13 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 		if ch.Delta != "" {
 			answer.WriteString(ch.Delta)
 		}
+		if ch.Usage != nil {
+			usage = ch.Usage
+		}
 		return nil
 	})
 	if err != nil {
-		return answer.String(), err
+		return answer.String(), usage, err
 	}
-	return answer.String(), nil
+	return answer.String(), usage, nil
 }

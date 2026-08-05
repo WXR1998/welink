@@ -33,6 +33,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1138,6 +1139,27 @@ func serverMain() {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"chats": existing.FeishuBotChats})
+	})
+
+	// 飞书机器人内部会话管理代理：前端查看/删除某个群某人的上下文。
+	// 仅当配置了 FEISHU_BOT_MANAGE_URL 时启用，否则返回 503（不影响其它功能）。
+	api.Any("/feishu/sessions", func(c *gin.Context) {
+		target := strings.TrimRight(os.Getenv("FEISHU_BOT_MANAGE_URL"), "/")
+		if target == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 FEISHU_BOT_MANAGE_URL"})
+			return
+		}
+		u, err := url.Parse(target)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "FEISHU_BOT_MANAGE_URL 无效"})
+			return
+		}
+		proxy := httputil.NewSingleHostReverseProxy(u)
+		req := c.Request.Clone(c.Request.Context())
+		req.URL.Path = "/sessions"
+		req.URL.RawQuery = c.Request.URL.RawQuery
+		req.Host = u.Host
+		proxy.ServeHTTP(c.Writer, req)
 	})
 
 	// 导出文件的下载目录（仅 App 模式用）。单独一个端点：改这个不应触发重建索引。

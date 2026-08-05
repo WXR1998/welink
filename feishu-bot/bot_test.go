@@ -131,7 +131,6 @@ func TestCompressAppliesWhenVersionUnchanged(t *testing.T) {
 	}
 }
 
-
 func TestNotifyMentionPrefix(t *testing.T) {
 	// 提问者 open_id，经 SDK 前缀生成应为 <at user_id="ou_xxx">
 	prefix := normalize.ComposeMentionsTextPrefix([]types.Mention{{UserID: "ou_test_123", Name: ""}})
@@ -142,5 +141,22 @@ func TestNotifyMentionPrefix(t *testing.T) {
 	empty := normalize.ComposeMentionsTextPrefix([]types.Mention{{UserID: "", Name: "x"}})
 	if empty != "" {
 		t.Fatalf("empty user_id should be skipped, got %q", empty)
+	}
+}
+
+func TestContextMetaLine(t *testing.T) {
+	created := time.Date(2026, 8, 5, 10, 0, 0, 0, time.Local)
+	usage := &analyzeUsage{PromptTokens: 200, OutputTokens: 30, TotalTokens: 230, CachedTokens: 120}
+	b := &bot{sessions: map[string]*session{
+		"group:oc_abc:ou_def": {createdAt: created},
+	}}
+	line := b.contextMetaLine("group:oc_abc:ou_def", usage)
+	if !strings.Contains(line, "上下文始于") || !strings.Contains(line, "本次 token 230") || !strings.Contains(line, "缓存命中 120") {
+		t.Fatalf("unexpected meta line: %q", line)
+	}
+	// 无 usage
+	line2 := b.contextMetaLine("group:oc_abc:ou_def", nil)
+	if !strings.Contains(line2, "上下文始于") || strings.Contains(line2, "token") {
+		t.Fatalf("unexpected meta line without usage: %q", line2)
 	}
 }

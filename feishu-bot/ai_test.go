@@ -24,7 +24,7 @@ func TestAnalyzeQuestion_AccumulatesSSE(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL, WeLinkToken: "tok"}
-	answer, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	answer, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestAnalyzeQuestion_PropagatesError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "生成失败") {
 		t.Fatalf("expected error, got %v", err)
 	}

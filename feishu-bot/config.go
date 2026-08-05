@@ -39,6 +39,9 @@ type Config struct {
 	// 需要维护群公告的群 chat_id（逗号分隔）；留空则自动发现 bot 所在全部群
 	AnnounceChatID string
 
+	// 内部管理 HTTP 服务监听地址（如 :8111，供后端/前端查看删除会话）；空=关闭
+	ManageAddr string
+
 	// 心跳检测间隔与断连公告限频（默认见 loadConfig）
 	HeartbeatInterval time.Duration
 	DisconnectCooldown time.Duration
@@ -57,6 +60,7 @@ func loadConfig() (*Config, error) {
 		AllowedUsers:      splitList(os.Getenv("ALLOWED_USERS")),
 		LLMModel:          getenv("LLM_MODEL", "lingjun.internal/deepseek-v4-flash"),
 		AnnounceChatID:    os.Getenv("ANNOUNCE_CHAT_ID"),
+		ManageAddr:        os.Getenv("MANAGE_ADDR"),
 		HeartbeatInterval: time.Duration(getenvInt("HEARTBEAT_INTERVAL_SEC", 30)) * time.Second,
 		DisconnectCooldown: time.Duration(getenvInt("DISCONNECT_COOLDOWN_MIN", 60)) * time.Minute,
 	}
@@ -77,6 +81,7 @@ func loadConfig() (*Config, error) {
 			AllowedUsers     []string `json:"allowed_users"`
 			LLMModel         string   `json:"llm_model"`
 			AnnounceChatID   string   `json:"announce_chat_id"`
+			ManageAddr       string   `json:"manage_addr"`
 			HeartbeatIntervalSec int `json:"heartbeat_interval_sec"`
 			DisconnectCooldownMin int `json:"disconnect_cooldown_min"`
 		}
@@ -92,6 +97,7 @@ func loadConfig() (*Config, error) {
 		applyOverride(&cfg.SessionStorePath, overrides.SessionStorePath)
 		applyOverride(&cfg.LLMModel, overrides.LLMModel)
 		applyOverride(&cfg.AnnounceChatID, overrides.AnnounceChatID)
+		applyOverride(&cfg.ManageAddr, overrides.ManageAddr)
 		if overrides.HeartbeatIntervalSec > 0 {
 			cfg.HeartbeatInterval = time.Duration(overrides.HeartbeatIntervalSec) * time.Second
 		}

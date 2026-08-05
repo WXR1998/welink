@@ -3,7 +3,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  EyeOff, BarChart2, Bot, Sparkles, ShieldOff, Lock,
+  EyeOff, BarChart2, Bot, Sparkles, ShieldOff, Lock, MessagesSquare,
   Users, Database, Settings, Stethoscope, FileText, Smartphone,
 } from 'lucide-react';
 
@@ -46,6 +46,7 @@ export const SECTIONS: SectionMeta[] = [
   { id: 'profiles',  title: '多账号',     icon: Users,      groupId: 'data' },
   { id: 'backup',    title: 'AI 备份',    icon: Bot,        groupId: 'data' },
   { id: 'feishu-scope', title: '飞书群问答白名单', icon: Bot,        groupId: 'data' },
+  { id: 'feishu-context', title: '飞书上下文管理', icon: MessagesSquare, groupId: 'data' },
   { id: 'forecast',  title: '关系预测忽略', icon: Sparkles,   groupId: 'data' },
   { id: 'preferences', title: '配置管理', icon: Settings,   groupId: 'data' },
 
