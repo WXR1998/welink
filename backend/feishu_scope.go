@@ -97,9 +97,10 @@ func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences
 	if prompt == "" {
 		return msgs
 	}
-	injected := "\n\n【本群补充提示】\n" + prompt + "\n"
-	// 定位机器人固定的系统开场白，补充提示紧跟其后（位于会话历史和检索上下文之前）。
-	const introMarker = "使用 Markdown 排版。\n"
+	// 补充提示作为第 7 点追加在“支持论据/聊天记录”要求（第 6 点）之后。
+	injected := "\n\n7. " + prompt + "\n"
+	// 定位机器人 system 的固定要求结尾，把群补充信息作为第 7 点插入其后。
+	const introMarker = "直到能完整表达该事件为止。\n"
 	for i := range msgs {
 		if msgs[i].Role == "system" {
 			content := msgs[i].Content

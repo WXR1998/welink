@@ -118,13 +118,13 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 		},
 	}
 
-	// 已有 system 消息 → 插入到固定开场白之后
-	msgs := []LLMMessage{{Role: "system", Content: "你是 WeLink 的跨联系人 AI 助手，根据检索到的聊天记录回答用户问题。\n要求：用中文回答，简洁清晰；直接回答问题；数据不足时诚实说明；使用 Markdown 排版。\n下面是正文"}, {Role: "user", Content: "hi"}}
+	// 已有 system 消息 → 补充提示作为第 7 点插在第 6 点（支持论据要求）之后
+	msgs := []LLMMessage{{Role: "system", Content: "要求：\n6. 每段故事都要说明依据的聊天记录原文，直到能完整表达该事件为止。\n下面是正文"}, {Role: "user", Content: "hi"}}
 	got := injectFeishuGroupPrompt(msgs, "oc_g1", prefs)
 	if len(got) != 2 {
 		t.Fatalf("expected length 2, got %d", len(got))
 	}
-	want := "你是 WeLink 的跨联系人 AI 助手，根据检索到的聊天记录回答用户问题。\n要求：用中文回答，简洁清晰；直接回答问题；数据不足时诚实说明；使用 Markdown 排版。\n\n\n【本群补充提示】\n本群成员主要使用粤语交流。\n下面是正文"
+	want := "要求：\n6. 每段故事都要说明依据的聊天记录原文，直到能完整表达该事件为止。\n\n\n7. 本群成员主要使用粤语交流。\n下面是正文"
 	if got[0].Content != want {
 		t.Fatalf("unexpected system content: %q", got[0].Content)
 	}
@@ -132,7 +132,7 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 	// 无固定开场白 → 回退追加到 system 末尾
 	msgs3 := []LLMMessage{{Role: "system", Content: "base"}, {Role: "user", Content: "hi"}}
 	got3 := injectFeishuGroupPrompt(msgs3, "oc_g1", prefs)
-	if got3[0].Content != "base\n\n【本群补充提示】\n本群成员主要使用粤语交流。\n" {
+	if got3[0].Content != "base\n\n7. 本群成员主要使用粤语交流。\n" {
 		t.Fatalf("unexpected fallback system content: %q", got3[0].Content)
 	}
 
