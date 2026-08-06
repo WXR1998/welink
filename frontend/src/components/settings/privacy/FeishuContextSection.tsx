@@ -34,7 +34,7 @@ export const FeishuContextSection: React.FC = () => {
     axios
       .get<{ sessions: FeishuSession[] }>('/api/feishu/sessions')
       .then((r) => {
-        setSessions(r.data.sessions ?? []);
+        setSessions((r.data.sessions ?? []).filter((s) => s.msg_count > 0));
         setUnavailable(false);
       })
       .catch(() => {

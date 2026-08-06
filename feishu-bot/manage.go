@@ -80,6 +80,11 @@ func (b *bot) listSessions(w http.ResponseWriter, r *http.Request) {
 			needSave = true
 			continue
 		}
+		// 已被前端删除或从未产生问答的会话：历史为空，直接跳过，
+		// 避免刷新后"空上下文"再次出现。
+		if len(s.history) == 0 {
+			continue
+		}
 		chatID, userID := keyParts(k)
 		chars := 0
 		for _, m := range s.history {
