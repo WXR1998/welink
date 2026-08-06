@@ -37,3 +37,18 @@ func TestCollectPinnedAliasesEmpty(t *testing.T) {
 		t.Fatalf("expected nil for empty alias map, got %v", got)
 	}
 }
+
+func TestNormalizeAliasCaseInsensitive(t *testing.T) {
+	cases := map[string]string{
+		"DJ坤":    "dj坤",
+		"dj坤":    "dj坤",
+		"  DKw ": "dkw",
+		"abc":    "abc",
+		"ABC":    "abc",
+	}
+	for in, want := range cases {
+		if got := normalizeAlias(in); got != want {
+			t.Errorf("normalizeAlias(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

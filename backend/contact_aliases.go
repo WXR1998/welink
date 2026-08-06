@@ -15,6 +15,7 @@ func initContactAliasTables() error {
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		contact_key TEXT    NOT NULL,
 		alias       TEXT    NOT NULL,
+		alias_key   TEXT    NOT NULL DEFAULT '',
 		created_at  INTEGER NOT NULL
 	)`)
 	if err != nil {
@@ -24,7 +25,27 @@ func initContactAliasTables() error {
 	if err != nil {
 		return fmt.Errorf("mem_contact_aliases: create index: %w", err)
 	}
-	_, err = aiDB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_mem_contact_aliases ON mem_contact_aliases(contact_key, alias)`)
+
+	// 迁移：老库可能没有 alias_key 列，补齐并回填小写 key。
+	if err := addColumnIfMissing("mem_contact_aliases", "alias_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("mem_contact_aliases: add alias_key: %w", err)
+	}
+	// 兼容大小写差异：同一 (contact_key, alias_key) 只保留最小 id 的一条。
+	// 先回填旧行，再清理重复，最后用 alias_key 建唯一索引。
+	if _, err := aiDB.Exec(`UPDATE mem_contact_aliases SET alias_key = lower(alias) WHERE alias_key = ''`); err != nil {
+		return fmt.Errorf("mem_contact_aliases: backfill alias_key: %w", err)
+	}
+	if _, err := aiDB.Exec(`DELETE FROM mem_contact_aliases
+		WHERE id NOT IN (
+			SELECT MIN(id) FROM mem_contact_aliases GROUP BY contact_key, alias_key
+		)`); err != nil {
+		return fmt.Errorf("mem_contact_aliases: dedupe: %w", err)
+	}
+	// 旧的 (contact_key, alias) 大小写敏感唯一索引可能已存在，先删掉再按 alias_key 重建。
+	if _, err := aiDB.Exec(`DROP INDEX IF EXISTS uq_mem_contact_aliases`); err != nil {
+		return fmt.Errorf("mem_contact_aliases: drop old unique index: %w", err)
+	}
+	_, err = aiDB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_mem_contact_aliases ON mem_contact_aliases(contact_key, alias_key)`)
 	if err != nil {
 		return fmt.Errorf("mem_contact_aliases: create unique index: %w", err)
 	}
@@ -93,6 +114,11 @@ func GetAllContactAliases() (map[string][]string, error) {
 	return out, nil
 }
 
+// normalizeAlias 把外号归一为小写 key，用于大小写不敏感的去重与匹配。
+func normalizeAlias(alias string) string {
+	return strings.ToLower(strings.TrimSpace(alias))
+}
+
 func AddContactAlias(contactKey, alias string) (int64, error) {
 	db := aliasDB()
 	if db == nil {
@@ -101,9 +127,9 @@ func AddContactAlias(contactKey, alias string) (int64, error) {
 	contactKey = strings.TrimSpace(contactKey)
 	alias = strings.TrimSpace(alias)
 	res, err := db.Exec(
-		`INSERT INTO mem_contact_aliases(contact_key, alias, created_at) VALUES(?, ?, ?)
-		 ON CONFLICT(contact_key, alias) DO NOTHING`,
-		contactKey, alias, time.Now().Unix())
+		`INSERT INTO mem_contact_aliases(contact_key, alias, alias_key, created_at) VALUES(?, ?, ?, ?)
+		 ON CONFLICT(contact_key, alias_key) DO NOTHING`,
+		contactKey, alias, normalizeAlias(alias), time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -116,7 +142,7 @@ func DeleteContactAlias(contactKey, alias string) error {
 	if db == nil {
 		return fmt.Errorf("AI DB 未就绪")
 	}
-	_, err := db.Exec(`DELETE FROM mem_contact_aliases WHERE contact_key = ? AND alias = ?`, contactKey, alias)
+	_, err := db.Exec(`DELETE FROM mem_contact_aliases WHERE contact_key = ? AND alias_key = ?`, contactKey, normalizeAlias(alias))
 	return err
 }
 
