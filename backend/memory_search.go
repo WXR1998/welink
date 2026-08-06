@@ -42,6 +42,35 @@ type FactSource struct {
 	SourceName string          `json:"source_name"` // 可读来源名（如"群聊「xxx」"或"与「xxx」的私聊"）
 }
 
+// contactDisplayName 把联系人 key 解析为可读姓名（优先备注，其次昵称）。
+func pinnedContactName(contactKey string, svc *service.ContactService) string {
+	if svc == nil || !strings.HasPrefix(contactKey, "contact:") {
+		return ""
+	}
+	uname := strings.TrimPrefix(contactKey, "contact:")
+	for _, s := range svc.GetCachedStats() {
+		if s.Username == uname {
+			if s.Remark != "" {
+				return s.Remark
+			}
+			if s.Nickname != "" {
+				return s.Nickname
+			}
+		}
+	}
+	return uname
+}
+
+// pinnedFactLine 把一条置顶记忆拼成带联系人名称的前缀行，避免主语缺失。
+func pinnedFactLine(f MemFact, svc *service.ContactService) string {
+	name := strings.TrimSpace(pinnedContactName(f.ContactKey, svc))
+	fact := strings.TrimSpace(f.Fact)
+	if name == "" {
+		return "- " + fact
+	}
+	return "- " + name + "：" + fact
+}
+
 // resolveSourceName 把 contact_key 解析为可读来源名称。
 func resolveSourceName(contactKey string, svc *service.ContactService) string {
 	if svc == nil || contactKey == "" {
@@ -193,7 +222,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 		var sb strings.Builder
 		sb.WriteString("\n\n── 用户置顶的背景事实（包含外号、简称等映射关系，用于理解问题中的人名）──\n")
 		for _, f := range pinnedFacts {
-			fmt.Fprintf(&sb, "- %s\n", f.Fact)
+			fmt.Fprintf(&sb, "%s\n", pinnedFactLine(f, svc))
 		}
 		pinnedBlock = sb.String()
 	}
