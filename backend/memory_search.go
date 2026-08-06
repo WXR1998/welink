@@ -748,6 +748,8 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		// Step 1: LLM 查询分解
 		sendProgress("decompose", "正在用 LLM 分解问题...")
 		svc := getSvc()
+		// 先把原文提问里的外号还原为原名，让后续整条链路都围绕原名进行。
+		body.Query = normalizeEntityNames(body.Query, svc)
 		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID, svc)
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
