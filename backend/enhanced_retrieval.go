@@ -758,7 +758,10 @@ func EnhancedRetrieval(
 		allVecMessages = append(allVecMessages, vecMsgs...)
 	}
 
-	// 对扩展子查询也做一路向量检索（结果合并到 allVecFacts）
+	// 对扩展子查询同时做向量 + BM25 检索（结果合并到候选池）。
+	// 查询扩展会把外号还原为真实姓名（如“土鲫鱼”→“李佳轩”），
+	// 但原始 query 的 BM25 仍用外号检索，无法命中“李佳轩”字样的记忆；
+	// 因此必须用扩展后的真实姓名再走一次 BM25 关键词检索，否则实体会被漏掉。
 	if len(result.ExpandedQueries) > 0 {
 		expStart := time.Now()
 		for si, sq := range result.ExpandedQueries {
@@ -766,10 +769,14 @@ func EnhancedRetrieval(
 			for _, key := range searchKeys {
 				facts, _ := SearchMemFactsFiltered(key, sq, 20, timeFrom, timeTo, prefs)
 				allVecFacts = append(allVecFacts, facts...)
+				bm25Facts, _ := SearchMemFactsBM25(key, sq, 20, timeFrom, timeTo)
+				allBM25Facts = append(allBM25Facts, bm25Facts...)
 			}
 			if len(searchKeys) == 0 {
 				facts, _ := SearchMemFactsFiltered("", sq, 20, timeFrom, timeTo, prefs)
 				allVecFacts = append(allVecFacts, facts...)
+				bm25Facts, _ := SearchMemFactsBM25("", sq, 20, timeFrom, timeTo)
+				allBM25Facts = append(allBM25Facts, bm25Facts...)
 			}
 		}
 		log.Printf("[enhanced] expanded queries retrieval: %d subQueries, %dms", len(result.ExpandedQueries), time.Since(expStart).Milliseconds())
