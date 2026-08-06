@@ -52,3 +52,15 @@ func TestNormalizeAliasCaseInsensitive(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireContactKey(t *testing.T) {
+	if err := requireContactKey("contact:wxid_1"); err != nil {
+		t.Errorf("contact: key should pass, got %v", err)
+	}
+	if err := requireContactKey("group:g1"); err == nil {
+		t.Error("group: key should be rejected")
+	}
+	if err := requireContactKey("wxid_1"); err == nil {
+		t.Error("bare key should be rejected")
+	}
+}

@@ -119,12 +119,23 @@ func normalizeAlias(alias string) string {
 	return strings.ToLower(strings.TrimSpace(alias))
 }
 
+// requireContactKey 校验外号只允许绑定在联系人（contact:)上，群聊不接受。
+func requireContactKey(key string) error {
+	if !strings.HasPrefix(key, "contact:") {
+		return fmt.Errorf("外号只能绑定联系人（contact:）")
+	}
+	return nil
+}
+
 func AddContactAlias(contactKey, alias string) (int64, error) {
 	db := aliasDB()
 	if db == nil {
 		return 0, fmt.Errorf("AI DB 未就绪")
 	}
 	contactKey = strings.TrimSpace(contactKey)
+	if err := requireContactKey(contactKey); err != nil {
+		return 0, err
+	}
 	alias = strings.TrimSpace(alias)
 	res, err := db.Exec(
 		`INSERT INTO mem_contact_aliases(contact_key, alias, alias_key, created_at) VALUES(?, ?, ?, ?)
@@ -142,6 +153,10 @@ func DeleteContactAlias(contactKey, alias string) error {
 	if db == nil {
 		return fmt.Errorf("AI DB 未就绪")
 	}
+	contactKey = strings.TrimSpace(contactKey)
+	if err := requireContactKey(contactKey); err != nil {
+		return err
+	}
 	_, err := db.Exec(`DELETE FROM mem_contact_aliases WHERE contact_key = ? AND alias_key = ?`, contactKey, normalizeAlias(alias))
 	return err
 }
@@ -150,6 +165,10 @@ func DeleteContactAliases(contactKey string) error {
 	db := aliasDB()
 	if db == nil {
 		return fmt.Errorf("AI DB 未就绪")
+	}
+	contactKey = strings.TrimSpace(contactKey)
+	if err := requireContactKey(contactKey); err != nil {
+		return err
 	}
 	_, err := db.Exec(`DELETE FROM mem_contact_aliases WHERE contact_key = ?`, contactKey)
 	return err
@@ -207,6 +226,10 @@ func registerContactAliasRoutes(api *gin.RouterGroup) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "contact_key 必填"})
 			return
 		}
+		if err := requireContactKey(key); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		aliases, err := ListContactAliases(key)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -234,6 +257,14 @@ func registerContactAliasRoutes(api *gin.RouterGroup) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "contact_key / alias 不能为空"})
 			return
 		}
+		if err := requireContactKey(key); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := requireContactKey(key); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		_, err := AddContactAlias(key, alias)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -248,6 +279,10 @@ func registerContactAliasRoutes(api *gin.RouterGroup) {
 		alias := strings.TrimSpace(c.Query("alias"))
 		if key == "" || alias == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "contact_key / alias 不能为空"})
+			return
+		}
+		if err := requireContactKey(key); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		if err := DeleteContactAlias(key, alias); err != nil {

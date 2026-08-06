@@ -1242,13 +1242,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
                     )}
                     <span className="text-xs text-gray-400">{s.count}</span>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); void openAlias(s.contact_key, contactName); }}
-                    title={`设置「${contactName}」的外号`}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-[#07c160] hover:bg-gray-100 dark:hover:bg-white/5 shrink-0"
-                  >
-                    <Tags size={13} />
-                  </button>
+                  {s.contact_key.startsWith('contact:') && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void openAlias(s.contact_key, contactName); }}
+                      title={`设置「${contactName}」的外号`}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-[#07c160] hover:bg-gray-100 dark:hover:bg-white/5 shrink-0"
+                    >
+                      <Tags size={13} />
+                    </button>
+                  )}
                 </div>
               );
             })}
