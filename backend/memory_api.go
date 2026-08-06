@@ -236,7 +236,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		}
 		now := time.Now().Unix()
 		res, err := db.Exec(
-			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+			"INSERT INTO mem_facts(contact_key, fact, source_from, source_to, embedding, pinned, version, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
 			body.ContactKey, body.Fact, 0, 0, emb, pinned, memFactVersion, now, now,
 		)
 		if err != nil {
