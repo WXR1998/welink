@@ -5326,6 +5326,7 @@ func serverMain() {
 	// 记忆库相关端点（/api/memory/*）
 	registerMemoryRoutes(api)
 	registerContactAliasRoutes(api)
+	registerExtraContactRoutes(api, getSvc)
 
 	// 记忆优先两级检索端点（/api/ai/memory-search）
 	registerMemorySearchRoutes(api, getSvc)

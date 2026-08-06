@@ -2710,6 +2710,62 @@ func (s *ContactService) GetCachedStats() []ContactStatsExtended {
 	return s.cache
 }
 
+// AddExtraContact 新增一个没有微信聊天记录的占位联系人，并立即写入内存缓存。
+// 用于记录“xxx 的女友是 yyy”之类的人物关系，无需真实聊天记录。
+func (s *ContactService) AddExtraContact(displayName, note string) (string, error) {
+	if s == nil || s.dbMgr == nil || s.dbMgr.ContactDB == nil {
+		return "", fmt.Errorf("联系人数据库未就绪")
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return "", fmt.Errorf("显示名不能为空")
+	}
+	var username string
+	for i := 0; i < 3; i++ {
+		username = fmt.Sprintf("extra_%d_%d", time.Now().UnixNano(), i)
+		var cnt int
+		_ = s.dbMgr.ContactDB.QueryRow("SELECT COUNT(*) FROM contact WHERE username = ?", username).Scan(&cnt)
+		if cnt == 0 {
+			break
+		}
+	}
+	_, err := s.dbMgr.ContactDB.Exec(
+		"INSERT INTO contact(username, nick_name, remark, description, flag, verify_flag, big_head_url, small_head_url) VALUES(?, ?, ?, ?, 3, 0, '', '')",
+		username, "", displayName, strings.TrimSpace(note))
+	if err != nil {
+		return "", fmt.Errorf("写入联系人库失败: %w", err)
+	}
+	s.cacheMu.Lock()
+	s.cache = append(s.cache, ContactStatsExtended{
+		ContactStats: model.ContactStats{Contact: model.Contact{
+			Username: username, Remark: displayName, Description: strings.TrimSpace(note),
+		}},
+	})
+	s.cacheMu.Unlock()
+	return username, nil
+}
+
+// RemoveExtraContact 从联系人库和内存缓存移除占位联系人（无聊天记录）。
+func (s *ContactService) RemoveExtraContact(username string) error {
+	if s == nil || s.dbMgr == nil || s.dbMgr.ContactDB == nil {
+		return fmt.Errorf("联系人数据库未就绪")
+	}
+	_, err := s.dbMgr.ContactDB.Exec("DELETE FROM contact WHERE username = ?", username)
+	if err != nil {
+		return err
+	}
+	s.cacheMu.Lock()
+	var kept []ContactStatsExtended
+	for _, c := range s.cache {
+		if c.Username != username {
+			kept = append(kept, c)
+		}
+	}
+	s.cache = kept
+	s.cacheMu.Unlock()
+	return nil
+}
+
 func (s *ContactService) GetGlobal() GlobalStats {
 	s.cacheMu.RLock(); defer s.cacheMu.RUnlock(); return s.global
 }

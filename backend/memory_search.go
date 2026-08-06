@@ -47,6 +47,15 @@ func resolveSourceName(contactKey string, svc *service.ContactService) string {
 	if svc == nil || contactKey == "" {
 		return contactKey
 	}
+	if strings.HasPrefix(contactKey, extraContactKeyPrefix) {
+		uname := strings.TrimPrefix(contactKey, "contact:")
+		for _, s := range svc.GetCachedStats() {
+			if s.Username == uname && s.Remark != "" {
+				return "占位联系人「" + s.Remark + "」"
+			}
+		}
+		return "占位联系人「" + uname + "」"
+	}
 	if strings.HasPrefix(contactKey, "group:") {
 		uname := strings.TrimPrefix(contactKey, "group:")
 		for _, g := range svc.GetGroups() {
@@ -197,6 +206,17 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 			var sb strings.Builder
 			sb.WriteString("\n\n── 联系人外号对照表（用于把问题中的外号/简称还原为真实姓名）──\n")
 			mainName := func(key string) string {
+				if strings.HasPrefix(key, extraContactKeyPrefix) {
+					uname := strings.TrimPrefix(key, "contact:")
+					if svc != nil {
+						for _, s := range svc.GetCachedStats() {
+							if s.Username == uname && s.Remark != "" {
+								return s.Remark
+							}
+						}
+					}
+					return uname
+				}
 				if svc == nil {
 					return strings.TrimPrefix(key, "contact:")
 				}
@@ -389,6 +409,7 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 
 	contacts := svc.GetCachedStats()
 	aliasIndex := getContactAliasIndex()
+	extraContacts := extraContactsBySvc(svc)
 	groups := svc.GetGroups()
 
 	// 建索引：lower(name) → contact_key
@@ -423,6 +444,18 @@ func ResolveEntities(entities []string, svc *service.ContactService) []ResolvedE
 				continue
 			}
 			contactIndex[strings.ToLower(t)] = key
+		}
+	}
+
+	// 占位联系人：没有聊天记录，但可作为关系背景的实体（如“xxx 的女友”）。
+	for _, ec := range extraContacts {
+		n := strings.TrimSpace(ec.DisplayName)
+		if n == "" {
+			continue
+		}
+		contactIndex[strings.ToLower(n)] = ec.ContactKey
+		if displayNames[ec.ContactKey] == "" {
+			displayNames[ec.ContactKey] = n
 		}
 	}
 

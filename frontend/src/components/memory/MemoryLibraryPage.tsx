@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera, CheckSquare, Tags } from 'lucide-react';
+import { Brain, Pin, PinOff, Pencil, Trash2, Search, Loader2, Check, X as XIcon, Plus, Copy, Camera, CheckSquare, Tags, UserPlus } from 'lucide-react';
 import axios from 'axios';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -607,6 +607,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
   const [aliasInput, setAliasInput] = useState('');
   const [aliasBusy, setAliasBusy] = useState(false);
   const [aliasErr, setAliasErr] = useState<string | null>(null);
+  const [extraOpen, setExtraOpen] = useState(false);
+  const [extraName, setExtraName] = useState('');
+  const [extraNote, setExtraNote] = useState('');
+  const [extraBusy, setExtraBusy] = useState(false);
+  const [extraErr, setExtraErr] = useState<string | null>(null);
+  const [extraAddedKey, setExtraAddedKey] = useState('');
+  const [extraLocal, setExtraLocal] = useState<{ contact_key: string; display_name: string }[]>([]);
 
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -636,8 +643,15 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
         isGroup: true,
       });
     }
+    for (const ex of extraLocal) {
+      m.set(stripKey(ex.contact_key), {
+        name: ex.display_name,
+        avatar: undefined,
+        isGroup: false,
+      });
+    }
     return m;
-  }, [contacts, groups]);
+  }, [contacts, groups, extraLocal]);
   const lookup = (key: string) => contactMap.get(stripKey(key));
 
   // 所有人名集合（用于截图时高亮人名）
@@ -1109,12 +1123,49 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
     }
   };
 
+  const openExtraAdd = () => {
+    setExtraName('');
+    setExtraNote('');
+    setExtraErr(null);
+    setExtraAddedKey('');
+    setExtraOpen(true);
+  };
+
+  const createExtra = async () => {
+    if (!extraName.trim()) { setExtraErr('请输入联系人名字'); return; }
+    setExtraBusy(true); setExtraErr(null);
+    try {
+      const r = await axios.post<{ status: string; contact_key: string }>('/api/memory/extra-contacts', {
+        display_name: extraName.trim(),
+        note: extraNote.trim(),
+      });
+      const key = r.data.contact_key || '';
+      setExtraAddedKey(key);
+      setExtraName('');
+      setExtraNote('');
+      if (key) {
+        setExtraLocal(prev => [...prev, { contact_key: key, display_name: extraName.trim() }]);
+      }
+    } catch (e: unknown) {
+      const anyE = e as { response?: { data?: { error?: string } }; message?: string };
+      setExtraErr(anyE?.response?.data?.error || anyE?.message || '创建失败');
+    } finally {
+      setExtraBusy(false);
+    }
+  };
+
   // 添加 modal 的联系人候选：所有 contacts + groups，按查询过滤
   const addCandidates = useMemo(() => {
     const q = addContactQuery.trim().toLowerCase();
     const all: { key: string; name: string; avatar?: string; isGroup: boolean }[] = [];
+    const seenKeys = new Set<string>();
+    const pushCandidate = (item: { key: string; name: string; avatar?: string; isGroup: boolean }) => {
+      if (seenKeys.has(item.key)) return;
+      seenKeys.add(item.key);
+      all.push(item);
+    };
     for (const c of contacts) {
-      all.push({
+      pushCandidate({
         key: 'contact:' + c.username,
         name: c.remark || c.nickname || c.username,
         avatar: avatarSrc(c.small_head_url),
@@ -1122,16 +1173,24 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
       });
     }
     for (const g of groups) {
-      all.push({
+      pushCandidate({
         key: 'group:' + g.username,
         name: getGroupDisplayName(g),
         avatar: avatarSrc(g.small_head_url),
         isGroup: true,
       });
     }
+    for (const ex of extraLocal) {
+      pushCandidate({
+        key: ex.contact_key,
+        name: ex.display_name,
+        avatar: undefined,
+        isGroup: false,
+      });
+    }
     if (!q) return all.slice(0, 50);
     return all.filter(x => x.name.toLowerCase().includes(q) || x.key.toLowerCase().includes(q)).slice(0, 50);
-  }, [contacts, groups, addContactQuery]);
+  }, [contacts, groups, extraLocal, addContactQuery]);
 
   return (
     <div data-mem-page className="p-4 sm:p-10 pb-20">
@@ -1160,6 +1219,13 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
             >
               <Plus size={14} />
               手动添加
+            </button>
+            <button
+              onClick={openExtraAdd}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-semibold hover:border-[#07c160] hover:text-[#07c160] transition-colors"
+            >
+              <UserPlus size={14} />
+              增加联系人
             </button>
           </>
         ) : (
@@ -1662,6 +1728,52 @@ export const MemoryLibraryPage: React.FC<Props> = ({ contacts, groups }) => {
           </div>
         </div>
       )}
+
+      {/* 增加占位联系人 modal */}
+      {extraOpen && (
+        <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/40 p-4" onClick={() => !extraBusy && setExtraOpen(false)}>
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-[#1d1d1f] shadow-2xl border border-gray-100 dark:border-white/10 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold dk-text">增加联系人</h3>
+              <button onClick={() => setExtraOpen(false)} className="text-gray-400 hover:text-gray-600"><XIcon size={16} /></button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">新增一个没有聊天记录的占位联系人，用于记录人物关系（如“xxx 的女友是 yyy”）。</p>
+
+            {extraAddedKey ? (
+              <div className="text-sm text-gray-700 dark:text-gray-300">
+                <p className="mb-2">已创建联系人（contact_key: <span className="font-mono">{extraAddedKey}</span>）。</p>
+                <p>现在可以到“手动添加”里选择它，写入一段置顶记忆来记录关系；也可以先关掉弹窗，稍后在左栏里管理。</p>
+              </div>
+            ) : (
+              <>
+                <label className="text-xs text-gray-600 dark:text-gray-400 font-semibold block">联系人名字</label>
+                <input
+                  value={extraName}
+                  onChange={(e) => setExtraName(e.target.value)}
+                  placeholder="例如：小雪"
+                  className="w-full mt-1 mb-4 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm dk-text outline-none focus:border-[#07c160]"
+                />
+                <label className="text-xs text-gray-600 dark:text-gray-400 font-semibold block">备注（可选）</label>
+                <input
+                  value={extraNote}
+                  onChange={(e) => setExtraNote(e.target.value)}
+                  placeholder="例如：张三的女友"
+                  className="w-full mt-1 mb-4 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm dk-text outline-none focus:border-[#07c160]"
+                />
+                {extraErr && <p className="text-xs text-red-500 mb-3">{extraErr}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setExtraOpen(false)} disabled={extraBusy} className="px-4 py-2 rounded-xl bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300 text-sm">取消</button>
+                  <button onClick={createExtra} disabled={extraBusy} className="px-4 py-2 rounded-xl bg-[#07c160] text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1.5">
+                    {extraBusy && <Loader2 size={14} className="animate-spin" />}
+                    创建
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* hover 预览浮层 */}
       {hoverFactId !== null && hoverPos && (
         <>
