@@ -342,12 +342,8 @@ func SearchVecMessagesFiltered(key, query string, topK int, timeFrom, timeTo str
 // ExpandQuery 用 LLM 将原始查询扩展为多个语义子查询。
 // 例如 "张三分手了" → ["张三分手的时间", "张三分手的原因", "张三分手后的状态"]
 // 每个子查询分别做向量+BM25检索，结果通过 RRF 融合。
-func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, profileID string) ([]string, error) {
-	prompt := `你是查询扩展助手。将用户的查询扩展为 3-5 个语义相关但表述不同的子查询，用于多路检索召回。
-每个子查询应从不同角度覆盖原始查询的意图。
-
-输出严格 JSON 数组，不要任何解释或代码围栏：
-["子查询1", "子查询2", "子查询3"]`
+func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, profileID string, svc *service.ContactService) ([]string, error) {
+	prompt := buildQueryExpansionPrompt(svc)
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
@@ -398,6 +394,23 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 		}
 	}
 	return out, nil
+}
+
+// buildQueryExpansionPrompt 组装查询扩展的系统提示。
+// 检索事实里可能只出现真实姓名，外号/简称无法直接命中，
+// 因此把置顶记忆和外号对照表一并喂给查询扩展，要求把外号还原为原名。
+func buildQueryExpansionPrompt(svc *service.ContactService) string {
+	pinned := pinnedMemoryBlock(svc)
+	aliases := contactAliasBlock(svc)
+
+	return fmt.Sprintf(`你是查询扩展助手。将用户的查询扩展为 3-5 个语义相关但表述不同的子查询，用于多路检索召回。
+每个子查询应从不同角度覆盖原始查询的意图。
+查询中如果出现外号、简称或昵称，必须依据下面的映射关系把它还原为对应的真实姓名，再用真实姓名生成子查询；不要使用外号/简称。
+
+%s%s
+
+输出严格 JSON 数组，不要任何解释或代码围栏：
+["子查询1", "子查询2", "子查询3"]`, aliases, pinned)
 }
 
 // ─── 整合：增强检索 ─────────────────────────────────────────────────────────────
@@ -671,7 +684,7 @@ func EnhancedRetrieval(
 	if hasLLM {
 		progress("query_expansion", "正在用 LLM 扩展子查询...")
 		// Query Expansion: 生成子查询
-		subQueries, err := ExpandQuery(query, decomp, prefs, profileID)
+		subQueries, err := ExpandQuery(query, decomp, prefs, profileID, svc)
 		if err == nil && len(subQueries) > 0 {
 			result.ExpandedQueries = subQueries
 			progress("query_expansion", fmt.Sprintf("生成了 %d 个子查询", len(subQueries)))

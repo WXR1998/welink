@@ -84,6 +84,71 @@ func pinnedFactLine(f MemFact, svc *service.ContactService) string {
 	return "- " + name + "：" + fact
 }
 
+// pinnedMemoryBlock 生成带主语、带外号映射的置顶背景事实片段，供分解/查询扩展等 LLM 调用使用。
+func pinnedMemoryBlock(svc *service.ContactService) string {
+	pinnedFacts, _ := GetPinnedMemFacts("")
+	if len(pinnedFacts) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n── 用户置顶的背景事实（包含外号、简称等映射关系，用于理解问题中的人名）──\n")
+	for _, f := range pinnedFacts {
+		fmt.Fprintf(&sb, "%s\n", pinnedFactLine(f, svc))
+	}
+	return sb.String()
+}
+
+// contactAliasBlock 生成联系人外号对照表，供 LLM 把问题中的外号/简称还原为真实姓名。
+func contactAliasBlock(svc *service.ContactService) string {
+	allAliases, _ := GetAllContactAliases()
+	if len(allAliases) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n── 联系人外号对照表（用于把问题中的外号/简称还原为真实姓名）──\n")
+	mainName := func(key string) string {
+		if strings.HasPrefix(key, extraContactKeyPrefix) {
+			uname := strings.TrimPrefix(key, "contact:")
+			if svc != nil {
+				for _, s := range svc.GetCachedStats() {
+					if s.Username == uname && s.Remark != "" {
+						return s.Remark
+					}
+				}
+			}
+			return uname
+		}
+		if svc == nil {
+			return strings.TrimPrefix(key, "contact:")
+		}
+		uname := strings.TrimPrefix(key, "contact:")
+		for _, s := range svc.GetCachedStats() {
+			if s.Username == uname {
+				if s.Remark != "" {
+					return s.Remark
+				}
+				if s.Nickname != "" {
+					return s.Nickname
+				}
+			}
+		}
+		return uname
+	}
+	keys := make([]string, 0, len(allAliases))
+	for k := range allAliases {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		aliases := allAliases[k]
+		if len(aliases) == 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "- %s 又称：%s\n", mainName(k), strings.Join(aliases, "、"))
+	}
+	return sb.String()
+}
+
 // resolveSourceName 把 contact_key 解析为可读来源名称。
 func resolveSourceName(contactKey string, svc *service.ContactService) string {
 	if svc == nil || contactKey == "" {
@@ -228,68 +293,9 @@ func looksLikeRawLookup(q string) bool {
 func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferences, profileID string, svc *service.ContactService) (*QueryDecomposition, []LLMMessage, *StreamUsage, error) {
 	today := time.Now().Format("2006-01-02")
 
-	// 获取置顶记忆，用于 LLM 理解外号/简称与实体的映射关系
-	pinnedFacts, _ := GetPinnedMemFacts("")
-	var pinnedBlock string
-	if len(pinnedFacts) > 0 {
-		var sb strings.Builder
-		sb.WriteString("\n\n── 用户置顶的背景事实（包含外号、简称等映射关系，用于理解问题中的人名）──\n")
-		for _, f := range pinnedFacts {
-			fmt.Fprintf(&sb, "%s\n", pinnedFactLine(f, svc))
-		}
-		pinnedBlock = sb.String()
-	}
-
-	// 联系人外号注册表：不再依赖置顶记忆声明别名，直接读取外号表供 LLM 归一化实体。
-	var aliasBlock string
-	{
-		allAliases, _ := GetAllContactAliases()
-		if len(allAliases) > 0 {
-			var sb strings.Builder
-			sb.WriteString("\n\n── 联系人外号对照表（用于把问题中的外号/简称还原为真实姓名）──\n")
-			mainName := func(key string) string {
-				if strings.HasPrefix(key, extraContactKeyPrefix) {
-					uname := strings.TrimPrefix(key, "contact:")
-					if svc != nil {
-						for _, s := range svc.GetCachedStats() {
-							if s.Username == uname && s.Remark != "" {
-								return s.Remark
-							}
-						}
-					}
-					return uname
-				}
-				if svc == nil {
-					return strings.TrimPrefix(key, "contact:")
-				}
-				uname := strings.TrimPrefix(key, "contact:")
-				for _, s := range svc.GetCachedStats() {
-					if s.Username == uname {
-						if s.Remark != "" {
-							return s.Remark
-						}
-						if s.Nickname != "" {
-							return s.Nickname
-						}
-					}
-				}
-				return uname
-			}
-			keys := make([]string, 0, len(allAliases))
-			for k := range allAliases {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				aliases := allAliases[k]
-				if len(aliases) == 0 {
-					continue
-				}
-				fmt.Fprintf(&sb, "- %s 又称：%s\n", mainName(k), strings.Join(aliases, "、"))
-			}
-			aliasBlock = sb.String()
-		}
-	}
+	// 置顶记忆 + 外号对照表：帮助 LLM 理解问题里外号/简称与真实姓名的映射
+	pinnedBlock := pinnedMemoryBlock(svc)
+	aliasBlock := contactAliasBlock(svc)
 
 	// 构建上一轮分解结果的上下文（用于连续问答时沿用实体/概念/时间）
 	var prevBlock string
