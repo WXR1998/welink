@@ -19,7 +19,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 	api.GET("/memory/list", func(c *gin.Context) {
 		contact := c.Query("contact")        // 为空则全量
 		q := strings.TrimSpace(c.Query("q")) // 关键词（fact LIKE）
-		pinnedFilter := c.Query("pinned") // "1"=只看置顶, "exclude"=不看置顶, 空=全看
+		pinnedFilter := c.Query("pinned")    // "1"=只看置顶, "exclude"=不看置顶, 空=全看
 		limit, _ := strconv.Atoi(c.Query("limit"))
 		if limit <= 0 || limit > 500 {
 			limit = 100
@@ -59,8 +59,8 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		_ = db.QueryRow("SELECT COUNT(*) FROM mem_facts"+where, args...).Scan(&total)
 
 		// 排序：sort 决定字段，order 决定方向；置顶始终优先
-		sortKey := c.DefaultQuery("sort", "id")          // id | contact_key | created_at | source_from
-		order := c.DefaultQuery("order", "desc")       // asc | desc
+		sortKey := c.DefaultQuery("sort", "id")  // id | contact_key | created_at | source_from
+		order := c.DefaultQuery("order", "desc") // asc | desc
 		orderDir := "DESC"
 		if order == "asc" {
 			orderDir = "ASC"
@@ -91,7 +91,10 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			rows.Close()
 
 			// 批量查 datetime：收集所有 (contact_key, source_from) 对
-			type keySeq struct{ key string; seq int }
+			type keySeq struct {
+				key string
+				seq int
+			}
 			keySeqs := make(map[keySeq]string)
 			for _, f := range allFacts {
 				keySeqs[keySeq{key: f.ContactKey, seq: f.SourceFrom}] = ""
@@ -106,7 +109,7 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			}
 			// 给每条 fact 附上 chat_time 并排序
 			type factWithTime struct {
-				fact    MemFact
+				fact     MemFact
 				chatTime string
 			}
 			var fwt []factWithTime
@@ -115,22 +118,34 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 			}
 			if orderDir == "ASC" {
 				sort.Slice(fwt, func(i, j int) bool {
-					if fwt[i].fact.Pinned != fwt[j].fact.Pinned { return fwt[i].fact.Pinned }
-					if fwt[i].chatTime != fwt[j].chatTime { return fwt[i].chatTime < fwt[j].chatTime }
+					if fwt[i].fact.Pinned != fwt[j].fact.Pinned {
+						return fwt[i].fact.Pinned
+					}
+					if fwt[i].chatTime != fwt[j].chatTime {
+						return fwt[i].chatTime < fwt[j].chatTime
+					}
 					return fwt[i].fact.ID < fwt[j].fact.ID
 				})
 			} else {
 				sort.Slice(fwt, func(i, j int) bool {
-					if fwt[i].fact.Pinned != fwt[j].fact.Pinned { return fwt[i].fact.Pinned }
-					if fwt[i].chatTime != fwt[j].chatTime { return fwt[i].chatTime > fwt[j].chatTime }
+					if fwt[i].fact.Pinned != fwt[j].fact.Pinned {
+						return fwt[i].fact.Pinned
+					}
+					if fwt[i].chatTime != fwt[j].chatTime {
+						return fwt[i].chatTime > fwt[j].chatTime
+					}
 					return fwt[i].fact.ID > fwt[j].fact.ID
 				})
 			}
 			// 分页
 			start := offset
-			if start > len(fwt) { start = len(fwt) }
+			if start > len(fwt) {
+				start = len(fwt)
+			}
 			end := start + limit
-			if end > len(fwt) { end = len(fwt) }
+			if end > len(fwt) {
+				end = len(fwt)
+			}
 			facts := make([]MemFact, 0, end-start)
 			for _, f := range fwt[start:end] {
 				facts = append(facts, f.fact)
@@ -517,9 +532,22 @@ func BuildPinnedMemoryBlock(contactKey string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n── 用户置顶的背景事实（始终记住这些）──\n")
 	for _, f := range facts {
-		fmt.Fprintf(&sb, "- %s\n", f.Fact)
+		fmt.Fprintf(&sb, "%s\n", pinnedFactLineForBuild(f))
 	}
 	return sb.String()
+}
+
+// pinnedFactLineForBuild 在没有 ContactService 可用的场景下，
+// 用 MemFact 已解析的 DisplayName/SourceName 补主语，避免缺少主语。
+func pinnedFactLineForBuild(f MemFact) string {
+	name := strings.TrimSpace(f.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(f.SourceName)
+	}
+	if name == "" {
+		return "- " + strings.TrimSpace(f.Fact)
+	}
+	return "- " + name + "：" + strings.TrimSpace(f.Fact)
 }
 
 // escapeLikePattern 给用户输入的 LIKE 关键词转义 SQLite 通配符（% _ \）。

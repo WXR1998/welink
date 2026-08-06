@@ -42,8 +42,21 @@ type FactSource struct {
 	SourceName string          `json:"source_name"` // 可读来源名（如"群聊「xxx」"或"与「xxx」的私聊"）
 }
 
-// contactDisplayName 把联系人 key 解析为可读姓名（优先备注，其次昵称）。
-func pinnedContactName(contactKey string, svc *service.ContactService) string {
+// factSubjectName 把一条记忆的 contact_key 解析为文首主语（优先备注、其次昵称）。
+// 优先使用 API 层已解析好的 DisplayName，其次回退到 ContactService 查询。
+func factSubjectName(f MemFact, svc *service.ContactService) string {
+	if name := strings.TrimSpace(f.DisplayName); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(f.SourceName); name != "" {
+		return name
+	}
+	return subjectDisplayName(f.ContactKey, svc)
+}
+
+// subjectDisplayName 把一条记忆的 contact_key 解析为联系人的显示名（优先备注、其次昵称）。
+// 与 factSubjectName 类似但直接接受 contact_key，便于单独填充 MemFact.DisplayName。
+func subjectDisplayName(contactKey string, svc *service.ContactService) string {
 	if svc == nil || !strings.HasPrefix(contactKey, "contact:") {
 		return ""
 	}
@@ -61,9 +74,9 @@ func pinnedContactName(contactKey string, svc *service.ContactService) string {
 	return uname
 }
 
-// pinnedFactLine 把一条置顶记忆拼成带联系人名称的前缀行，避免主语缺失。
+// pinnedFactLine 把一条置顶记忆拼成带主语的前缀行，避免主语缺失。
 func pinnedFactLine(f MemFact, svc *service.ContactService) string {
-	name := strings.TrimSpace(pinnedContactName(f.ContactKey, svc))
+	name := factSubjectName(f, svc)
 	fact := strings.TrimSpace(f.Fact)
 	if name == "" {
 		return "- " + fact
@@ -856,27 +869,20 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			for _, key := range searchKeys {
 				facts, _ := SearchMemFactsFiltered(key, searchQ, 10, decomp.TimeFrom, decomp.TimeTo, prefs)
 				allFacts = append(allFacts, facts...)
-				pf, _ := GetPinnedMemFacts(key)
-				pinnedFacts = append(pinnedFacts, pf...)
 			}
 			if len(allFacts) == 0 {
 				facts, _ := SearchMemFactsFiltered("", searchQ, 50, decomp.TimeFrom, decomp.TimeTo, prefs)
 				allFacts = append(allFacts, facts...)
-				pf, _ := GetPinnedMemFacts("")
-				pinnedFacts = append(pinnedFacts, pf...)
 			}
+			pf, _ := GetPinnedMemFacts("")
+			pinnedFacts = append(pinnedFacts, pf...)
 		} else {
 			allFacts = enhancedResult.Facts
 			vecMessages = enhancedResult.VecMessages
-			// 收集 pinnedFacts
-			for _, key := range searchKeys {
-				pf, _ := GetPinnedMemFacts(key)
-				pinnedFacts = append(pinnedFacts, pf...)
-			}
-			if len(pinnedFacts) == 0 {
-				pf, _ := GetPinnedMemFacts("")
-				pinnedFacts = append(pinnedFacts, pf...)
-			}
+			// 置顶事实始终全量注入（之后再按飞书群白名单过滤），
+			// 不能只收集本次解析出的实体，否则多数联系人的背景会被漏掉。
+			pf, _ := GetPinnedMemFacts("")
+			pinnedFacts = append(pinnedFacts, pf...)
 		}
 
 		// 飞书群白名单过滤：剔除不在允许范围内的记忆事实、置顶事实与原始消息命中
@@ -896,6 +902,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 		for i := range pinnedFacts {
 			pinnedFacts[i].SourceName = resolveSourceName(pinnedFacts[i].ContactKey, svc)
+			pinnedFacts[i].DisplayName = subjectDisplayName(pinnedFacts[i].ContactKey, svc)
 		}
 		for i := range vecMessages {
 			vecMessages[i].SourceName = resolveSourceName(vecMessages[i].ContactKey, svc)

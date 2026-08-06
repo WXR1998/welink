@@ -2025,7 +2025,12 @@ func serverMain() {
 				memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
 				for _, p := range pinnedFacts {
 					src := resolveSource(p.ContactKey)
-					memSection += "- （来源：" + src + "）" + desensitizeText(p.Fact) + "\n"
+					subject := factSubjectName(p, getSvc())
+					memSection += "- （来源：" + src + "）"
+					if subject != "" {
+						memSection += subject + "："
+					}
+					memSection += desensitizeText(p.Fact) + "\n"
 				}
 			}
 			if len(dedupSearched) > 0 {
@@ -3860,7 +3865,12 @@ func serverMain() {
 			memSection += "以下是你应当直接内化为知识的背景信息，回答时无需说明来源。\n"
 			for _, p := range pinnedFacts {
 				src := resolveSource(p.ContactKey)
-				memSection += "- （来源：" + src + "）" + p.Fact + "\n"
+				subject := factSubjectName(p, getSvc())
+				memSection += "- （来源：" + src + "）"
+				if subject != "" {
+					memSection += subject + "："
+				}
+				memSection += p.Fact + "\n"
 			}
 		}
 		if len(dedupSearched) > 0 {

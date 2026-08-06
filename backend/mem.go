@@ -122,15 +122,16 @@ func GetMemFactsCount(key string) (int, error) {
 
 // MemFact 是单条记忆事实的展示结构。
 type MemFact struct {
-	ID         int    `json:"id"`
-	ContactKey string `json:"contact_key,omitempty"`
-	Fact       string `json:"fact"`
-	SourceFrom int    `json:"source_from"`
-	SourceTo   int    `json:"source_to"`
-	Pinned     bool   `json:"pinned"`
-	CreatedAt  int64  `json:"created_at,omitempty"`
-	UpdatedAt  int64  `json:"updated_at,omitempty"`
-	SourceName string `json:"source_name,omitempty"` // 可读来源名（如"群聊「xxx」"），由 API 层填充
+	ID          int    `json:"id"`
+	ContactKey  string `json:"contact_key,omitempty"`
+	Fact        string `json:"fact"`
+	SourceFrom  int    `json:"source_from"`
+	SourceTo    int    `json:"source_to"`
+	Pinned      bool   `json:"pinned"`
+	CreatedAt   int64  `json:"created_at,omitempty"`
+	UpdatedAt   int64  `json:"updated_at,omitempty"`
+	SourceName  string `json:"source_name,omitempty"`  // 可读来源名（如"群聊「xxx」"），由 API 层填充
+	DisplayName string `json:"display_name,omitempty"` // 联系人/群显示名，供最终 LLM 上下文补主语
 }
 
 // GetMemFacts 返回指定 key 的所有事实（按 id 升序）。

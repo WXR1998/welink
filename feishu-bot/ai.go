@@ -20,11 +20,12 @@ type llmMessage struct {
 
 // memFact 与后端 MemFact 对应。
 type memFact struct {
-	ID         int    `json:"id"`
-	ContactKey string `json:"contact_key"`
-	Fact       string `json:"fact"`
-	Pinned     bool   `json:"pinned"`
-	SourceName string `json:"source_name,omitempty"`
+	ID          int    `json:"id"`
+	ContactKey  string `json:"contact_key"`
+	Fact        string `json:"fact"`
+	Pinned      bool   `json:"pinned"`
+	SourceName  string `json:"source_name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 // sourceMessage 与后端 SourceMessage 对应。
@@ -341,7 +342,15 @@ func buildDataContext(d *memorySearchData) string {
 
 		sb.WriteString("\n【手工置顶的背景知识】\n")
 		for _, f := range d.PinnedFacts {
-			sb.WriteString("- " + f.Fact + "\n")
+			name := strings.TrimSpace(f.DisplayName)
+			if name == "" {
+				name = strings.TrimSpace(f.SourceName)
+			}
+			if name != "" {
+				sb.WriteString("- " + name + "：" + f.Fact + "\n")
+			} else {
+				sb.WriteString("- " + f.Fact + "\n")
+			}
 		}
 		if len(d.PinnedContactAliases) > 0 {
 			sb.WriteString("\n联系人外号（用于确认上下文里的人物指向）：\n")

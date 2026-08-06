@@ -45,6 +45,8 @@ interface MemFact {
   pinned?: boolean;
   created_at?: number;
   updated_at?: number;
+  display_name?: string;
+  source_name?: string;
 }
 
 interface FactSource {
@@ -358,7 +360,7 @@ const RetrievalDetails: React.FC<{
               <div className="font-semibold text-gray-600 dark:text-gray-300 mb-1">置顶事实</div>
               <div className="space-y-0.5 text-gray-500">
                 {msg.memorySearchData.pinned_facts.map((pf, idx) => (
-                  <div key={idx}>- {pf.fact}</div>
+                  <div key={idx}>- {(pf.display_name || pf.contact_key) ? `${pf.display_name || pf.contact_key}：` : ''}{pf.fact}</div>
                 ))}
               </div>
             </div>
@@ -672,7 +674,8 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       if (memData.pinned_facts?.length > 0) {
         dataContext += '\n【手工置顶的背景知识】\n';
         for (const pf of memData.pinned_facts) {
-          dataContext += `- ${pf.fact}\n`;
+          const name = (pf.display_name || pf.contact_key || '').trim();
+          dataContext += name ? `- ${name}：${pf.fact}\n` : `- ${pf.fact}\n`;
         }
       }
 

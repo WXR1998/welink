@@ -15,3 +15,24 @@ func TestPinnedFactLineFallsBackToUsername(t *testing.T) {
 		t.Fatalf("fact content missing: %q", line)
 	}
 }
+
+func TestPinnedFactLinePrefixesDisplayName(t *testing.T) {
+	line := pinnedFactLine(MemFact{
+		ContactKey:  "contact:extra_1",
+		DisplayName: "丁舒",
+		Fact:        "邓凯文曾经舔过的对象",
+	}, nil)
+	if !strings.Contains(line, "丁舒：邓凯文曾经舔过的对象") {
+		t.Fatalf("expected subject prefix, got: %q", line)
+	}
+}
+
+func TestPinnedFactLineForBuildPrefixesSourceName(t *testing.T) {
+	line := pinnedFactLineForBuild(MemFact{
+		SourceName: "与「邓凯文」的私聊",
+		Fact:       "邓凯文曾经舔过的对象",
+	})
+	if !strings.Contains(line, "与「邓凯文」的私聊：邓凯文曾经舔过的对象") {
+		t.Fatalf("expected subject from source name, got: %q", line)
+	}
+}
