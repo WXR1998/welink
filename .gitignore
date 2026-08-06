@@ -90,3 +90,6 @@ scripts/import/
 # Agent instructions (local)
 # ===========================
 AGENTS.md
+
+# Go build temp dir (GOTMPDIR)
+.gotmp/

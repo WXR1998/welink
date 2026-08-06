@@ -418,6 +418,7 @@ func buildQueryExpansionPrompt(svc *service.ContactService) string {
 // RawExcerpt 是从原始聊天记录精确检索到的一条原文（找原文场景）。
 type RawExcerpt struct {
 	SourceName string `json:"source_name"` // 联系人/群聊可读名或 contact_key
+	ContactKey string `json:"contact_key,omitempty"` // 原始 contact_key，用于飞书群白名单过滤
 	Datetime   string `json:"datetime"`
 	Sender     string `json:"sender"`
 	Content    string `json:"content"`
@@ -881,46 +882,72 @@ func EnhancedRetrieval(
 	result.VecMessages = allVecMessages
 
 	// 找原文场景：额外走原始聊天记录精确检索，拿到能直接引用/展示的原文。
-	if decomp != nil && decomp.LookupRaw {
+	// 只有用户明确要求“找原文/原话/贴出来”时才做整句精确检索（开销较大）。
+	needRawLookup := decomp != nil && decomp.LookupRaw
+	if needRawLookup {
 		progress("raw_lookup", fmt.Sprintf("按原文精确检索 query: %s", truncate(query, 40)))
 		rawHits := searchRawMessages(query, searchKeys, svc)
 		if len(searchKeys) == 0 {
 			// 没有可解析的 key 时做全库精确检索（msg_fts）
 			rawHits = append(rawHits, searchRawMessagesFTS(query, svc)...)
 		}
-
-		// 兜底：即使整句关键词没精确命中，也从命中的记忆事实里取 source 原文，
-		// 保证“原始聊天记录佐证”在没有精确关键词命中的情况下仍能给到。
+		// 兜底：即使整句关键词没精确命中，也从命中的记忆事实里取 source 原文。
 		if len(rawHits) == 0 && len(result.Facts) > 0 {
-			progress("raw_lookup", "从命中的记忆事实提取源聊天记录作为佐证")
-			sources, _ := ExtractFactSources(result.Facts, svc)
-			seen := make(map[string]bool)
-			for _, src := range sources {
-				for _, m := range src.Messages {
-					excerpt := RawExcerpt{
-						SourceName: src.SourceName,
-						Datetime:   m.Datetime,
-						Sender:     m.Sender,
-						Content:    m.Content,
-						Seq:        m.Seq,
-					}
-					dedupe := excerpt.SourceName + "|" + excerpt.Datetime + "|" + excerpt.Sender + "|" + excerpt.Content
-					if seen[dedupe] {
-						continue
-					}
-					seen[dedupe] = true
-					rawHits = append(rawHits, excerpt)
-					if len(rawHits) >= 100 {
-						break
-					}
-				}
-				if len(rawHits) >= 100 {
-					break
-				}
-			}
+			rawHits = append(rawHits, extractRawFromFacts(result.Facts, svc)...)
 		}
 		result.RawHits = rawHits
+	} else if needsEvidenceRaw(decomp) && len(result.Facts) > 0 {
+		// 评价/看法/开放性类问题：即使用户没明说“找原文”，也要把
+		// 命中的记忆事实对应的聊天记录原文带上，作为回答的依据。
+		// 否则 LLM 只能看到压缩摘要，看不到“谁怎么评价谁”的具体原文。
+		progress("raw_lookup", "从命中的记忆事实提取源聊天记录作为评价佐证")
+		result.RawHits = extractRawFromFacts(result.Facts, svc)
 	}
 
 	return result, nil
+}
+
+// extractRawFromFacts 从命中的记忆事实提取对应的源聊天记录，去重后返回。
+func extractRawFromFacts(facts []MemFact, svc *service.ContactService) []RawExcerpt {
+	if len(facts) == 0 {
+		return nil
+	}
+	sources, _ := ExtractFactSources(facts, svc)
+	var out []RawExcerpt
+	seen := make(map[string]bool)
+	for _, src := range sources {
+		for _, m := range src.Messages {
+			excerpt := RawExcerpt{
+				SourceName: src.SourceName,
+				ContactKey: src.Fact.ContactKey,
+				Datetime:   m.Datetime,
+				Sender:     m.Sender,
+				Content:    m.Content,
+				Seq:        m.Seq,
+			}
+			dedupe := excerpt.SourceName + "|" + excerpt.Datetime + "|" + excerpt.Sender + "|" + excerpt.Content
+			if seen[dedupe] {
+				continue
+			}
+			seen[dedupe] = true
+			out = append(out, excerpt)
+			if len(out) >= 100 {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// needsEvidenceRaw 判断该类型的查询即使没明说“找原文”，也应附带评价原文佐证。
+func needsEvidenceRaw(decomp *QueryDecomposition) bool {
+	if decomp == nil {
+		return false
+	}
+	for _, c := range decomp.Concepts {
+		if containsAny(c, []string{"锐评", "评价", "看法", "吐槽", "直言", "怎么样", "如何", "怎么", "评价怎么样"}) {
+			return true
+		}
+	}
+	return false
 }

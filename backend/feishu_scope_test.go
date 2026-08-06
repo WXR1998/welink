@@ -152,3 +152,27 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 		t.Fatalf("blank prompt should be no-op")
 	}
 }
+
+func TestFilterRawHitsByScope(t *testing.T) {
+	prefs := Preferences{
+		FeishuGroupScope: map[string][]string{
+			"oc_g1": {"group:24781577897@chatroom", "contact:liubowen606976"},
+		},
+	}
+	hits := []RawExcerpt{
+		{SourceName: "群聊A", ContactKey: "group:24781577897@chatroom", Content: "允许的群"},
+		{SourceName: "李博文", ContactKey: "contact:liubowen606976", Content: "允许的联系人"},
+		{SourceName: "群聊B", ContactKey: "group:20351507474@chatroom", Content: "不允许的群"},
+		{SourceName: "某联系人", ContactKey: "contact:jyy591281242", Content: "不允许的联系人"},
+		{SourceName: "未知", ContactKey: "", Content: "无 key 保留"},
+	}
+	got := filterRawHitsByScope(hits, "oc_g1", prefs)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 hits after scope filter, got %d", len(got))
+	}
+	for _, h := range got {
+		if h.Content == "不允许的群" || h.Content == "不允许的联系人" {
+			t.Fatalf("unexpected out-of-scope hit: %+v", h)
+		}
+	}
+}

@@ -117,3 +117,17 @@ func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences
 	}
 	return append(msgs, LLMMessage{Role: "system", Content: item})
 }
+
+// filterRawHitsByScope 过滤原始命中，只保留 contact_key 在允许范围内的项。
+func filterRawHitsByScope(hits []RawExcerpt, chatID string, prefs Preferences) []RawExcerpt {
+	if chatID == "" {
+		return hits
+	}
+	out := make([]RawExcerpt, 0, len(hits))
+	for _, h := range hits {
+		if h.ContactKey == "" || isFeishuKeyAllowed(h.ContactKey, chatID, prefs) {
+			out = append(out, h)
+		}
+	}
+	return out
+}

@@ -894,9 +894,10 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			pinnedFacts = append(pinnedFacts, pf...)
 		}
 
-		// 飞书群白名单过滤：剔除不在允许范围内的记忆事实、置顶事实与原始消息命中
+		// 飞书群白名单过滤：剔除不在允许范围内的记忆事实与原始消息命中。
+		// 置顶记忆不做此过滤：它是用户主动声明的背景知识（含外号/关系映射），
+		// 应始终注入最终上下文，否则多数联系人的背景/别名会被白名单误裁剪。
 		allFacts = filterMemFactsByScope(allFacts, body.ChatID, prefs)
-		pinnedFacts = filterMemFactsByScope(pinnedFacts, body.ChatID, prefs)
 		vecMessages = filterVecMessagesByScope(vecMessages, body.ChatID, prefs)
 
 		// 截断到 50
@@ -996,7 +997,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			resp.ExpandedQueries = enhancedResult.ExpandedQueries
 			resp.RerankUsed = enhancedResult.RerankUsed
 			resp.RerankResults = enhancedResult.RerankResults
-			resp.RawHits = enhancedResult.RawHits
+			resp.RawHits = filterRawHitsByScope(enhancedResult.RawHits, body.ChatID, prefs)
 			resp.VectorHits = enhancedResult.VectorHits
 			resp.BM25Hits = enhancedResult.BM25Hits
 			resp.VecMessageHits = enhancedResult.VecMessageHits

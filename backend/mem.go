@@ -848,7 +848,25 @@ func conceptLikeTerms(concept string) []string {
 	for i := 0; i+2 <= len(r); i++ {
 		add(string(r[i : i+2]))
 	}
+	// 评价/看法/吐槽类近义扩展：LLM 常把概念分解为“锐评”“评价”“怎么样”，
+	// 但事实文本里出现的是“吐槽”“嘲笑”“土狗”“装逼”等口语词。这里补上
+	// 近义词，让 LIKE 共现检索能稳定召回这些评价事实。
+	if containsAny(concept, []string{"锐评", "评价", "看法", "吐槽", "直言", "什么看法", "怎么样", "如何"}) {
+		for _, t := range []string{"评价", "锐评", "吐槽", "嘲笑", "看不起", "贬低", "土狗", "装逼", "装B", "嘲讽"} {
+			add(t)
+		}
+	}
 	return out
+}
+
+// containsAny 判断 s 是否包含 candidates 中的任意子串。
+func containsAny(s string, candidates []string) bool {
+	for _, c := range candidates {
+		if c != "" && strings.Contains(s, c) {
+			return true
+		}
+	}
+	return false
 }
 
 // SearchMemFactsCoMention 按“实体 × 概念”共现召回记忆事实。
