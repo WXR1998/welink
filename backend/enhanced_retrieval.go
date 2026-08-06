@@ -706,11 +706,13 @@ func EnhancedRetrieval(
 	var allVecMessages []VecMessageHit
 
 	// 实体（人名）+ 概念（语义事件）共现召回，保证这类事实不被淹没。
+	// 概念词除 LLM 分解出的 concepts 外，还纳入 LLM 生成的 search_terms（近义词/口语），
+	// 让 LIKE 共现能覆盖群友的不同说法（如“锐评”“吐槽”“怎么看”）。
 	var entities []string
 	var conceptTerms []string
 	if decomp != nil {
 		entities = decomp.Entities
-		conceptTerms = decomp.Concepts
+		conceptTerms = mergeSearchTerms(decomp.Concepts, decomp.SearchTerms)
 	}
 
 	step2Start := time.Now()
@@ -946,6 +948,37 @@ func needsEvidenceRaw(decomp *QueryDecomposition) bool {
 	}
 	for _, c := range decomp.Concepts {
 		if containsAny(c, []string{"锐评", "评价", "看法", "吐槽", "直言", "怎么样", "如何", "怎么", "评价怎么样"}) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeSearchTerms 把 LLM 分解出的 concepts 与 search_terms 合并去重，
+// 供 LIKE 共现检索使用。search_terms 往往带口语/近义词，能覆盖硬编码词表
+// 无法穷举的各种说法。
+func mergeSearchTerms(concepts, searchTerms []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(terms []string) {
+		for _, t := range terms {
+			t = strings.TrimSpace(t)
+			if t == "" || seen[t] {
+				continue
+			}
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	add(concepts)
+	add(searchTerms)
+	return out
+}
+
+// containsAny 判断 s 是否包含 candidates 中的任意子串。
+func containsAny(s string, candidates []string) bool {
+	for _, c := range candidates {
+		if c != "" && strings.Contains(s, c) {
 			return true
 		}
 	}

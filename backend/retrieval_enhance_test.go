@@ -5,13 +5,17 @@ import (
 	"testing"
 )
 
-func TestConceptLikeTermsExpandsEvaluationSynonyms(t *testing.T) {
-	terms := conceptLikeTerms("锐评")
-	joined := strings.Join(terms, "|")
-	for _, want := range []string{"评价", "吐槽", "土狗", "装逼", "嘲讽"} {
+func TestMergeSearchTermsAppendsLLMSynonyms(t *testing.T) {
+	got := mergeSearchTerms([]string{"锐评"}, []string{"评价", "吐槽", "嘲笑", "土狗", "装逼"})
+	joined := strings.Join(got, "|")
+	for _, want := range []string{"锐评", "评价", "吐槽", "嘲笑", "土狗", "装逼"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("conceptLikeTerms(锐评) should include %q, got %v", want, terms)
+			t.Errorf("mergeSearchTerms should include %q, got %v", want, got)
 		}
+	}
+	// 空 search_terms 不影响 concepts
+	if got2 := mergeSearchTerms([]string{"分手"}, nil); len(got2) != 1 || got2[0] != "分手" {
+		t.Fatalf("unexpected merge without search_terms: %v", got2)
 	}
 }
 
