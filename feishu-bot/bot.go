@@ -549,8 +549,13 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 		onProgress("answer", cur, total)
 	}
 
-	// 3. analyze 生成回答（带上历史 + 检索上下文）
-	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, question, convKey, history, dataContext)
+	// 3. analyze 生成回答（带上历史 + 检索上下文）。
+	// 用 memory-search 还原后的原名提问，避免最终回答仍在定位外号（如“土鲫鱼”）。
+	answerQuery := question
+	if data.NormalizedQuery != "" {
+		answerQuery = data.NormalizedQuery
+	}
+	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, dataContext)
 	if err != nil {
 		return "", usage, "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}

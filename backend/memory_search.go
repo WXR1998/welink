@@ -650,6 +650,7 @@ type MemorySearchResponse struct {
 	PinnedContactAliases []PinnedContactAlias `json:"pinned_contact_aliases,omitempty"` // 注入置顶记忆的联系人外号，供 LLM 辨识人物
 	TokenUsage           *StreamUsage         `json:"token_usage"`                      // DecomposeQuery 消耗的 token
 	DecomposePrompt      []LLMMessage         `json:"decompose_prompt"`                 // DecomposeQuery 发给 LLM 的原始 prompt
+	NormalizedQuery      string               `json:"normalized_query"`                 // 外号还原为原名后的提问，供最终回答使用
 	// 增强检索结果
 	VecMessages     []VecMessageHit   `json:"vec_messages"`     // 双路检索：原始消息命中
 	ExpandedQueries []string          `json:"expanded_queries"` // 查询改写：扩展的子查询
@@ -988,6 +989,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			PinnedContactAliases: pinnedContactAliases,
 			TokenUsage:           decompUsage,
 			DecomposePrompt:      decompPrompt,
+			NormalizedQuery:      body.Query,
 			VecMessages:          vecMessages,
 		}
 		if enhancedResult != nil {

@@ -104,6 +104,7 @@ interface MemorySearchResponse {
   sources: FactSource[];
   pinned_facts: MemFact[];
   pinned_contact_aliases?: PinnedContactAlias[];
+  normalized_query?: string;
   token_usage?: StreamUsage;
   decompose_prompt?: LLMMessage[];
   // 增强检索结果
@@ -664,6 +665,9 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         throw new Error('记忆检索未返回结果');
       }
 
+      // 用还原为原名后的提问生成最终回答，避免模型仍在定位外号。
+      const answerQ = memData.normalized_query || q;
+
       // 收集 memory-search 消耗的 token
       let totalTokens = memData.token_usage?.total_tokens ?? 0;
 
@@ -754,7 +758,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 5. 如果涉及多个联系人，用列表列出并简要说明
 6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。` },
         ...history,
-        { role: 'user', content: `问题：${q}\n\n${dataContext}` },
+        { role: 'user', content: `问题：${answerQ}\n\n${dataContext}` },
       ];
       const resp = await fetch('/api/ai/analyze', {
         method: 'POST',
@@ -765,7 +769,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           messages: llmMessages,
           profile_id: profileId,
           skip_memory: true,
-          query: q,
+          query: answerQ,
           conversation_key: convKeyRef.current ?? '',
         }),
         signal: abortRef.current.signal,

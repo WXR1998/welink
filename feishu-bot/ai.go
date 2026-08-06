@@ -86,6 +86,7 @@ type memorySearchData struct {
 	VecMessages          []vecMessageHit      `json:"vec_messages"`
 	RawHits              []rawExcerpt         `json:"raw_hits"`
 	ResolvedEntities     []resolvedEntity     `json:"resolved_entities"`
+	NormalizedQuery      string               `json:"normalized_query"`
 	Decomposition        *struct {
 		NeedsMemory bool `json:"needs_memory"`
 	} `json:"decomposition"`
