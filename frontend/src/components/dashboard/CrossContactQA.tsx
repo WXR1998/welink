@@ -578,6 +578,24 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
     const startTime = Date.now();
 
     try {
+	  // 设置页可能已在当前组件挂载后删除或切换了 profile。请求前刷新一次，
+	  // 避免把过期的 profile_id 传给 memory-search。
+	  const prefResp = await fetch('/api/preferences');
+	  if (!prefResp.ok) throw new Error('无法读取当前 AI 配置');
+	  const prefData = await prefResp.json() as {
+		llm_profiles?: { id: string; name?: string; provider: string; model?: string }[];
+		default_llm_profile_id?: string;
+	  };
+	  const currentProfiles = prefData.llm_profiles ?? [];
+	  let activeProfileId = profileId;
+	  if (!currentProfiles.some(p => p.id === activeProfileId)) {
+		activeProfileId = prefData.default_llm_profile_id || currentProfiles[0]?.id || '';
+		if (!activeProfileId) throw new Error('请先在设置中配置 AI 接口');
+		setProfiles(currentProfiles);
+		setProfileId(activeProfileId);
+		try { localStorage.setItem('cross-qa-profile-id', activeProfileId); } catch {}
+	  }
+
       // ── Step 1: 记忆优先两级检索 ──
       // 调 /api/ai/memory-search，后端用 LLM 分解问题（needs_memory gate +
       // 实体/概念/时间提取），然后搜索 mem_facts 并提取源聊天记录
@@ -596,7 +614,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: q,
-          profile_id: profileId,
+          profile_id: activeProfileId,
           conversation_key: convKeyRef.current ?? '',
           previous_decomposition: prevDecomp,
         }),
@@ -767,7 +785,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
           username: '__cross_contact__',
           is_group: false,
           messages: llmMessages,
-          profile_id: profileId,
+          profile_id: activeProfileId,
           skip_memory: true,
           query: answerQ,
           conversation_key: convKeyRef.current ?? '',
