@@ -53,8 +53,6 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 | `FEISHU_CONFIG` | 指向 JSON 配置文件（可选，覆盖 env） | - |
 | `WELINK_BASE_URL` | WeLink 后端地址 | `http://127.0.0.1:8080` |
 | `WELINK_TOKEN` | 配对 token。Docker 内非回环访问时需带 | 空（回环自动放行） |
-| `DEFAULT_PROFILE_ID` | 使用的 LLM Profile ID | 空（用默认） |
-| `LLM_MODEL` | LLM 模型名称（覆盖后端 profile 中的模型） | `lingjun.internal/deepseek-v4-flash` |
 | `STREAM_MODE` | 流式回复载体：`md`（默认）或 `card` | `md` |
 | `SESSION_STORE_PATH` | 会话历史 JSON 文件路径；空=仅内存 | 空 |
 | `ALLOWED_USERS` | 允许的飞书用户，逗号分隔 | 空=不限制 |
@@ -76,6 +74,7 @@ GOFLAGS=-mod=mod /volume4/homes/wangxuanrun/.local/go/bin/go run .
 ## 说明与限制
 
 - 跨联系人问答依赖 WeLink 端已构建好记忆事实（`mem_facts`）和向量索引；若未建索引，检索可能返回空。
+- 机器人始终使用 WeLink 设置页当前选中的默认 LLM profile；不保存 profile ID，也不覆盖该 profile 的模型名。
 - **开放性问题有性能边界**：真实冒烟显示，问“谁聊得最多”这类**无具体人名/群名/时间的开放问题**，WeLink 跨联系人 `memory-search` 会遍历大量联系人（如 505 个）做多路向量/BM25 检索，可能超过 3 分钟。网关内置 `memorySearchTimeout=3m`，超时返回提示，并建议改成更具体的人名/群名/时间范围的问题，避免长期占用会话。若在你的数据量下需要支持完全开放的问题，需进一步优化后端 `EnhancedRetrieval`。
 - `memory-search` 步骤在网关侧打印进度日志；飞书消息以最终答案为主，不逐条回帖中间态。
 - 会话历史默认保存在内存中，重启网关后丢失；设置 `SESSION_STORE_PATH` 后持久化到 JSON 文件，重启可续。

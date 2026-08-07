@@ -49,7 +49,6 @@ services:
       - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
       - WELINK_BASE_URL=http://backend:8080
       - WELINK_TOKEN=${WELINK_TOKEN:-}
-      - LLM_MODEL=${LLM_MODEL:-lingjun.internal/deepseek-v4-flash}
       - SESSION_STORE_PATH=/var/lib/welink-feishu/sessions.json
       - MANAGE_ADDR=:8111
       - ALLOWED_USERS=${ALLOWED_USERS:-}

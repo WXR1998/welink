@@ -3,7 +3,6 @@
   "feishu_app_secret": "your_app_secret",
   "welink_base_url": "http://127.0.0.1:8080",
   "welink_token": "",
-  "default_profile_id": "",
   "stream_mode": "md",
   "session_store_path": "/var/lib/welink-feishu/sessions.json",
   "allowed_users": [

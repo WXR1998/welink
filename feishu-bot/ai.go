@@ -108,9 +108,7 @@ func (d *memorySearchData) hasResolvedEntity() bool {
 // memorySearchRequest 对应 POST /api/ai/memory-search。
 type memorySearchRequest struct {
 	Query           string `json:"query"`
-	ProfileID       string `json:"profile_id"`
 	ConversationKey string `json:"conversation_key"`
-	Model           string `json:"model,omitempty"`
 	ChatID          string `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
@@ -119,11 +117,9 @@ type analyzeRequest struct {
 	Username        string       `json:"username"`
 	IsGroup         bool         `json:"is_group"`
 	Messages        []llmMessage `json:"messages"`
-	ProfileID       string       `json:"profile_id"`
 	SkipMemory      bool         `json:"skip_memory"`
 	Query           string       `json:"query"`
 	ConversationKey string       `json:"conversation_key"`
-	Model           string       `json:"model,omitempty"`
 	ChatID          string       `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
@@ -145,7 +141,7 @@ type analyzeChunk struct {
 
 // complete 调用 POST /api/ai/complete，用非流式补全做上下文压缩摘要。
 func complete(ctx context.Context, cfg *Config, msgs []llmMessage) (string, error) {
-	payload, _ := json.Marshal(map[string]any{"messages": msgs, "model": cfg.LLMModel})
+	payload, _ := json.Marshal(map[string]any{"messages": msgs})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.WeLinkBaseURL+"/api/ai/complete", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
@@ -238,9 +234,7 @@ var errEntityNotFound = fmt.Errorf("问题中指定的联系人/群名未在数�
 func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, hasPriorEntity bool, cb func(step, detail string), onResolveEntities func(names []string)) (*memorySearchData, error) {
 	payload, _ := json.Marshal(memorySearchRequest{
 		Query:           query,
-		ProfileID:       cfg.DefaultProfileID,
 		ConversationKey: convKey,
-		Model:           cfg.LLMModel,
 		ChatID:          chatID,
 	})
 
@@ -459,11 +453,9 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 		Username:        "__cross_contact__",
 		IsGroup:         false,
 		Messages:        msgs,
-		ProfileID:       cfg.DefaultProfileID,
 		SkipMemory:      true, // memory-search 已注入，analyze 不再重复加载记忆
 		Query:           query,
 		ConversationKey: convKey,
-		Model:           cfg.LLMModel,
 		ChatID:          chatID,
 	})
 

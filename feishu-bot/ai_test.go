@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ func TestAnalyzeQuestion_AccumulatesSSE(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			t.Errorf("missing authorization header: %q", r.Header.Get("Authorization"))
 		}
+		assertUsesBackendDefaultProfile(t, r)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"delta\":\"答案第一部分\"}\n\n"))
 		_, _ = w.Write([]byte("data: {\"delta\":\"，第二部分\"}\n\n"))
@@ -53,6 +55,7 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 		if r.URL.Path != "/api/ai/memory-search" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
+		assertUsesBackendDefaultProfile(t, r)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"progress\",\"step\":\"decompose\",\"detail\":\"x\"}\n\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"result\",\"data\":{\"facts\":[{\"fact\":\"张三上月聊过旅行\",\"contact_key\":\"contact:zhangsan\"}],\"decomposition\":{\"needs_memory\":true}}}\n\n"))
@@ -76,6 +79,19 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 	}
 	if len(steps) == 0 || steps[0] != "decompose" {
 		t.Fatalf("expected progress callback, got %v", steps)
+	}
+}
+
+func assertUsesBackendDefaultProfile(t *testing.T, r *http.Request) {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	for _, key := range []string{"profile_id", "model"} {
+		if _, exists := payload[key]; exists {
+			t.Errorf("request must use the backend current profile, not send %q: %s", key, payload[key])
+		}
 	}
 }
 
