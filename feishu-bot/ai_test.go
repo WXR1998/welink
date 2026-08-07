@@ -159,8 +159,14 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if !strings.Contains(gotBody, "都不要遗漏") {
 		t.Fatalf("system prompt missing exhaustive open-request requirement, body=%s", gotBody)
 	}
-	if !strings.Contains(gotBody, "不要自行变化") {
-		t.Fatalf("system prompt missing unified output format requirement, body=%s", gotBody)
+	if !strings.Contains(gotBody, "记录之间不使用 `---` 或其他分隔线") {
+		t.Fatalf("system prompt must forbid Markdown record separators, body=%s", gotBody)
+	}
+	if !strings.Contains(gotBody, "不要把聊天记录写成 Markdown 标题、表格或代码块") {
+		t.Fatalf("system prompt must forbid Markdown record containers, body=%s", gotBody)
+	}
+	if strings.Contains(gotBody, "不同记录之间用“---”分隔") {
+		t.Fatalf("system prompt must not request --- separators, body=%s", gotBody)
 	}
 	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
 		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
