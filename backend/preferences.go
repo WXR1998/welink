@@ -138,7 +138,7 @@ type LLMProfile struct {
 	// 上下文窗口大小（token 数），用于自动压缩对话历史。0 = 使用默认值 128000。
 	ContextWindow int `json:"context_window,omitempty"`
 	// 上下文压缩阈值（token 数）。对话 token 数超过此值时触发压缩。
-	// 0 = 使用 context_window - 4000（留 4K 给输出）。
+	// 0 = 使用 context_window 的 70%（给输出和检索注入预留空间）。
 	CompressThreshold int `json:"compress_threshold,omitempty"`
 }
 

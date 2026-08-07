@@ -284,7 +284,7 @@ export const ProfileCard: React.FC<{
       {/* 上下文压缩阈值 */}
       <div>
         <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wide">
-          上下文压缩阈值 <span className="font-normal normal-case">（token 数，留空 = 窗口 - 4000）</span>
+          上下文压缩阈值 <span className="font-normal normal-case">（token 数，留空 = 窗口的 70%）</span>
         </label>
         <input
           type="number"
@@ -297,7 +297,7 @@ export const ProfileCard: React.FC<{
           min={1000}
           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
         />
-        <p className="text-[11px] text-gray-400 mt-0.5">对话 token 数超过此值时自动压缩旧消息。留空则使用「窗口 - 4000」。设得比窗口小可提前压缩</p>
+        <p className="text-[11px] text-gray-400 mt-0.5">对话 token 数超过此值时自动压缩旧消息。留空则使用窗口的 70%，为模型输出和检索内容预留空间</p>
       </div>
 
       {/* 测试连接 */}

@@ -53,6 +53,20 @@ func TestSessionExpiresAfterIdle(t *testing.T) {
 	}
 }
 
+func TestShouldCompressAllowsLongerFeishuHistory(t *testing.T) {
+	history := make([]llmMessage, 24)
+	for i := range history {
+		history[i] = llmMessage{Role: "user", Content: "短消息"}
+	}
+	if (&bot{}).shouldCompressLocked(&session{history: history}) {
+		t.Fatalf("24 short messages should not trigger the relaxed fallback limit")
+	}
+
+	if !(&bot{}).shouldCompressLocked(&session{history: []llmMessage{{Role: "user", Content: strings.Repeat("长", 120000)}}}) {
+		t.Fatalf("120K characters should trigger the fallback compression limit")
+	}
+}
+
 func TestBuildDataContextIncludesFacts(t *testing.T) {
 	d := &memorySearchData{
 		Facts: []memFact{{Fact: "张三上月聊过旅行", ContactKey: "contact:zhangsan"}},

@@ -46,7 +46,7 @@ export interface LLMProfile {
   no_think?: boolean; // Ollama 思考型模型（Qwen3+）专用
   reasoning_effort?: '' | 'low' | 'medium' | 'high'; // 深度思考档位：Claude thinking + OpenAI o-series
   context_window?: number; // 上下文窗口 token 数，0 = 默认 128000
-  compress_threshold?: number; // 上下文压缩阈值，0 = contextWindow - 4000
+  compress_threshold?: number; // 上下文压缩阈值，0 = contextWindow 的 70%
 }
 
 export function genId(): string {

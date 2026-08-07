@@ -172,3 +172,37 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
 	}
 }
+
+func TestAnalyzeQuestionSendsHistoryAsConversationMessages(t *testing.T) {
+	var got analyzeRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+	}))
+	defer server.Close()
+
+	history := []llmMessage{
+		{Role: "user", Content: "前一个问题"},
+		{Role: "assistant", Content: "前一个回答"},
+	}
+	cfg := &Config{WeLinkBaseURL: server.URL}
+	if _, _, err := analyzeQuestion(context.Background(), cfg, "", "当前问题", "feishu:p2p:u", history, "检索内容"); err != nil {
+		t.Fatalf("analyzeQuestion returned error: %v", err)
+	}
+
+	if len(got.Messages) != 4 {
+		t.Fatalf("expected system, history pair, and current question; got %+v", got.Messages)
+	}
+	if got.Messages[0].Role != "system" || strings.Contains(got.Messages[0].Content, "前一个问题") {
+		t.Fatalf("history must not be embedded in the system prompt: %+v", got.Messages[0])
+	}
+	if got.Messages[1] != history[0] || got.Messages[2] != history[1] {
+		t.Fatalf("history must retain message roles: %+v", got.Messages)
+	}
+	if got.Messages[3].Role != "user" || got.Messages[3].Content != "当前问题" {
+		t.Fatalf("current question must be the final user message: %+v", got.Messages[3])
+	}
+}

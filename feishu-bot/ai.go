@@ -430,24 +430,15 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 	sys.WriteString("6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。\n")
 	sys.WriteString("7. 当用户提出“探索一下”“找一下”“列举一下”“有什么有趣的事情”等开放性请求时，请尽量给出详尽的内容：凡是主体和客体对应正确、即使只是略有相关的信息或案例，都尽量纳入回答；这类问题不要追求过度简洁，应把有价值的信息尽可能多地列出来，都不要遗漏。\n")
 	sys.WriteString("8. 当用户要求把聊天记录整理或格式化输出时，请采用确定且统一的格式：每条记录单独一行，按“时间 ｜ 发送者 ｜ 内容”顺序排列，时间统一用 YYYY-MM-DD HH:MM；记录之间不使用 `---` 或其他分隔线；不要把聊天记录写成 Markdown 标题、表格或代码块。\n")
-	if len(history) > 0 {
-		sys.WriteString("\n以下是本会话之前的问题与回答，供连续追问参考：\n")
-		for _, m := range history {
-			if m.Role == "user" {
-				sys.WriteString("用户问：" + m.Content + "\n")
-			} else if m.Role == "assistant" {
-				sys.WriteString("AI 答：" + m.Content + "\n")
-			}
-		}
-	}
 	if dataContext != "" {
 		sys.WriteString("\n以下是本次检索到的相关数据：\n" + dataContext + "\n")
 	}
 
-	msgs := []llmMessage{
-		{Role: "system", Content: sys.String()},
-		{Role: "user", Content: query},
-	}
+	// 保持历史问答的原始 role，交由后端统一按 Profile token 预算压缩。
+	msgs := make([]llmMessage, 0, len(history)+2)
+	msgs = append(msgs, llmMessage{Role: "system", Content: sys.String()})
+	msgs = append(msgs, history...)
+	msgs = append(msgs, llmMessage{Role: "user", Content: query})
 
 	payload, _ := json.Marshal(analyzeRequest{
 		Username:        "__cross_contact__",

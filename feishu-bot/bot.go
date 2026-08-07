@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	maxHistoryMsgs  = 12            // 上下文达到该消息数时触发压缩
-	maxHistoryChars = 24000         // 上下文文本达到该字符数时触发压缩
+	maxHistoryMsgs  = 48            // 后端 Profile 预算之外的本地兜底条数
+	maxHistoryChars = 120000        // 后端 Profile 预算之外的本地兜底字符数
 	sessionIdleTTL  = 2 * time.Hour // 2 小时无新提问自动新开会话
 )
 

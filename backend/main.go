@@ -2087,9 +2087,6 @@ func serverMain() {
 			}
 		}
 
-		// 截断过长的 prompt（最多 100K chars）
-		body.Messages = truncatePromptChars(body.Messages)
-
 		streamLLMCoreWithProfile(sendChunk, body.Messages, prefs, body.ProfileID)
 
 		close(keepaliveDone)

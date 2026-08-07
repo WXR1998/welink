@@ -75,7 +75,7 @@ type llmConfig struct {
 	noThink           bool   // Ollama 思考型模型专用，开启后请求前加 /no_think 前缀
 	reasoningEffort   string // off / low / medium / high；空字符串 = off
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
-	compressThreshold int    // 上下文压缩阈值，0 = contextWindow - 4000
+	compressThreshold int    // 上下文压缩阈值，0 = contextWindow 的 70%
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
@@ -373,7 +373,37 @@ func testLLMConnProfile(profileID string, prefs Preferences) (string, error) {
 	return testLLMConnConfig(cfg)
 }
 
-const defaultContextWindow = 128000
+const (
+	defaultContextWindow        = 128000
+	defaultContextBudgetPercent = 70
+	contextSummaryTokenReserve  = 8000
+	minimumContextTokenBudget   = 1000
+)
+
+func contextWindowTokens(cfg llmConfig) int {
+	if cfg.contextWindow > 0 {
+		return cfg.contextWindow
+	}
+	return defaultContextWindow
+}
+
+// contextTokenBudget 返回本次调用可使用的输入 token 预算。
+// 未显式配置时只使用窗口的 70%，给模型输出和下一轮检索注入预留空间。
+func contextTokenBudget(cfg llmConfig) int {
+	if cfg.compressThreshold > 0 {
+		return max(cfg.compressThreshold, minimumContextTokenBudget)
+	}
+	return max(contextWindowTokens(cfg)*defaultContextBudgetPercent/100, minimumContextTokenBudget)
+}
+
+// recentConversationTokenBudget 为最近问答保留预算，同时避开 system 指令、检索材料和摘要。
+func recentConversationTokenBudget(totalBudget, systemTokens int) int {
+	available := totalBudget - systemTokens - contextSummaryTokenReserve
+	if available <= 0 {
+		return 0
+	}
+	return min(available, totalBudget/3)
+}
 
 // compressContextIfNeeded 当对话历史过长时，自动压缩旧消息：
 // 1. 保留第一条 system 消息（含聊天记录上下文）
@@ -381,18 +411,7 @@ const defaultContextWindow = 128000
 // 3. 保留最近若干轮对话
 // 整个过程是同步阻塞的，但只在超过阈值时才触发。
 func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamChunk)) []LLMMessage {
-	maxTokens := cfg.contextWindow
-	if maxTokens <= 0 {
-		maxTokens = defaultContextWindow
-	}
-	// 压缩阈值：用户可配置；未配置时默认 contextWindow - 4000（留 4K 给输出）
-	compressThreshold := cfg.compressThreshold
-	if compressThreshold <= 0 {
-		compressThreshold = maxTokens - 4000
-	}
-	if compressThreshold < 1000 {
-		compressThreshold = 1000
-	}
+	compressThreshold := contextTokenBudget(cfg)
 
 	totalTokens := estimateMsgTokens(msgs)
 	if totalTokens <= compressThreshold {
@@ -415,13 +434,13 @@ func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamC
 		}
 	}
 
-	// 计算需要保留的最近消息数量（从后往前，直到总 token 数低于阈值的一半）
+	// 按 system 指令和检索材料的占用量，计算需要保留的最近消息数量。
 	keepCount := 0
 	keepTokens := 0
-	halfThreshold := compressThreshold / 2
+	keepBudget := recentConversationTokenBudget(compressThreshold, estimateMsgTokens(systemMsgs))
 	for i := len(convMsgs) - 1; i >= 0; i-- {
 		msgTokens := estimateMsgTokens([]LLMMessage{convMsgs[i]})
-		if keepTokens+msgTokens > halfThreshold {
+		if keepTokens+msgTokens > keepBudget {
 			break
 		}
 		keepTokens += msgTokens
@@ -497,22 +516,15 @@ func compressContextIfNeeded(msgs []LLMMessage, cfg llmConfig, send func(StreamC
 	return result
 }
 
-// maxPromptChars 限制单次 LLM 调用的 prompt 总字符数（≈ 50K tokens）。
-// 超过此上限时，从最长的 system 消息中间截断，保留开头和结尾。
-const maxPromptChars = 100000
-
-// truncatePromptChars 将整个 prompt 截断到 maxPromptChars 个字符以内。
-// 策略：找到最长的 system 消息，从中间截断，保留开头 1/3 和结尾 2/3。
-func truncatePromptChars(msgs []LLMMessage) []LLMMessage {
-	totalChars := 0
-	for _, m := range msgs {
-		totalChars += len([]rune(m.Content))
-	}
-	if totalChars <= maxPromptChars {
+// truncatePromptToTokenBudget 在压缩后兜底限制最终 prompt。
+// 只从最长的 system 消息中间删减，保留用户最新问题和最近对话。
+func truncatePromptToTokenBudget(msgs []LLMMessage, tokenBudget int) []LLMMessage {
+	totalTokens := estimateMsgTokens(msgs)
+	if totalTokens <= tokenBudget {
 		return msgs
 	}
 
-	log.Printf("[llm] prompt 超长（%d chars），开始截断", totalChars)
+	log.Printf("[llm] prompt 超出 token 预算（%d tokens，预算 %d），开始截断", totalTokens, tokenBudget)
 
 	// 找到最长的 system 消息进行截断
 	largestIdx := -1
@@ -531,24 +543,31 @@ func truncatePromptChars(msgs []LLMMessage) []LLMMessage {
 		return msgs
 	}
 
-	excess := totalChars - maxPromptChars
 	runes := []rune(msgs[largestIdx].Content)
+	excessTokens := totalTokens - tokenBudget
+	targetContentTokens := estimateTokens(msgs[largestIdx].Content) - excessTokens
 
-	if excess >= len(runes) {
+	if targetContentTokens <= 0 {
 		msgs[largestIdx].Content = "（因长度限制，聊天记录已截断）"
 		return msgs
 	}
 
 	// 从中间截断：保留开头 1/3 和结尾 2/3
-	keepTotal := len(runes) - excess
-	headLen := keepTotal / 3
-	tailLen := keepTotal - headLen
+	keepTotal := min(len(runes), (targetContentTokens*4)/3)
+	for keepTotal > 0 {
+		headLen := keepTotal / 3
+		tailLen := keepTotal - headLen
+		msgs[largestIdx].Content = string(runes[:headLen]) +
+			"\n…（因长度限制已截断部分聊天记录）…\n" +
+			string(runes[len(runes)-tailLen:])
+		if estimateMsgTokens(msgs) <= tokenBudget {
+			break
+		}
+		overTokens := estimateMsgTokens(msgs) - tokenBudget
+		keepTotal = max(0, keepTotal-max(1, (overTokens*4+2)/3))
+	}
 
-	msgs[largestIdx].Content = string(runes[:headLen]) +
-		"\n…（因长度限制已截断部分聊天记录）…\n" +
-		string(runes[len(runes)-tailLen:])
-
-	log.Printf("[llm] prompt 截断完成：%d → %d chars", totalChars, totalChars-excess)
+	log.Printf("[llm] prompt 截断完成：%d → %d tokens", totalTokens, estimateMsgTokens(msgs))
 
 	return msgs
 }
@@ -561,6 +580,8 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	}
 	// 上下文窗口管理：对话过长时自动压缩旧消息
 	msgs = compressContextIfNeeded(msgs, cfg, send)
+	// 压缩后仍可能因检索原文过大超过输入预算，此时再做兜底截断。
+	msgs = truncatePromptToTokenBudget(msgs, contextTokenBudget(cfg))
 	// Token 统计：记录输入 token
 	promptTokens := estimateMsgTokens(msgs)
 	// 用 wrapper 追踪输出 token
