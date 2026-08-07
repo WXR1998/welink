@@ -44,6 +44,7 @@ const LabsPage           = lazy(() => import('./components/labs/LabsPage').then(
 const MemoryLibraryPage  = lazy(() => import('./components/memory/MemoryLibraryPage').then(m => ({ default: m.MemoryLibraryPage })));
 const SchedulerPage      = lazy(() => import('./components/tasks/SchedulerPage').then(m => ({ default: m.SchedulerPage })));
 const SettingsPage       = lazy(() => import('./components/settings').then(m => ({ default: m.SettingsPage })));
+const AISettingsPage      = lazy(() => import('./components/settings/ai/AISettingsPage').then(m => ({ default: m.AISettingsPage })));
 // GroupsView 与 GroupDetailModal 同源；Vite 会合并成同一个 chunk，先后引用相互预热
 const GroupsView         = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupsView })));
 const GroupDetailModal   = lazy(() => import('./components/groups/GroupsView').then(m => ({ default: m.GroupDetailModal })));
@@ -88,7 +89,7 @@ function AppInner() {
 
   // State — 从 URL hash 恢复当前 tab + 联系人/群聊弹窗
   // hash 格式：#/stats  #/stats/contact/wxid_abc  #/groups/group/xxx@chatroom
-  const VALID_TABS: TabType[] = ['dashboard', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'urls', 'skills', 'labs', 'export', 'memory', 'tasks', 'settings', 'apilogs', 'feishu-bot'];
+  const VALID_TABS: TabType[] = ['dashboard', 'stats', 'contacts', 'db', 'groups', 'search', 'calendar', 'urls', 'skills', 'labs', 'export', 'memory', 'tasks', 'ai-settings', 'settings', 'apilogs', 'feishu-bot'];
 
   const parseHash = (): { tab: TabType; contactId?: string; groupId?: string } => {
     const raw = window.location.hash.replace('#/', '').replace('#', '');
@@ -534,7 +535,7 @@ function AppInner() {
             onReselect={handleReselect}
             onContactClick={handleContactClick}
             onGroupClick={(g) => setSelectedGroup(g)}
-            onOpenSettings={() => setActiveTab('settings')}
+            onOpenSettings={() => setActiveTab('ai-settings')}
           />
         ) : activeTab === 'stats' ? (
           <StatsPage
@@ -544,7 +545,7 @@ function AppInner() {
             onContactClick={handleContactClick}
             blockedUsers={blockedUsers}
             blockedDisplayNames={blockedDisplayNames}
-            onOpenSettings={() => setActiveTab('settings')}
+            onOpenSettings={() => setActiveTab('ai-settings')}
           />
         ) : activeTab === 'contacts' ? (
           <ContactsPage
@@ -556,9 +557,9 @@ function AppInner() {
             onContactClick={handleContactClick}
           />
         ) : activeTab === 'groups' ? (
-          <GroupsView allContacts={allContacts} onContactClick={handleContactClick} onGroupClick={(g) => setSelectedGroup(g)} blockedGroups={blockedGroups} onBlockGroup={addBlockedGroup} onOpenSettings={() => setActiveTab('settings')} />
+          <GroupsView allContacts={allContacts} onContactClick={handleContactClick} onGroupClick={(g) => setSelectedGroup(g)} blockedGroups={blockedGroups} onBlockGroup={addBlockedGroup} onOpenSettings={() => setActiveTab('ai-settings')} />
         ) : activeTab === 'calendar' ? (
-          <ChatCalendarPage contacts={contacts} onContactClick={handleContactClick} onOpenSettings={() => setActiveTab('settings')} />
+          <ChatCalendarPage contacts={contacts} onContactClick={handleContactClick} onOpenSettings={() => setActiveTab('ai-settings')} />
         ) : activeTab === 'skills' ? (
           <SkillsView />
         ) : activeTab === 'labs' ? (
@@ -585,6 +586,8 @@ function AppInner() {
           <MemoryLibraryPage contacts={contacts} groups={allGroups} />
         ) : activeTab === 'tasks' ? (
           <SchedulerPage contacts={contacts} groups={allGroups} />
+        ) : activeTab === 'ai-settings' ? (
+          <AISettingsPage />
         ) : activeTab === 'settings' ? (
           <SettingsPage
             isAppMode={appInfo.app_mode}
@@ -649,7 +652,7 @@ function AppInner() {
             onClose={handleCloseModal}
             onGroupClick={(g) => { setSelectedContact(null); setSelectedGroup(g); }}
             onBlock={(username) => { addBlockedUser(username); }}
-            onOpenSettings={() => { handleCloseModal(); setActiveTab('settings'); }}
+            onOpenSettings={() => { handleCloseModal(); setActiveTab('ai-settings'); }}
           />
         )}
       </Suspense>
@@ -663,7 +666,7 @@ function AppInner() {
             allContacts={allContacts}
             onContactClick={(c) => { setSelectedGroup(null); setSelectedContact(c); }}
             onBlock={(username) => { addBlockedGroup(username); }}
-            onOpenSettings={() => { setSelectedGroup(null); setActiveTab('settings'); }}
+            onOpenSettings={() => { setSelectedGroup(null); setActiveTab('ai-settings'); }}
           />
         )}
       </Suspense>

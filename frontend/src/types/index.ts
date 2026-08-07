@@ -203,7 +203,7 @@ export interface BackendStatus {
   last_error?: string;
 }
 
-export type TabType = 'dashboard' | 'stats' | 'contacts' | 'db' | 'groups' | 'search' | 'calendar' | 'urls' | 'skills' | 'labs' | 'memory' | 'tasks' | 'export' | 'settings' | 'apilogs' | 'feishu-bot';
+export type TabType = 'dashboard' | 'stats' | 'contacts' | 'db' | 'groups' | 'search' | 'calendar' | 'urls' | 'skills' | 'labs' | 'memory' | 'tasks' | 'export' | 'ai-settings' | 'settings' | 'apilogs' | 'feishu-bot';
 
 // 定时任务（主动总结/挖掘）
 export type TaskType = 'summary' | 'todo' | 'watch' | 'mood' | 'custom';

@@ -75,6 +75,7 @@ const TAB_ITEMS: { tab: TabType; label: string; keywords: string[] }[] = [
   { tab: 'labs',        label: '创意实验室',   keywords: ['labs', '实验', '创意', 'virtual', 'group', '虚拟群聊'] },
   { tab: 'stats',       label: '有趣发现',    keywords: ['fun', '有趣', '趣味', 'mbti', '话痨'] },
   { tab: 'db',          label: '数据库',       keywords: ['db', '数据库'] },
+  { tab: 'ai-settings', label: 'AI 设置',     keywords: ['ai', '模型', 'prompt', 'tts', 'embedding', '配置'] },
   { tab: 'settings',    label: '设置',         keywords: ['settings', '设置'] },
 ];
 

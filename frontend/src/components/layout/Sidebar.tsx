@@ -76,6 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, dark, 
     { tab: 'export',      icon: <Download size={20} strokeWidth={2} />,        label: '导出中心' },
     { tab: 'db',        icon: <Database size={20} strokeWidth={2} />,         label: '数据库' },
     { tab: 'apilogs',   icon: <ScrollText size={20} strokeWidth={2} />,        label: 'API日志' },
+    { tab: 'ai-settings', icon: <Sparkles size={20} strokeWidth={2} />,        label: 'AI 设置' },
     { tab: 'settings',  icon: <Settings size={20} strokeWidth={2} />,         label: '设置' },
   ];
 

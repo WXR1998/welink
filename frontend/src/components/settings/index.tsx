@@ -19,10 +19,6 @@ import { RecordingSection } from './privacy/RecordingSection';
 import { DisplaySection } from './display/DisplaySection';
 import { BlockedSection } from './privacy/BlockedSection';
 import { LockSection } from './privacy/LockSection';
-// AI
-import { AIConfigGroup } from './ai/AIConfigGroup';
-import { PromptTemplateSection } from './ai/PromptTemplateSection';
-import { TtsSection } from './ai/TtsSection';
 // 数据
 import { DataProfilesSection } from './system/DataProfilesSection';
 import { AIBackupSection } from './system/AIBackupSection';
@@ -153,12 +149,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         return <RecordingSection key={id} privacyMode={privacyMode} onTogglePrivacyMode={onTogglePrivacyMode} />;
       case 'display':
         return <DisplaySection key={id} dark={dark} onToggleDark={onToggleDark} fontSize={fontSize} onFontSizeChange={onFontSizeChange} />;
-      case 'ai-config':
-        return <AIConfigGroup key={id} />;
-      case 'prompt':
-        return <PromptTemplateSection key={id} />;
-      case 'tts':
-        return <TtsSection key={id} />;
       case 'blocked':
         return (
           <BlockedSection

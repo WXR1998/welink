@@ -22,7 +22,6 @@ export interface SectionMeta {
 
 export const SECTION_GROUPS: SectionGroup[] = [
   { id: 'general',  title: '通用' },
-  { id: 'ai',       title: 'AI 模型' },
   { id: 'privacy',  title: '隐私与安全' },
   { id: 'data',     title: '数据' },
   { id: 'system',   title: '系统' },
@@ -32,11 +31,6 @@ export const SECTIONS: SectionMeta[] = [
   // 通用
   { id: 'recording', title: '录屏模式',   icon: EyeOff,     groupId: 'general' },
   { id: 'display',   title: '显示设置',   icon: BarChart2,  groupId: 'general' },
-
-  // AI
-  { id: 'ai-config', title: 'AI 配置',    icon: Bot,        groupId: 'ai' },
-  { id: 'prompt',    title: 'Prompt 模板', icon: Bot,        groupId: 'ai' },
-  { id: 'tts',       title: '朗读 TTS',   icon: Sparkles,   groupId: 'ai' },
 
   // 隐私与安全
   { id: 'blocked',   title: '隐私屏蔽',   icon: ShieldOff,  groupId: 'privacy' },
