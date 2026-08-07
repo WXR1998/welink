@@ -25,9 +25,9 @@ const (
 	echoMaxTopK             = 100
 	echoDefaultMinMsgs      = 50
 	echoDefaultDays         = 365
-	echoCandidatesPerKey    = 5     // 单 contact 内最多保留的候选数（避免一个高频联系人霸榜）
-	echoMaxKeys             = 800   // 单次跨库扫描的 contact 数量上限（防御性：超大库的兜底）
-	echoMinSimilarityCutoff = 0.35  // 相似度过低的命中视为噪声丢弃
+	echoCandidatesPerKey    = 5    // 单 contact 内最多保留的候选数（避免一个高频联系人霸榜）
+	echoMaxKeys             = 800  // 单次跨库扫描的 contact 数量上限（防御性：超大库的兜底）
+	echoMinSimilarityCutoff = 0.35 // 相似度过低的命中视为噪声丢弃
 )
 
 type EchoHit struct {
@@ -38,22 +38,22 @@ type EchoHit struct {
 }
 
 type EchoGroup struct {
-	Key         string    `json:"key"`           // contact_key（私聊=wxid，群=xxx@chatroom）
-	DisplayName string    `json:"display_name"`  // 展示名（备注 / 昵称 / username）
+	Key         string    `json:"key"`          // contact_key（私聊=wxid，群=xxx@chatroom）
+	DisplayName string    `json:"display_name"` // 展示名（备注 / 昵称 / username）
 	Avatar      string    `json:"avatar,omitempty"`
 	IsGroup     bool      `json:"is_group"`
-	HitCount    int       `json:"hit_count"`     // 这个人/群里命中条数
-	TopSim      float32   `json:"top_sim"`       // 该人最高相似度（用于排序）
-	Hits        []EchoHit `json:"hits"`          // 该人/群下的命中消息（按相似度降序）
+	HitCount    int       `json:"hit_count"` // 这个人/群里命中条数
+	TopSim      float32   `json:"top_sim"`   // 该人最高相似度（用于排序）
+	Hits        []EchoHit `json:"hits"`      // 该人/群下的命中消息（按相似度降序）
 }
 
 type EchoResponse struct {
-	Query         string      `json:"query"`
-	TotalHits     int         `json:"total_hits"`     // 命中消息总数（聚合前）
-	KeysScanned   int         `json:"keys_scanned"`   // 实际扫描的 contact 数量
-	KeysSkipped   int         `json:"keys_skipped"`   // 因过滤条件被跳过的 contact 数量
-	ElapsedMs     int64       `json:"elapsed_ms"`
-	Groups        []EchoGroup `json:"groups"`         // 按 TopSim 降序
+	Query       string      `json:"query"`
+	TotalHits   int         `json:"total_hits"`   // 命中消息总数（聚合前）
+	KeysScanned int         `json:"keys_scanned"` // 实际扫描的 contact 数量
+	KeysSkipped int         `json:"keys_skipped"` // 因过滤条件被跳过的 contact 数量
+	ElapsedMs   int64       `json:"elapsed_ms"`
+	Groups      []EchoGroup `json:"groups"` // 按 TopSim 降序
 }
 
 func registerEchoSearchRoutes(prot *gin.RouterGroup, getSvc func() *service.ContactService) {
@@ -101,7 +101,11 @@ func echoSearchHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 
 		// 1. embed query（一次）
 		prefs := loadPreferences()
-		cfg := defaultEmbeddingConfig(prefs)
+		cfg, err := currentEmbeddingConfig(prefs)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "query embedding 失败：" + err.Error()})
+			return
+		}
 		queryEmbs, err := GetEmbeddingsBatch([]string{query}, cfg)
 		if err != nil || len(queryEmbs) == 0 || queryEmbs[0] == nil {
 			msg := "query embedding 失败"
@@ -153,8 +157,8 @@ func echoSearchHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 
 		// 4. 跨 key 流式扫描，每条算余弦相似度，单 key 保留 top-N 候选
 		type scoredHit struct {
-			key  string
-			hit  EchoHit
+			key string
+			hit EchoHit
 		}
 		allHits := make([]scoredHit, 0, len(allKeys)*echoCandidatesPerKey)
 		queryDim := len(queryVec)
@@ -181,7 +185,7 @@ func echoSearchHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 
 			// 单 key 内用小顶堆思路：维护 echoCandidatesPerKey 个候选
 			type cand struct {
-				sim     float32
+				sim         float32
 				dt, snd, ct string
 			}
 			localTop := make([]cand, 0, echoCandidatesPerKey+1)
@@ -309,4 +313,3 @@ func parseIntDefault(s string, def int) int {
 	}
 	return n
 }
-

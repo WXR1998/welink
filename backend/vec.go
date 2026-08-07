@@ -108,16 +108,16 @@ type vecIndexProgress struct {
 
 // vecBuildJob 记录单个联系人向量索引的后台构建进度（进程内内存，重启后清空）。
 type vecBuildJob struct {
-	mu        sync.Mutex
-	Step      string `json:"step"`
-	Current   int    `json:"current"`
-	Total     int    `json:"total"`
-	Done      bool   `json:"done"`
-	Paused    bool   `json:"paused"`
-	Error     string `json:"error,omitempty"`
-	FactCount int    `json:"fact_count"`
-	abort     chan struct{} // 关闭此 channel 可中止正在运行的提炼
-	abortClosed bool       // 防止重复 close 导致 panic
+	mu          sync.Mutex
+	Step        string        `json:"step"`
+	Current     int           `json:"current"`
+	Total       int           `json:"total"`
+	Done        bool          `json:"done"`
+	Paused      bool          `json:"paused"`
+	Error       string        `json:"error,omitempty"`
+	FactCount   int           `json:"fact_count"`
+	abort       chan struct{} // 关闭此 channel 可中止正在运行的提炼
+	abortClosed bool          // 防止重复 close 导致 panic
 }
 
 // safeAbort 安全关闭 abort channel，防止重复 close 导致 panic。
@@ -215,7 +215,11 @@ func StartVecIndexBackground(key, username string, isGroup bool, svc *service.Co
 func buildVecIndexCore(key, username string, isGroup bool, svc *service.ContactService, prefs Preferences, progressFn func(vecIndexProgress)) {
 	sendP := progressFn
 
-	cfg := defaultEmbeddingConfig(prefs)
+	cfg, err := currentEmbeddingConfig(prefs)
+	if err != nil {
+		sendP(vecIndexProgress{Step: "error", Error: err.Error()})
+		return
+	}
 
 	if svc == nil {
 		sendP(vecIndexProgress{Step: "error", Error: "服务不可用，请先配置数据目录"})
@@ -358,9 +362,9 @@ const (
 
 // vecEmbEntry 是单个 key 的 embedding 内存缓存条目。
 type vecEmbEntry struct {
-	seqs     []int
-	vecs     [][]float32
-	usedAt   time.Time
+	seqs   []int
+	vecs   [][]float32
+	usedAt time.Time
 }
 
 var (
@@ -457,7 +461,10 @@ func SearchVec(key, query string, topK int, prefs Preferences) (results []RAGRes
 		return nil, nil, fmt.Errorf("数据库未初始化")
 	}
 
-	cfg := defaultEmbeddingConfig(prefs)
+	cfg, err := currentEmbeddingConfig(prefs)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Embed query（单次 API 调用）
 	queryEmbs, err := GetEmbeddingsBatch([]string{query}, cfg)

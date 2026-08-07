@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, AlertCircle, Check, Trash2, Plus, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { Loader2, AlertCircle, Check, Trash2, Plus, X } from 'lucide-react';
 import axios from 'axios';
 import { genId, newMemLLMProfile, PROVIDERS, type MemLLMProfile } from './types';
 
 export const MemorySection: React.FC = () => {
   const [profiles, setProfiles] = useState<MemLLMProfile[]>([]);
+  const [defaultProfileId, setDefaultProfileId] = useState('');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -16,6 +17,7 @@ export const MemorySection: React.FC = () => {
       const mps = (r.data.mem_llm_profiles as MemLLMProfile[] | undefined);
       if (mps && mps.length > 0) {
         setProfiles(mps);
+        setDefaultProfileId((r.data.default_mem_llm_profile_id as string) || mps[0].id);
       } else {
         setProfiles([]); // 留空时后端复用默认 LLM profile
       }
@@ -31,6 +33,7 @@ export const MemorySection: React.FC = () => {
     return {
       ...fresh,
       mem_llm_profiles: profiles,
+      default_mem_llm_profile_id: defaultProfileId || profiles[0]?.id || '',
     };
   };
 
@@ -55,19 +58,14 @@ export const MemorySection: React.FC = () => {
       await axios.put('/api/preferences/llm', await buildPayload());
       const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; tokens_per_second: number; error?: string }[] }>('/api/ai/mem/test');
       const results = r.data.results ?? [];
-      const okCount = results.filter(r => r.ok).length;
-      const failCount = results.length - okCount;
       const detail = results.map(r => {
         if (!r.ok) return `${r.provider}: ${r.error ?? '失败'}`;
         const parts = [`${r.provider}: ${r.latency_ms}ms`];
         if (r.tokens_per_second > 0) parts.push(`${r.tokens_per_second.toFixed(1)} tok/s`);
         return parts.join(' · ');
       }).join('；');
-      if (failCount === 0) {
-        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功 · ${detail}` });
-      } else {
-        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败 · ${detail}` });
-      }
+      const selectedLabel = profiles.length === 0 ? '默认 AI 配置' : '当前配置';
+      setSaveMsg({ ok: results[0]?.ok === true, text: `${selectedLabel}${results[0]?.ok ? '连接成功' : '连接失败'}${detail ? ` · ${detail}` : ''}` });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -105,21 +103,14 @@ export const MemorySection: React.FC = () => {
     }
   };
 
-  const moveProfile = (index: number, dir: -1 | 1) => {
-    const newIndex = index + dir;
-    if (newIndex < 0 || newIndex >= profiles.length) return;
-    const updated = [...profiles];
-    [updated[index], updated[newIndex]] = [updated[newIndex], updated[index]];
-    setProfiles(updated);
-  };
-
   const updateProfile = (id: string, updates: Partial<MemLLMProfile>) => {
     setProfiles(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
   };
 
   const removeProfile = (id: string) => {
-    if (profiles.length <= 1) return;
-    setProfiles(prev => prev.filter(p => p.id !== id));
+    const updated = profiles.filter(p => p.id !== id);
+    setProfiles(updated);
+    if (defaultProfileId === id) setDefaultProfileId(updated[0]?.id ?? '');
   };
 
   if (!loaded) return null;
@@ -127,8 +118,7 @@ export const MemorySection: React.FC = () => {
   return (
     <div className="space-y-3">
       <p className="text-sm text-gray-400 mb-2">
-        记忆提炼使用的 LLM 模型。支持配置多个提供商，排在前面的优先使用；
-        连续失败时自动 fallback 到后面的提供商（粘性保持 1 小时）。
+        记忆提炼使用的 LLM 模型。请选择一个当前使用的配置；调用失败会直接报错，不会切换其他配置。留空则复用默认 AI 配置。
       </p>
 
       {/* Provider cards */}
@@ -149,17 +139,9 @@ export const MemorySection: React.FC = () => {
                   className="flex-1 text-sm font-semibold border-0 bg-transparent focus:outline-none text-[#1d1d1f] dark:text-gray-200 placeholder-gray-300"
                 />
                 <div className="flex items-center gap-0.5">
-                  <button onClick={() => moveProfile(i, -1)} disabled={i === 0} className="p-1 text-gray-300 hover:text-[#07c160] disabled:opacity-30 transition-colors">
-                    <ChevronUp size={14} />
+                  <button onClick={() => removeProfile(p.id)} className="p-1 text-gray-300 hover:text-red-400 transition-colors">
+                    <X size={14} />
                   </button>
-                  <button onClick={() => moveProfile(i, 1)} disabled={i === profiles.length - 1} className="p-1 text-gray-300 hover:text-[#07c160] disabled:opacity-30 transition-colors">
-                    <ChevronDown size={14} />
-                  </button>
-                  {profiles.length > 1 && (
-                    <button onClick={() => removeProfile(p.id)} className="p-1 text-gray-300 hover:text-red-400 transition-colors">
-                      <X size={14} />
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -225,6 +207,15 @@ export const MemorySection: React.FC = () => {
           添加记忆提炼提供商
         </button>
       </div>
+
+      {profiles.length > 1 && (
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-4">
+          当前记忆提炼配置
+          <select value={defaultProfileId} onChange={e => setDefaultProfileId(e.target.value)} className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white dk-input">
+            {profiles.map((p, i) => <option key={p.id} value={p.id}>{p.name || `配置 ${i + 1}`}</option>)}
+          </select>
+        </label>
+      )}
 
       {/* Save & Test */}
       <div className="flex items-center gap-3">

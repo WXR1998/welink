@@ -90,7 +90,7 @@ type ImageProfile struct {
 	Model    string `json:"model,omitempty"`
 }
 
-// EmbeddingProfile 是单个 Embedding 提供商配置，支持多提供商 fallback。
+// EmbeddingProfile 是单个 Embedding 提供商配置。
 type EmbeddingProfile struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -101,7 +101,7 @@ type EmbeddingProfile struct {
 	Dims     int    `json:"dims,omitempty"`
 }
 
-// MemLLMProfile 是单个记忆提炼 LLM 提供商配置，支持多提供商 fallback。
+// MemLLMProfile 是单个记忆提炼 LLM 提供商配置。
 type MemLLMProfile struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -111,7 +111,7 @@ type MemLLMProfile struct {
 	Model    string `json:"model,omitempty"`
 }
 
-// RerankProfile 是单个 Rerank（重排）提供商配置，支持多提供商 fallback。
+// RerankProfile 是单个 Rerank（重排）提供商配置。
 type RerankProfile struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -152,7 +152,8 @@ type LLMProfile struct {
 // v2: ImageProvider/ImageAPIKey/ImageBaseURL/ImageModel 单字段 → ImageProfiles 数组。
 // v3: 顶层 LLM 连接参数 → 选中的默认 LLM profile。
 // v4: 顶层 Embedding / 记忆提炼 / Rerank 连接参数 → 对应 profiles。
-const CurrentSchemaVersion = 4
+// v5: Embedding / 记忆提炼 / Rerank 从顺序 fallback 改为显式选择一个 profile。
+const CurrentSchemaVersion = 5
 
 type Preferences struct {
 	// 0 或缺失 = 旧版本（需要迁移）；>= CurrentSchemaVersion = 当前版本
@@ -226,8 +227,8 @@ type Preferences struct {
 	DefaultLLMProfileID string       `json:"default_llm_profile_id,omitempty"`
 	AIAnalysisDBPath    string       `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
 
-	// Embedding profiles 的数组顺序即 fallback 优先级。
-	EmbeddingProfiles []EmbeddingProfile `json:"embedding_profiles,omitempty"`
+	EmbeddingProfiles         []EmbeddingProfile `json:"embedding_profiles,omitempty"`
+	DefaultEmbeddingProfileID string             `json:"default_embedding_profile_id,omitempty"`
 
 	// 文生图配置（年报封面 / 高光插画 / AI 头像等场景）
 	// 默认 disabled — 生图比文本贵 10-50 倍，必须用户主动开启 + 主动点按钮触发
@@ -242,11 +243,13 @@ type Preferences struct {
 	// 向量检索缓存（内存）
 	VecCacheMaxKeys int `json:"vec_cache_max_keys,omitempty"` // 最多缓存几个联系人的 embedding，0 = 默认 3
 
-	// 记忆提炼 profiles 的数组顺序即 fallback 优先级；为空时复用默认 LLM profile。
-	MemLLMProfiles []MemLLMProfile `json:"mem_llm_profiles,omitempty"`
+	// 记忆提炼 profile；为空时复用默认 LLM profile。
+	MemLLMProfiles         []MemLLMProfile `json:"mem_llm_profiles,omitempty"`
+	DefaultMemLLMProfileID string          `json:"default_mem_llm_profile_id,omitempty"`
 
-	// Rerank profiles 的数组顺序即 fallback 优先级；为空时不启用。
-	RerankProfiles []RerankProfile `json:"rerank_profiles,omitempty"`
+	// Rerank profile；为空时不启用。
+	RerankProfiles         []RerankProfile `json:"rerank_profiles,omitempty"`
+	DefaultRerankProfileID string          `json:"default_rerank_profile_id,omitempty"`
 
 	// 自定义纪念日
 	CustomAnniversaries []CustomAnniversary `json:"custom_anniversaries,omitempty"`
@@ -416,6 +419,9 @@ func decodePreferences(data []byte) (Preferences, error) {
 		}}
 		needsMigration = true
 	}
+	if len(p.EmbeddingProfiles) > 0 && !hasEmbeddingProfile(p.EmbeddingProfiles, p.DefaultEmbeddingProfileID) {
+		needsMigration = true
+	}
 	if len(p.MemLLMProfiles) == 0 && (legacy.MemLLMBaseURL != "" || legacy.MemLLMModel != "" || legacy.MemLLMAPIKey != "") {
 		provider := legacy.Provider
 		if legacy.MemLLMAPIKey == "" {
@@ -427,11 +433,17 @@ func decodePreferences(data []byte) (Preferences, error) {
 		}}
 		needsMigration = true
 	}
+	if len(p.MemLLMProfiles) > 0 && !hasMemLLMProfile(p.MemLLMProfiles, p.DefaultMemLLMProfileID) {
+		needsMigration = true
+	}
 	if len(p.RerankProfiles) == 0 && legacy.RerankProvider != "" {
 		p.RerankProfiles = []RerankProfile{{
 			ID: "rerank-default", Name: legacy.RerankProvider, Provider: legacy.RerankProvider,
 			APIKey: legacy.RerankAPIKey, BaseURL: legacy.RerankBaseURL, Model: legacy.RerankModel,
 		}}
+		needsMigration = true
+	}
+	if len(p.RerankProfiles) > 0 && !hasRerankProfile(p.RerankProfiles, p.DefaultRerankProfileID) {
 		needsMigration = true
 	}
 	if needsMigration && p.SchemaVersion >= CurrentSchemaVersion {
@@ -447,6 +459,33 @@ func defaultPreferences() Preferences {
 		BlockedUsers:  []string{},
 		BlockedGroups: []string{},
 	}
+}
+
+func hasEmbeddingProfile(profiles []EmbeddingProfile, id string) bool {
+	for _, profile := range profiles {
+		if profile.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMemLLMProfile(profiles []MemLLMProfile, id string) bool {
+	for _, profile := range profiles {
+		if profile.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRerankProfile(profiles []RerankProfile, id string) bool {
+	for _, profile := range profiles {
+		if profile.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizeForExport 返回用于导出的 Preferences 副本：
@@ -607,6 +646,18 @@ func migratePreferences(p Preferences) Preferences {
 	}
 	if p.SchemaVersion < 4 {
 		p.SchemaVersion = 4
+	}
+	if p.SchemaVersion < 5 {
+		if !hasEmbeddingProfile(p.EmbeddingProfiles, p.DefaultEmbeddingProfileID) && len(p.EmbeddingProfiles) > 0 {
+			p.DefaultEmbeddingProfileID = p.EmbeddingProfiles[0].ID
+		}
+		if !hasMemLLMProfile(p.MemLLMProfiles, p.DefaultMemLLMProfileID) && len(p.MemLLMProfiles) > 0 {
+			p.DefaultMemLLMProfileID = p.MemLLMProfiles[0].ID
+		}
+		if !hasRerankProfile(p.RerankProfiles, p.DefaultRerankProfileID) && len(p.RerankProfiles) > 0 {
+			p.DefaultRerankProfileID = p.RerankProfiles[0].ID
+		}
+		p.SchemaVersion = 5
 	}
 	return p
 }

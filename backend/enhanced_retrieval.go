@@ -265,7 +265,10 @@ func SearchVecMessagesFiltered(key, query string, topK int, timeFrom, timeTo str
 		return nil, nil
 	}
 
-	cfg := defaultEmbeddingConfig(prefs)
+	cfg, err := currentEmbeddingConfig(prefs)
+	if err != nil {
+		return nil, err
+	}
 	queryEmbs, err := GetEmbeddingsBatch([]string{query}, cfg)
 	if err != nil || len(queryEmbs) == 0 || queryEmbs[0] == nil {
 		return nil, err
@@ -837,7 +840,7 @@ func EnhancedRetrieval(
 			rankQuery = fmt.Sprintf("%s。约束：%s%s", query, strings.Join(parts, "；"), lookup)
 		}
 		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", today, rankQuery)
-		rerankResults, err := RerankCandidatesWithFallback(rerankQuery, docs, rerankCfgs)
+		rerankResults, err := RerankCandidatesForCurrentProfile(rerankQuery, docs, rerankCfgs)
 		if err == nil && len(rerankResults) > 0 {
 			type indexed struct {
 				idx   int

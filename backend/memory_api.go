@@ -238,10 +238,13 @@ func registerMemoryRoutes(api *gin.RouterGroup) {
 		// 尝试计算 embedding（配好了 embedding 才会有值）；拿不到就零向量
 		var emb []byte
 		prefs := loadPreferences()
-		embCfg := defaultEmbeddingConfig(prefs)
-		if vecs, err := GetEmbeddingsBatch([]string{body.Fact}, embCfg); err == nil && len(vecs) == 1 && vecs[0] != nil {
-			emb = encodeVec(vecs[0])
-		} else {
+		embCfg, embErr := currentEmbeddingConfig(prefs)
+		if embErr == nil {
+			if vecs, err := GetEmbeddingsBatch([]string{body.Fact}, embCfg); err == nil && len(vecs) == 1 && vecs[0] != nil {
+				emb = encodeVec(vecs[0])
+			}
+		}
+		if emb == nil {
 			// 零向量占位（schema 要求 NOT NULL）；之后如果用户跑一次「重提炼」可以补
 			emb = encodeVec(make([]float32, 1))
 		}

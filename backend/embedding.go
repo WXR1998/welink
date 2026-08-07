@@ -22,45 +22,12 @@ type EmbeddingConfig struct {
 	Dims     int
 }
 
-// defaultEmbeddingConfig 返回 fallback 列表中的第一个配置；未配置时使用本地 Ollama。
-func defaultEmbeddingConfig(prefs Preferences) EmbeddingConfig {
-	if configs := embeddingConfigs(prefs); len(configs) > 0 {
-		return configs[0]
+// currentEmbeddingConfig 返回当前选中的 Embedding profile；未选中时直接报错。
+func currentEmbeddingConfig(prefs Preferences) (EmbeddingConfig, error) {
+	if configs := embeddingConfigs(prefs); len(configs) == 1 {
+		return configs[0], nil
 	}
-	cfg := EmbeddingConfig{Provider: "ollama"}
-	switch cfg.Provider {
-	case "ollama":
-		if cfg.BaseURL == "" {
-			cfg.BaseURL = "http://localhost:11434"
-		}
-		if cfg.Model == "" {
-			cfg.Model = "nomic-embed-text"
-		}
-		if cfg.Dims == 0 {
-			cfg.Dims = 768
-		}
-	case "openai":
-		if cfg.BaseURL == "" {
-			cfg.BaseURL = "https://api.openai.com/v1"
-		}
-		if cfg.Model == "" {
-			cfg.Model = "text-embedding-3-small"
-		}
-		if cfg.Dims == 0 {
-			cfg.Dims = 1536
-		}
-	case "jina":
-		if cfg.BaseURL == "" {
-			cfg.BaseURL = "https://api.jina.ai/v1"
-		}
-		if cfg.Model == "" {
-			cfg.Model = "jina-embeddings-v3"
-		}
-		if cfg.Dims == 0 {
-			cfg.Dims = 1024
-		}
-	}
-	return cfg
+	return EmbeddingConfig{}, fmt.Errorf("未配置当前 embedding profile")
 }
 
 // ─── API 调用 ──────────────────────────────────────────────────────────────────
@@ -256,22 +223,14 @@ func decodeVec(b []byte) []float32 {
 	return v
 }
 
-// embeddingConfigs 从 Profiles 构造 []EmbeddingConfig（数组顺序即 fallback 优先级）。
+// embeddingConfigs 返回当前选中的 Embedding profile；不做失败回退。
 func embeddingConfigs(prefs Preferences) []EmbeddingConfig {
-	if len(prefs.EmbeddingProfiles) > 0 {
-		configs := make([]EmbeddingConfig, 0, len(prefs.EmbeddingProfiles))
-		for _, p := range prefs.EmbeddingProfiles {
-			cfg := EmbeddingConfig{
-				Provider: p.Provider,
-				APIKey:   p.APIKey,
-				BaseURL:  p.BaseURL,
-				Model:    p.Model,
-				Dims:     p.Dims,
-			}
+	for _, p := range prefs.EmbeddingProfiles {
+		if p.ID == prefs.DefaultEmbeddingProfileID {
+			cfg := EmbeddingConfig{Provider: p.Provider, APIKey: p.APIKey, BaseURL: p.BaseURL, Model: p.Model, Dims: p.Dims}
 			applyEmbeddingDefaults(&cfg)
-			configs = append(configs, cfg)
+			return []EmbeddingConfig{cfg}
 		}
-		return configs
 	}
 	return nil
 }
@@ -315,25 +274,10 @@ func applyEmbeddingDefaults(cfg *EmbeddingConfig) {
 	}
 }
 
-// GetEmbeddingsBatchWithFallback 按多提供商顺序尝试，带粘性回退。
-// 只有所有提供商都失败才返回错误。
-func GetEmbeddingsBatchWithFallback(texts []string, configs []EmbeddingConfig) ([][]float32, error) {
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("未配置 embedding 提供商")
+// GetEmbeddingsBatchForCurrentProfile 使用当前选中的 Embedding profile，不做失败回退。
+func GetEmbeddingsBatchForCurrentProfile(texts []string, configs []EmbeddingConfig) ([][]float32, error) {
+	if len(configs) != 1 {
+		return nil, fmt.Errorf("未配置当前 embedding profile")
 	}
-	numProviders := len(configs)
-	activeIdx := embeddingFallback.getActiveIndex(numProviders)
-
-	var lastErr error
-	for i := 0; i < numProviders; i++ {
-		idx := (activeIdx + i) % numProviders
-		result, err := GetEmbeddingsBatch(texts, configs[idx])
-		if err == nil {
-			embeddingFallback.recordSuccess()
-			return result, nil
-		}
-		lastErr = err
-		embeddingFallback.recordFailure(idx, numProviders)
-	}
-	return nil, fmt.Errorf("所有 embedding 提供商均失败，最后错误: %w", lastErr)
+	return GetEmbeddingsBatch(texts, configs[0])
 }

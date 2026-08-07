@@ -389,7 +389,7 @@ func extractAndStoreFacts(
 		for i, f := range pinnedFacts {
 			pinnedTexts[i] = f.Fact
 		}
-		pinnedVecs, err := GetEmbeddingsBatchWithFallback(pinnedTexts, embConfigs)
+		pinnedVecs, err := GetEmbeddingsBatchForCurrentProfile(pinnedTexts, embConfigs)
 		if err != nil {
 			fmt.Printf("[MEM-EXTRACT] ⚠️ 置顶记忆 embedding 失败，中止提炼: %v\n", err)
 			return 0, fmt.Errorf("embedding 服务不可用: %w", err)
@@ -462,7 +462,7 @@ func extractAndStoreFacts(
 			chunkStart := chunk[0].DateTime
 			chunkEnd := chunk[len(chunk)-1].DateTime
 			timeRange := "[" + chunkStart + " ~ " + chunkEnd + "] "
-			embeddings, err := GetEmbeddingsBatchWithFallback(facts, embConfigs)
+			embeddings, err := GetEmbeddingsBatchForCurrentProfile(facts, embConfigs)
 			if err != nil {
 				fmt.Printf("[MEM-EXTRACT] ⚠️ 事实 embedding 失败，中止提炼: %v\n", err)
 				return total, fmt.Errorf("embedding 服务不可用: %w", err)
@@ -625,7 +625,7 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			sb.String())
 	}
 
-	reply, err := completeMemLLMWithFallback([]LLMMessage{{Role: "user", Content: prompt}}, memLLMConfigs(prefs), prefs)
+	reply, err := completeMemLLM([]LLMMessage{{Role: "user", Content: prompt}}, memLLMConfigs(prefs), prefs)
 	if err != nil {
 		return memExtractResult{}, err
 	}
@@ -706,7 +706,10 @@ func SearchMemFactsFiltered(key, query string, topK int, timeFrom, timeTo string
 		return nil, nil
 	}
 
-	cfg := defaultEmbeddingConfig(prefs)
+	cfg, err := currentEmbeddingConfig(prefs)
+	if err != nil {
+		return nil, err
+	}
 	queryEmbs, err := GetEmbeddingsBatch([]string{query}, cfg)
 	if err != nil || len(queryEmbs) == 0 || queryEmbs[0] == nil {
 		return nil, err
@@ -922,38 +925,20 @@ func SearchMemFactsCoMention(key string, entities, concepts []string, topK int, 
 	return out
 }
 
-// memLLMConfigs 从 Profiles 构造运行时配置；为空时复用默认 LLM profile。
+// memLLMConfigs 返回当前选中的记忆提炼 profile；为空时复用默认 LLM profile。
 func memLLMConfigs(prefs Preferences) []llmConfig {
-	if len(prefs.MemLLMProfiles) > 0 {
-		configs := make([]llmConfig, 0, len(prefs.MemLLMProfiles))
-		for _, p := range prefs.MemLLMProfiles {
-			cfg := llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model}
-			configs = append(configs, cfg)
+	for _, p := range prefs.MemLLMProfiles {
+		if p.ID == prefs.DefaultMemLLMProfileID {
+			return []llmConfig{{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model}}
 		}
-		return configs
 	}
 	return []llmConfig{llmConfigForProfile("", prefs)}
 }
 
-// completeMemLLMWithFallback 按多提供商顺序尝试记忆提炼 LLM 调用，带粘性回退。
-// 只有所有提供商都失败才返回错误。
-func completeMemLLMWithFallback(msgs []LLMMessage, configs []llmConfig, prefs Preferences) (string, error) {
-	if len(configs) == 0 {
+// completeMemLLM 使用当前选中的记忆提炼 profile，不做失败回退。
+func completeMemLLM(msgs []LLMMessage, configs []llmConfig, prefs Preferences) (string, error) {
+	if len(configs) != 1 {
 		return "", fmt.Errorf("未配置记忆提炼模型")
 	}
-	numProviders := len(configs)
-	activeIdx := memLLMFallback.getActiveIndex(numProviders)
-
-	var lastErr error
-	for i := 0; i < numProviders; i++ {
-		idx := (activeIdx + i) % numProviders
-		result, err := completeLLMWithConfig(msgs, configs[idx], prefs, "memory_extraction")
-		if err == nil {
-			memLLMFallback.recordSuccess()
-			return result, nil
-		}
-		lastErr = err
-		memLLMFallback.recordFailure(idx, numProviders)
-	}
-	return "", fmt.Errorf("所有记忆提炼 LLM 提供商均失败，最后错误: %w", lastErr)
+	return completeLLMWithConfig(msgs, configs[0], prefs, "memory_extraction")
 }

@@ -12,6 +12,7 @@ const RERANK_PROVIDERS = [
 
 export const RerankSection: React.FC = () => {
   const [profiles, setProfiles] = useState<RerankProfile[]>([]);
+  const [defaultProfileId, setDefaultProfileId] = useState('');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -22,6 +23,7 @@ export const RerankSection: React.FC = () => {
       const rps = (r.data.rerank_profiles as RerankProfile[] | undefined);
       if (rps && rps.length > 0) {
         setProfiles(rps);
+        setDefaultProfileId((r.data.default_rerank_profile_id as string) || rps[0].id);
       } else {
         setProfiles([]);
       }
@@ -37,6 +39,7 @@ export const RerankSection: React.FC = () => {
     return {
       ...fresh,
       rerank_profiles: profiles,
+      default_rerank_profile_id: defaultProfileId || profiles[0]?.id || '',
     };
   };
 
@@ -61,14 +64,8 @@ export const RerankSection: React.FC = () => {
       await axios.put('/api/preferences/llm', await buildPayload());
       const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; error?: string }[] }>('/api/ai/rerank/test');
       const results = r.data.results ?? [];
-      const okCount = results.filter(r => r.ok).length;
-      const failCount = results.length - okCount;
       const detail = results.map(r => r.ok ? `${r.provider}: ${r.latency_ms}ms` : `${r.provider}: ${r.error ?? '失败'}`).join('；');
-      if (failCount === 0) {
-        setSaveMsg({ ok: true, text: `全部 ${okCount} 个提供商连接成功 · ${detail}` });
-      } else {
-        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败 · ${detail}` });
-      }
+      setSaveMsg({ ok: results[0]?.ok === true, text: `${results[0]?.ok ? '当前配置连接成功' : '当前配置连接失败'}${detail ? ` · ${detail}` : ''}` });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -83,7 +80,9 @@ export const RerankSection: React.FC = () => {
   };
 
   const removeProfile = (id: string) => {
-    setProfiles(prev => prev.filter(p => p.id !== id));
+    const updated = profiles.filter(p => p.id !== id);
+    setProfiles(updated);
+    if (defaultProfileId === id) setDefaultProfileId(updated[0]?.id ?? '');
   };
 
   const addProfile = () => {
@@ -95,7 +94,7 @@ export const RerankSection: React.FC = () => {
   return (
     <div>
       <p className="text-sm text-gray-400 mb-4">
-        用于对向量检索召回的候选做 cross-encoder 精排，提升检索精度。留空则不启用 rerank，仅使用向量+BM25 混合检索。
+        用于对向量检索召回的候选做 cross-encoder 精排。请选择一个当前使用的配置；调用失败不会切换其他配置。留空则不启用。
       </p>
 
       {/* Provider cards */}
@@ -181,6 +180,15 @@ export const RerankSection: React.FC = () => {
           添加 Rerank 提供商
         </button>
       </div>
+
+      {profiles.length > 1 && (
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-4">
+          当前 Rerank 配置
+          <select value={defaultProfileId} onChange={e => setDefaultProfileId(e.target.value)} className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white dk-input">
+            {profiles.map((p, i) => <option key={p.id} value={p.id}>{p.name || `配置 ${i + 1}`}</option>)}
+          </select>
+        </label>
+      )}
 
       {/* Save / Test buttons */}
       <div className="flex items-center gap-3 pt-1">

@@ -105,7 +105,7 @@ func selectRelevantSources(query string, candidates []RawExcerpt, prefs Preferen
 			docs[i] = c.Content
 		}
 		rerankQuery := fmt.Sprintf("[当前日期: %s] %s", time.Now().Format("2006-01-02"), query)
-		results, err := RerankCandidatesWithFallback(rerankQuery, docs, rerankCfgs)
+		results, err := RerankCandidatesForCurrentProfile(rerankQuery, docs, rerankCfgs)
 		if err == nil && len(results) > 0 {
 			type scored struct {
 				idx   int
@@ -1291,14 +1291,17 @@ func serverMain() {
 			return
 		}
 		var incoming struct {
-			LLMProfiles         []LLMProfile       `json:"llm_profiles"`
-			DefaultLLMProfileID string             `json:"default_llm_profile_id"`
-			GeminiClientID      string             `json:"gemini_client_id"`
-			GeminiClientSecret  string             `json:"gemini_client_secret"`
-			AIAnalysisDBPath    string             `json:"ai_analysis_db_path"`
-			EmbeddingProfiles   []EmbeddingProfile `json:"embedding_profiles"`
-			MemLLMProfiles      []MemLLMProfile    `json:"mem_llm_profiles"`
-			RerankProfiles      []RerankProfile    `json:"rerank_profiles"`
+			LLMProfiles               []LLMProfile       `json:"llm_profiles"`
+			DefaultLLMProfileID       string             `json:"default_llm_profile_id"`
+			GeminiClientID            string             `json:"gemini_client_id"`
+			GeminiClientSecret        string             `json:"gemini_client_secret"`
+			AIAnalysisDBPath          string             `json:"ai_analysis_db_path"`
+			EmbeddingProfiles         []EmbeddingProfile `json:"embedding_profiles"`
+			DefaultEmbeddingProfileID string             `json:"default_embedding_profile_id"`
+			MemLLMProfiles            []MemLLMProfile    `json:"mem_llm_profiles"`
+			DefaultMemLLMProfileID    string             `json:"default_mem_llm_profile_id"`
+			RerankProfiles            []RerankProfile    `json:"rerank_profiles"`
+			DefaultRerankProfileID    string             `json:"default_rerank_profile_id"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1376,6 +1379,26 @@ func serverMain() {
 			}
 		}
 		existing.EmbeddingProfiles = incoming.EmbeddingProfiles
+		if len(incoming.EmbeddingProfiles) == 0 {
+			existing.DefaultEmbeddingProfileID = ""
+		} else {
+			id := incoming.DefaultEmbeddingProfileID
+			if id == "" {
+				id = incoming.EmbeddingProfiles[0].ID
+			}
+			found := false
+			for _, p := range incoming.EmbeddingProfiles {
+				if p.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "默认 Embedding 配置不存在"})
+				return
+			}
+			existing.DefaultEmbeddingProfileID = id
+		}
 		// 多记忆提炼 LLM 提供商：保护未修改的 API Key
 		for i, mp := range incoming.MemLLMProfiles {
 			if keepOld(mp.APIKey) {
@@ -1388,6 +1411,26 @@ func serverMain() {
 			}
 		}
 		existing.MemLLMProfiles = incoming.MemLLMProfiles
+		if len(incoming.MemLLMProfiles) == 0 {
+			existing.DefaultMemLLMProfileID = ""
+		} else {
+			id := incoming.DefaultMemLLMProfileID
+			if id == "" {
+				id = incoming.MemLLMProfiles[0].ID
+			}
+			found := false
+			for _, p := range incoming.MemLLMProfiles {
+				if p.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "默认记忆提炼配置不存在"})
+				return
+			}
+			existing.DefaultMemLLMProfileID = id
+		}
 		// 多 Rerank 提供商：保护未修改的 API Key
 		for i, rp := range incoming.RerankProfiles {
 			if keepOld(rp.APIKey) {
@@ -1400,6 +1443,26 @@ func serverMain() {
 			}
 		}
 		existing.RerankProfiles = incoming.RerankProfiles
+		if len(incoming.RerankProfiles) == 0 {
+			existing.DefaultRerankProfileID = ""
+		} else {
+			id := incoming.DefaultRerankProfileID
+			if id == "" {
+				id = incoming.RerankProfiles[0].ID
+			}
+			found := false
+			for _, p := range incoming.RerankProfiles {
+				if p.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "默认 Rerank 配置不存在"})
+				return
+			}
+			existing.DefaultRerankProfileID = id
+		}
 		if err := savePreferences(existing); err != nil {
 			log.Printf("[PREFS] Failed to save LLM preferences: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
@@ -3198,7 +3261,7 @@ func serverMain() {
 		})
 	})
 
-	// POST /api/ai/vec/test-embedding — 并行验证所有 embedding 配置
+	// POST /api/ai/vec/test-embedding — 验证当前选中的 embedding 配置
 	api.POST("/ai/vec/test-embedding", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
@@ -3217,24 +3280,14 @@ func serverMain() {
 			LatencyMs int64  `json:"latency_ms"`
 			Error     string `json:"error,omitempty"`
 		}
-		results := make([]testResult, len(configs))
-		var wg sync.WaitGroup
-		for i, cfg := range configs {
-			wg.Add(1)
-			go func(idx int, ec EmbeddingConfig) {
-				defer wg.Done()
-				start := time.Now()
-				_, err := GetEmbeddingsBatch([]string{"测试"}, ec)
-				latencyMs := time.Since(start).Milliseconds()
-				if err != nil {
-					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: false, LatencyMs: latencyMs, Error: err.Error()}
-				} else {
-					results[idx] = testResult{Provider: ec.Provider, Model: ec.Model, OK: true, LatencyMs: latencyMs}
-				}
-			}(i, cfg)
+		cfg := configs[0]
+		start := time.Now()
+		_, err := GetEmbeddingsBatch([]string{"测试"}, cfg)
+		result := testResult{Provider: cfg.Provider, Model: cfg.Model, OK: err == nil, LatencyMs: time.Since(start).Milliseconds()}
+		if err != nil {
+			result.Error = err.Error()
 		}
-		wg.Wait()
-		c.JSON(http.StatusOK, gin.H{"results": results})
+		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
 	})
 
 	// GET /api/ai/rerank/debug — 诊断 rerank 配置加载状态
@@ -3242,13 +3295,14 @@ func serverMain() {
 		prefs := loadPreferences()
 		configs := rerankConfigs(prefs)
 		c.JSON(http.StatusOK, gin.H{
-			"rerank_profiles_count": len(prefs.RerankProfiles),
-			"configs_count":         len(configs),
-			"configs":               configs,
+			"rerank_profiles_count":     len(prefs.RerankProfiles),
+			"default_rerank_profile_id": prefs.DefaultRerankProfileID,
+			"configs_count":             len(configs),
+			"configs":                   configs,
 		})
 	})
 
-	// POST /api/ai/rerank/test — 并行验证所有 rerank 配置
+	// POST /api/ai/rerank/test — 验证当前选中的 rerank 配置
 	api.POST("/ai/rerank/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
@@ -3261,28 +3315,21 @@ func serverMain() {
 			return
 		}
 		type testResult struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
-			OK       bool   `json:"ok"`
-			Error    string `json:"error,omitempty"`
+			Provider  string `json:"provider"`
+			Model     string `json:"model"`
+			OK        bool   `json:"ok"`
+			LatencyMs int64  `json:"latency_ms"`
+			Error     string `json:"error,omitempty"`
 		}
-		results := make([]testResult, len(configs))
+		cfg := configs[0]
 		testDocs := []string{"今天天气很好", "张三说他明天来", "李四去北京出差了"}
-		var wg sync.WaitGroup
-		for i, cfg := range configs {
-			wg.Add(1)
-			go func(idx int, rc RerankConfig) {
-				defer wg.Done()
-				_, err := RerankCandidates("张三来不来", testDocs, rc)
-				if err != nil {
-					results[idx] = testResult{Provider: rc.Provider, Model: rc.Model, OK: false, Error: err.Error()}
-				} else {
-					results[idx] = testResult{Provider: rc.Provider, Model: rc.Model, OK: true}
-				}
-			}(i, cfg)
+		start := time.Now()
+		_, err := RerankCandidates("张三来不来", testDocs, cfg)
+		result := testResult{Provider: cfg.Provider, Model: cfg.Model, OK: err == nil, LatencyMs: time.Since(start).Milliseconds()}
+		if err != nil {
+			result.Error = err.Error()
 		}
-		wg.Wait()
-		c.JSON(http.StatusOK, gin.H{"results": results})
+		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
 	})
 
 	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
@@ -3341,7 +3388,7 @@ func serverMain() {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.provider, "model": stats.Model, "latency_ms": stats.LatencyMs, "tokens_per_second": stats.TokensPerSecond})
 	})
 
-	// POST /api/ai/mem/test — 并行验证所有记忆提炼模型配置，带时延和 token 速度
+	// POST /api/ai/mem/test — 验证当前选中的记忆提炼模型，带时延和 token 速度
 	api.POST("/ai/mem/test", func(c *gin.Context) {
 		prefs := loadPreferences()
 		configs := memLLMConfigs(prefs)
@@ -3357,22 +3404,17 @@ func serverMain() {
 			TokensPerSecond float64 `json:"tokens_per_second"`
 			Error           string  `json:"error,omitempty"`
 		}
-		results := make([]testResult, len(configs))
-		var wg sync.WaitGroup
-		for i, cfg := range configs {
-			wg.Add(1)
-			go func(idx int, mc llmConfig) {
-				defer wg.Done()
-				stats, err := testLLMConnStatsConfig(mc)
-				if err != nil {
-					results[idx] = testResult{Provider: mc.provider, Model: mc.model, OK: false, Error: err.Error()}
-				} else {
-					results[idx] = testResult{Provider: mc.provider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
-				}
-			}(i, cfg)
+		cfg := configs[0]
+		stats, err := testLLMConnStatsConfig(cfg)
+		result := testResult{Provider: cfg.provider, Model: cfg.model, OK: err == nil}
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Model = stats.Model
+			result.LatencyMs = stats.LatencyMs
+			result.TokensPerSecond = stats.TokensPerSecond
 		}
-		wg.Wait()
-		c.JSON(http.StatusOK, gin.H{"results": results})
+		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
 	})
 
 	// GET /api/ai/mem/status?key=...

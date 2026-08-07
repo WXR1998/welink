@@ -44,21 +44,14 @@ func applyRerankDefaults(cfg *RerankConfig) {
 	}
 }
 
-// rerankConfigs 从 Profiles 构造 []RerankConfig（数组顺序即 fallback 优先级）。
+// rerankConfigs 返回当前选中的 Rerank profile；不做失败回退。
 func rerankConfigs(prefs Preferences) []RerankConfig {
-	if len(prefs.RerankProfiles) > 0 {
-		configs := make([]RerankConfig, 0, len(prefs.RerankProfiles))
-		for _, p := range prefs.RerankProfiles {
-			cfg := RerankConfig{
-				Provider: p.Provider,
-				APIKey:   p.APIKey,
-				BaseURL:  p.BaseURL,
-				Model:    p.Model,
-			}
+	for _, p := range prefs.RerankProfiles {
+		if p.ID == prefs.DefaultRerankProfileID {
+			cfg := RerankConfig{Provider: p.Provider, APIKey: p.APIKey, BaseURL: p.BaseURL, Model: p.Model}
 			applyRerankDefaults(&cfg)
-			configs = append(configs, cfg)
+			return []RerankConfig{cfg}
 		}
-		return configs
 	}
 	return nil
 }
@@ -238,24 +231,10 @@ func parseRerankResponse(raw []byte) ([]RerankResult, error) {
 	return nil, fmt.Errorf("无法解析 rerank 响应，原始内容: %s", truncateStr(string(raw), 200))
 }
 
-// RerankCandidatesWithFallback 尝试多个 rerank 配置，直到成功或全部失败。
-func RerankCandidatesWithFallback(query string, documents []string, configs []RerankConfig) ([]RerankResult, error) {
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("rerank: 未配置任何重排提供商")
+// RerankCandidatesForCurrentProfile 使用当前选中的 Rerank profile，不做失败回退。
+func RerankCandidatesForCurrentProfile(query string, documents []string, configs []RerankConfig) ([]RerankResult, error) {
+	if len(configs) != 1 {
+		return nil, fmt.Errorf("rerank: 未配置当前重排 profile")
 	}
-	var lastErr error
-	for _, cfg := range configs {
-		if cfg.Provider == "" {
-			continue
-		}
-		results, err := RerankCandidates(query, documents, cfg)
-		if err == nil {
-			return results, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("rerank: 所有配置均无效")
-	}
-	return nil, lastErr
+	return RerankCandidates(query, documents, configs[0])
 }

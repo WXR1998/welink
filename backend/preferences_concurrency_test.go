@@ -118,11 +118,20 @@ func TestMigrateLegacyAIConfigsToProfiles(t *testing.T) {
 	if len(p.EmbeddingProfiles) != 1 || p.EmbeddingProfiles[0].APIKey != "embedding-key" {
 		t.Fatalf("Embedding 迁移错误：%+v", p.EmbeddingProfiles)
 	}
+	if p.DefaultEmbeddingProfileID != "embedding-default" {
+		t.Fatalf("Embedding 当前配置迁移错误：%q", p.DefaultEmbeddingProfileID)
+	}
 	if len(p.MemLLMProfiles) != 1 || p.MemLLMProfiles[0].APIKey != "mem-key" {
 		t.Fatalf("记忆 LLM 迁移错误：%+v", p.MemLLMProfiles)
 	}
+	if p.DefaultMemLLMProfileID != "mem-default" {
+		t.Fatalf("记忆 LLM 当前配置迁移错误：%q", p.DefaultMemLLMProfileID)
+	}
 	if len(p.RerankProfiles) != 1 || p.RerankProfiles[0].APIKey != "rerank-key" {
 		t.Fatalf("Rerank 迁移错误：%+v", p.RerankProfiles)
+	}
+	if p.DefaultRerankProfileID != "rerank-default" {
+		t.Fatalf("Rerank 当前配置迁移错误：%q", p.DefaultRerankProfileID)
 	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
@@ -137,6 +146,64 @@ func TestMigrateLegacyAIConfigsToProfiles(t *testing.T) {
 		if string(encoded) == "" || containsJSONKey(encoded, key) {
 			t.Errorf("迁移后仍持久化顶层字段 %q：%s", key, encoded)
 		}
+	}
+}
+
+func TestSelectedAIProfiles(t *testing.T) {
+	prefs := Preferences{
+		LLMProfiles:         []LLMProfile{{ID: "llm-a", Provider: "openai", Model: "llm-a"}},
+		DefaultLLMProfileID: "llm-a",
+		EmbeddingProfiles: []EmbeddingProfile{
+			{ID: "embedding-a", Provider: "ollama", Model: "a"},
+			{ID: "embedding-b", Provider: "ollama", Model: "b"},
+		},
+		DefaultEmbeddingProfileID: "embedding-b",
+		MemLLMProfiles: []MemLLMProfile{
+			{ID: "mem-a", Provider: "openai", Model: "a"},
+			{ID: "mem-b", Provider: "openai", Model: "b"},
+		},
+		DefaultMemLLMProfileID: "mem-b",
+		RerankProfiles: []RerankProfile{
+			{ID: "rerank-a", Provider: "jina", Model: "a"},
+			{ID: "rerank-b", Provider: "jina", Model: "b"},
+		},
+		DefaultRerankProfileID: "rerank-b",
+	}
+	if configs := embeddingConfigs(prefs); len(configs) != 1 || configs[0].Model != "b" {
+		t.Fatalf("Embedding 未使用当前配置：%+v", configs)
+	}
+	if configs := memLLMConfigs(prefs); len(configs) != 1 || configs[0].model != "b" {
+		t.Fatalf("记忆提炼未使用当前配置：%+v", configs)
+	}
+	if configs := rerankConfigs(prefs); len(configs) != 1 || configs[0].Model != "b" {
+		t.Fatalf("Rerank 未使用当前配置：%+v", configs)
+	}
+
+	prefs.MemLLMProfiles = nil
+	prefs.DefaultMemLLMProfileID = ""
+	if configs := memLLMConfigs(prefs); len(configs) != 1 || configs[0].model != "llm-a" {
+		t.Fatalf("空记忆提炼配置未复用默认 LLM：%+v", configs)
+	}
+}
+
+func TestMigrateMissingAIProfileSelections(t *testing.T) {
+	prefs := Preferences{
+		SchemaVersion:     CurrentSchemaVersion,
+		EmbeddingProfiles: []EmbeddingProfile{{ID: "embedding-a"}},
+		MemLLMProfiles:    []MemLLMProfile{{ID: "mem-a"}},
+		RerankProfiles:    []RerankProfile{{ID: "rerank-a"}},
+	}
+	encoded, err := json.Marshal(prefs)
+	if err != nil {
+		t.Fatalf("序列化配置失败：%v", err)
+	}
+	decoded, err := decodePreferences(encoded)
+	if err != nil {
+		t.Fatalf("解析配置失败：%v", err)
+	}
+	migrated := migratePreferences(decoded)
+	if migrated.DefaultEmbeddingProfileID != "embedding-a" || migrated.DefaultMemLLMProfileID != "mem-a" || migrated.DefaultRerankProfileID != "rerank-a" {
+		t.Fatalf("缺失当前配置未迁移：%+v", migrated)
 	}
 }
 
