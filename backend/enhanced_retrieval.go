@@ -417,7 +417,7 @@ func buildQueryExpansionPrompt(svc *service.ContactService) string {
 
 // RawExcerpt 是从原始聊天记录精确检索到的一条原文（找原文场景）。
 type RawExcerpt struct {
-	SourceName string `json:"source_name"` // 联系人/群聊可读名或 contact_key
+	SourceName string `json:"source_name"`           // 联系人/群聊可读名或 contact_key
 	ContactKey string `json:"contact_key,omitempty"` // 原始 contact_key，用于飞书群白名单过滤
 	Datetime   string `json:"datetime"`
 	Sender     string `json:"sender"`
@@ -681,7 +681,7 @@ func EnhancedRetrieval(
 
 	// ── Step 1: 查询改写（可选）──
 	// 只有配置了 LLM 时才做查询改写
-	hasLLM := prefs.LLMProvider != "" || len(prefs.LLMProfiles) > 0
+	hasLLM := hasLLMConfig(prefs)
 	if hasLLM {
 		progress("query_expansion", "正在用 LLM 扩展子查询...")
 		// Query Expansion: 生成子查询

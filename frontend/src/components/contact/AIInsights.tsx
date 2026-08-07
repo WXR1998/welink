@@ -51,7 +51,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [diaryDate, setDiaryDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [profileId, setProfileId] = useState('');
-  const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; name?: string; provider: string; model?: string }[]>([]);
   const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
   const [showPrompt, setShowPrompt] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -62,7 +62,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
     fetch('/api/preferences').then(r => r.json()).then(d => {
       const ps = d?.llm_profiles ?? [];
       setProfiles(ps);
-      if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+      if (ps.length > 0 && !profileId) setProfileId(d?.default_llm_profile_id || ps[0].id);
       if (d?.prompt_templates) setCustomPrompts(d.prompt_templates);
     }).catch(() => {});
   }, []);
@@ -300,7 +300,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
               className="text-[10px] text-[#576b95] bg-[#576b95]/10 px-2 py-1 rounded-full font-semibold border-0 outline-none cursor-pointer"
             >
               {profiles.map(p => (
-                <option key={p.id} value={p.id}>{p.provider}{p.model ? ` · ${p.model}` : ''}</option>
+                <option key={p.id} value={p.id}>{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${p.provider}${p.model ? ` · ${p.model}` : ''}`)}</option>
               ))}
             </select>
           )}

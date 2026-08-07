@@ -407,14 +407,10 @@ export const LLMAnalysisTab: React.FC<LLMAnalysisProps> = ({
   useEffect(() => {
     fetch('/api/preferences')
       .then(r => r.json())
-      .then((d: { llm_profiles?: ProfileItem[]; llm_provider?: string; llm_model?: string }) => {
+      .then((d: { llm_profiles?: ProfileItem[]; default_llm_profile_id?: string }) => {
         if (d.llm_profiles && d.llm_profiles.length > 0) {
           setProfilesState(d.llm_profiles);
-          setSelectedProfileId(d.llm_profiles[0].id);
-        } else if (d.llm_provider) {
-          const p = { id: '__default__', name: d.llm_provider, provider: d.llm_provider, model: d.llm_model ?? '' };
-          setProfilesState([p]);
-          setSelectedProfileId('__default__');
+          setSelectedProfileId(d.default_llm_profile_id || d.llm_profiles[0].id);
         }
       })
       .catch(() => {});
@@ -1772,7 +1768,7 @@ ${effectiveCtx}
             >
               {profiles.map(p => (
                 <option key={p.id} value={p.id}>
-                  {`${PROVIDER_LABELS[p.provider] ?? p.provider}${p.model ? ` · ${p.model}` : ''}`}
+					{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${PROVIDER_LABELS[p.provider] ?? p.provider}${p.model ? ` · ${p.model}` : ''}`)}
                 </option>
               ))}
             </select>

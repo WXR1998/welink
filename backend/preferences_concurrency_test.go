@@ -99,6 +99,52 @@ func mkMarker(w, i int) string {
 	return "u-" + itoa(w) + "-" + itoa(i)
 }
 
+func TestMigrateLegacyAIConfigsToProfiles(t *testing.T) {
+	raw := []byte(`{
+  "schema_version": 2,
+  "llm_provider": "custom", "llm_api_key": "llm-key", "llm_base_url": "https://llm.example/v1", "llm_model": "my-model",
+  "embedding_provider": "custom", "embedding_api_key": "embedding-key", "embedding_base_url": "https://embedding.example/v1", "embedding_model": "embed-model", "embedding_dims": 768,
+  "mem_llm_api_key": "mem-key", "mem_llm_base_url": "https://memory.example/v1", "mem_llm_model": "mem-model",
+  "rerank_provider": "custom", "rerank_api_key": "rerank-key", "rerank_base_url": "https://rerank.example/v1", "rerank_model": "rerank-model"
+}`)
+	p, err := decodePreferences(raw)
+	if err != nil {
+		t.Fatalf("解析旧配置失败：%v", err)
+	}
+	p = migratePreferences(p)
+	if p.DefaultLLMProfileID != "llm-default" || len(p.LLMProfiles) != 1 || p.LLMProfiles[0].APIKey != "llm-key" {
+		t.Fatalf("LLM 迁移错误：%+v", p)
+	}
+	if len(p.EmbeddingProfiles) != 1 || p.EmbeddingProfiles[0].APIKey != "embedding-key" {
+		t.Fatalf("Embedding 迁移错误：%+v", p.EmbeddingProfiles)
+	}
+	if len(p.MemLLMProfiles) != 1 || p.MemLLMProfiles[0].APIKey != "mem-key" {
+		t.Fatalf("记忆 LLM 迁移错误：%+v", p.MemLLMProfiles)
+	}
+	if len(p.RerankProfiles) != 1 || p.RerankProfiles[0].APIKey != "rerank-key" {
+		t.Fatalf("Rerank 迁移错误：%+v", p.RerankProfiles)
+	}
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("序列化新配置失败：%v", err)
+	}
+	for _, key := range []string{
+		"llm_provider", "llm_api_key", "llm_base_url", "llm_model",
+		"embedding_provider", "embedding_api_key", "embedding_base_url", "embedding_model", "embedding_dims",
+		"mem_llm_api_key", "mem_llm_base_url", "mem_llm_model",
+		"rerank_provider", "rerank_api_key", "rerank_base_url", "rerank_model",
+	} {
+		if string(encoded) == "" || containsJSONKey(encoded, key) {
+			t.Errorf("迁移后仍持久化顶层字段 %q：%s", key, encoded)
+		}
+	}
+}
+
+func containsJSONKey(data []byte, key string) bool {
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(data, &obj) == nil && obj[key] != nil
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

@@ -67,7 +67,7 @@ export const GroupSimChat: React.FC<Props> = ({ group, onOpenSettings }) => {
   const [topic, setTopic] = useState('');
   const [mood, setMood] = useState('');
   const [profileId, setProfileId] = useState('');
-  const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; name?: string; provider: string; model?: string }[]>([]);
   const [memberOptions, setMemberOptions] = useState<MemberOption[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [membersLoading, setMembersLoading] = useState(false);
@@ -125,7 +125,7 @@ export const GroupSimChat: React.FC<Props> = ({ group, onOpenSettings }) => {
       .then(data => {
         const ps = data?.llm_profiles ?? [];
         setProfiles(ps);
-        if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+        if (ps.length > 0 && !profileId) setProfileId(data?.default_llm_profile_id || ps[0].id);
       })
       .catch(() => {});
   }, []);
@@ -412,7 +412,7 @@ export const GroupSimChat: React.FC<Props> = ({ group, onOpenSettings }) => {
               className="w-full px-3 py-2 bg-gray-50 dark:bg-white/5 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#07c160]/30 dk-text dk-input"
             >
               {profiles.map(p => (
-                <option key={p.id} value={p.id}>{p.provider}{p.model ? ` · ${p.model}` : ''}</option>
+                <option key={p.id} value={p.id}>{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${p.provider}${p.model ? ` · ${p.model}` : ''}`)}</option>
               ))}
             </select>
           </div>

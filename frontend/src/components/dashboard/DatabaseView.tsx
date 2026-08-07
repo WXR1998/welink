@@ -101,7 +101,7 @@ const NLQueryPanel: React.FC = () => {
     fetch('/api/preferences').then(r => r.json()).then(d => {
       const ps: LLMProfileItem[] = d?.llm_profiles ?? [];
       setProfiles(ps);
-      if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+      if (ps.length > 0 && !profileId) setProfileId(d?.default_llm_profile_id || ps[0].id);
     }).catch(() => {});
   }, []);
 
@@ -178,7 +178,7 @@ const NLQueryPanel: React.FC = () => {
           )}
           {activeProfile && (
             <span className="text-[10px] text-gray-400 font-mono">
-              {activeProfile.provider}{activeProfile.model ? ` · ${activeProfile.model}` : ''}
+              {activeProfile.name || (activeProfile.provider === 'custom' ? (activeProfile.model || '未命名模型') : `${activeProfile.provider}${activeProfile.model ? ` · ${activeProfile.model}` : ''}`)}
             </span>
           )}
         </div>

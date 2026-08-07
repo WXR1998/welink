@@ -504,9 +504,10 @@ export async function generateCloneChatImage(options: CloneChatImageOptions): Pr
   ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
   ctx.fillStyle = '#1d1d1f'; ctx.font = `700 ${15*S}px ${FF}`;
   ctx.fillText(`${options.contactName} 的 AI 分身`, (W / 2) * S, (y + CHAT_TOP_H / 2 - 6) * S);
-  if (options.provider) {
+  const displayProvider = options.provider?.toLowerCase() === 'custom' || options.provider === '自定义' ? '' : options.provider;
+  if (displayProvider || options.model) {
     ctx.fillStyle = '#999999'; ctx.font = `${10*S}px ${FF}`;
-    ctx.fillText(`${options.provider}${options.model ? ' · ' + options.model : ''}`, (W / 2) * S, (y + CHAT_TOP_H / 2 + 12) * S);
+    ctx.fillText([displayProvider, options.model].filter(Boolean).join(' · '), (W / 2) * S, (y + CHAT_TOP_H / 2 + 12) * S);
   }
   ctx.textAlign = 'left';
 
@@ -924,7 +925,7 @@ export async function generateAIScreenshot(options: AIScreenshotOptions): Promis
 
   // Model name (left)
   const modelParts: string[] = [];
-  if (options.stats?.provider) modelParts.push(options.stats.provider);
+  if (options.stats?.provider && options.stats.provider.toLowerCase() !== 'custom' && options.stats.provider !== '自定义') modelParts.push(options.stats.provider);
   if (options.stats?.model) modelParts.push(options.stats.model);
   if (modelParts.length > 0) {
     ctx.fillStyle = '#888888';

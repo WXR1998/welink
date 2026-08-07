@@ -111,11 +111,7 @@ func topicMapHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if body.ProfileID != "" {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = body.ProfileID
 		}
 
 		// 联系人名匿名化后再送 LLM（M7），拿到结果用 reverse 还原

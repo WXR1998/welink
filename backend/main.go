@@ -1291,29 +1291,14 @@ func serverMain() {
 			return
 		}
 		var incoming struct {
-			LLMProfiles        []LLMProfile       `json:"llm_profiles"`
-			LLMProvider        string             `json:"llm_provider"`
-			LLMAPIKey          string             `json:"llm_api_key"`
-			LLMBaseURL         string             `json:"llm_base_url"`
-			LLMModel           string             `json:"llm_model"`
-			GeminiClientID     string             `json:"gemini_client_id"`
-			GeminiClientSecret string             `json:"gemini_client_secret"`
-			AIAnalysisDBPath   string             `json:"ai_analysis_db_path"`
-			EmbeddingProvider  string             `json:"embedding_provider"`
-			EmbeddingAPIKey    string             `json:"embedding_api_key"`
-			EmbeddingBaseURL   string             `json:"embedding_base_url"`
-			EmbeddingModel     string             `json:"embedding_model"`
-			EmbeddingDims      int                `json:"embedding_dims"`
-			EmbeddingProfiles  []EmbeddingProfile `json:"embedding_profiles"`
-			MemLLMBaseURL      string             `json:"mem_llm_base_url"`
-			MemLLMModel        string             `json:"mem_llm_model"`
-			MemLLMAPIKey       string             `json:"mem_llm_api_key"`
-			MemLLMProfiles     []MemLLMProfile    `json:"mem_llm_profiles"`
-			RerankProfiles     []RerankProfile    `json:"rerank_profiles"`
-			RerankProvider     string             `json:"rerank_provider"`
-			RerankAPIKey       string             `json:"rerank_api_key"`
-			RerankBaseURL      string             `json:"rerank_base_url"`
-			RerankModel        string             `json:"rerank_model"`
+			LLMProfiles         []LLMProfile       `json:"llm_profiles"`
+			DefaultLLMProfileID string             `json:"default_llm_profile_id"`
+			GeminiClientID      string             `json:"gemini_client_id"`
+			GeminiClientSecret  string             `json:"gemini_client_secret"`
+			AIAnalysisDBPath    string             `json:"ai_analysis_db_path"`
+			EmbeddingProfiles   []EmbeddingProfile `json:"embedding_profiles"`
+			MemLLMProfiles      []MemLLMProfile    `json:"mem_llm_profiles"`
+			RerankProfiles      []RerankProfile    `json:"rerank_profiles"`
 		}
 		if err := c.ShouldBindJSON(&incoming); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -1352,20 +1337,25 @@ func serverMain() {
 		}
 
 		existing.LLMProfiles = incoming.LLMProfiles
-		// 将第一个 profile 同步到单配置字段（向后兼容）
-		if len(incoming.LLMProfiles) > 0 {
-			p := incoming.LLMProfiles[0]
-			existing.LLMProvider = p.Provider
-			existing.LLMAPIKey = p.APIKey
-			existing.LLMBaseURL = p.BaseURL
-			existing.LLMModel = p.Model
+		if len(incoming.LLMProfiles) == 0 {
+			existing.DefaultLLMProfileID = ""
 		} else {
-			existing.LLMProvider = incoming.LLMProvider
-			if !keepOld(incoming.LLMAPIKey) {
-				existing.LLMAPIKey = incoming.LLMAPIKey
+			defaultID := incoming.DefaultLLMProfileID
+			if defaultID == "" { // 兼容尚未升级的前端请求
+				defaultID = incoming.LLMProfiles[0].ID
 			}
-			existing.LLMBaseURL = incoming.LLMBaseURL
-			existing.LLMModel = incoming.LLMModel
+			found := false
+			for _, p := range incoming.LLMProfiles {
+				if p.ID == defaultID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "默认 AI 配置不存在"})
+				return
+			}
+			existing.DefaultLLMProfileID = defaultID
 		}
 		if keepOld(incoming.GeminiClientSecret) {
 			// 保留原值
@@ -1410,24 +1400,6 @@ func serverMain() {
 			}
 		}
 		existing.RerankProfiles = incoming.RerankProfiles
-		existing.RerankProvider = incoming.RerankProvider
-		if !keepOld(incoming.RerankAPIKey) {
-			existing.RerankAPIKey = incoming.RerankAPIKey
-		}
-		existing.RerankBaseURL = incoming.RerankBaseURL
-		existing.RerankModel = incoming.RerankModel
-		existing.EmbeddingProvider = incoming.EmbeddingProvider
-		if !keepOld(incoming.EmbeddingAPIKey) {
-			existing.EmbeddingAPIKey = incoming.EmbeddingAPIKey
-		}
-		existing.EmbeddingBaseURL = incoming.EmbeddingBaseURL
-		existing.EmbeddingModel = incoming.EmbeddingModel
-		existing.EmbeddingDims = incoming.EmbeddingDims
-		existing.MemLLMBaseURL = incoming.MemLLMBaseURL
-		existing.MemLLMModel = incoming.MemLLMModel
-		if !keepOld(incoming.MemLLMAPIKey) {
-			existing.MemLLMAPIKey = incoming.MemLLMAPIKey
-		}
 		if err := savePreferences(existing); err != nil {
 			log.Printf("[PREFS] Failed to save LLM preferences: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
@@ -2111,7 +2083,7 @@ func serverMain() {
 		}
 
 		prefs := loadPreferences()
-		hasLLM := prefs.LLMProvider != "" && (prefs.LLMAPIKey != "" || prefs.LLMProvider == "ollama")
+		hasLLM := hasLLMConfig(prefs)
 
 		// SSE 进度推送
 		flusher, fOk := c.Writer.(http.Flusher)
@@ -2498,18 +2470,19 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		if body.Model != "" {
-			prefs.LLMModel = body.Model
-		}
-		if prefs.LLMProvider == "" {
+		cfg := llmConfigForProfile("", prefs)
+		if cfg.provider == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
 			return
 		}
-		if prefs.LLMAPIKey == "" && !(prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "") && prefs.LLMProvider != "ollama" {
+		if cfg.apiKey == "" && !(cfg.provider == "gemini" && prefs.GeminiAccessToken != "") && cfg.provider != "ollama" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 API Key 或完成 Google 授权"})
 			return
 		}
-		content, err := CompleteLLM(body.Messages, prefs)
+		if body.Model != "" {
+			cfg.model = body.Model
+		}
+		content, err := completeLLMWithConfig(body.Messages, cfg, prefs, "")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, CompleteResponse{Error: err.Error()})
 			return
@@ -3270,10 +3243,6 @@ func serverMain() {
 		configs := rerankConfigs(prefs)
 		c.JSON(http.StatusOK, gin.H{
 			"rerank_profiles_count": len(prefs.RerankProfiles),
-			"rerank_provider":       prefs.RerankProvider,
-			"rerank_base_url":       prefs.RerankBaseURL,
-			"rerank_model":          prefs.RerankModel,
-			"rerank_api_key_set":    prefs.RerankAPIKey != "",
 			"configs_count":         len(configs),
 			"configs":               configs,
 		})
@@ -3392,13 +3361,13 @@ func serverMain() {
 		var wg sync.WaitGroup
 		for i, cfg := range configs {
 			wg.Add(1)
-			go func(idx int, mc Preferences) {
+			go func(idx int, mc llmConfig) {
 				defer wg.Done()
-				stats, err := testLLMConnStats(mc)
+				stats, err := testLLMConnStatsConfig(mc)
 				if err != nil {
-					results[idx] = testResult{Provider: mc.LLMProvider, Model: mc.LLMModel, OK: false, Error: err.Error()}
+					results[idx] = testResult{Provider: mc.provider, Model: mc.model, OK: false, Error: err.Error()}
 				} else {
-					results[idx] = testResult{Provider: mc.LLMProvider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
+					results[idx] = testResult{Provider: mc.provider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
 				}
 			}(i, cfg)
 		}
@@ -4016,12 +3985,8 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		if prefs.LLMProvider == "" {
+		if !hasLLMConfig(prefs) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 AI 接口"})
-			return
-		}
-		if prefs.LLMAPIKey == "" && !(prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "") && prefs.LLMProvider != "ollama" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在设置中配置 API Key 或完成 Google 授权"})
 			return
 		}
 

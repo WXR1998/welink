@@ -22,11 +22,11 @@ import (
 
 // Highlight 单条高光
 type Highlight struct {
-	Category string             `json:"category"`        // "认识当天" / "最长聊天日" / "深夜长谈" / "最近"
-	Title    string             `json:"title"`           // LLM 起的标题（10-16 字）
-	Summary  string             `json:"summary"`         // 一两句话总结，30-60 字
-	Date     string             `json:"date"`            // "2024-03-15"
-	Excerpt  []HighlightExcerpt `json:"excerpt"`         // 节选 3-5 条对话
+	Category string             `json:"category"` // "认识当天" / "最长聊天日" / "深夜长谈" / "最近"
+	Title    string             `json:"title"`    // LLM 起的标题（10-16 字）
+	Summary  string             `json:"summary"`  // 一两句话总结，30-60 字
+	Date     string             `json:"date"`     // "2024-03-15"
+	Excerpt  []HighlightExcerpt `json:"excerpt"`  // 节选 3-5 条对话
 }
 
 // HighlightExcerpt 对话节选里的一行
@@ -48,9 +48,9 @@ type HighlightsResponse struct {
 
 // 候选日窗口送给 LLM 的内部结构
 type highlightCandidate struct {
-	Date     string
-	Reason   string // "longest_chat" / "first_day" / "late_night" / "recent" / "random"
-	Lines    []string
+	Date   string
+	Reason string // "longest_chat" / "first_day" / "late_night" / "recent" / "random"
+	Lines  []string
 }
 
 func registerHighlightsRoutes(prot *gin.RouterGroup, getSvc func() *service.ContactService) {
@@ -212,11 +212,7 @@ func highlightsHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if body.ProfileID != "" {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = body.ProfileID
 		}
 		raw, err := CompleteLLM([]LLMMessage{
 			{Role: "system", Content: systemPrompt},
@@ -260,9 +256,9 @@ func pickCandidateDates(byDate map[string][]service.ChatMessage, dates []string)
 		return nil
 	}
 	type dayStat struct {
-		date          string
-		count         int
-		lateNightCnt  int // 0-5 点的消息数
+		date         string
+		count        int
+		lateNightCnt int // 0-5 点的消息数
 	}
 	stats := make([]dayStat, 0, len(dates))
 	for _, d := range dates {

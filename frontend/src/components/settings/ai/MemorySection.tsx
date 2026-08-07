@@ -17,15 +17,7 @@ export const MemorySection: React.FC = () => {
       if (mps && mps.length > 0) {
         setProfiles(mps);
       } else {
-        // Migrate from single config
-        setProfiles([{
-          id: genId(),
-          name: '默认',
-          provider: (r.data.llm_provider as string) || 'deepseek',
-          api_key: (r.data.llm_api_key as string) || '',
-          base_url: (r.data.llm_base_url as string) || '',
-          model: (r.data.llm_model as string) || '',
-        }]);
+        setProfiles([]); // 留空时后端复用默认 LLM profile
       }
     }).catch(() => {}).finally(() => setLoaded(true));
   }, []);

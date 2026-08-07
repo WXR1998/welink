@@ -39,11 +39,11 @@ import (
 // SkillPackage 炼化过程产出的中间数据（格式无关）
 type SkillPackage struct {
 	// 元数据
-	SkillType    string    `json:"skill_type"`    // contact / self / group / group-member
-	Name         string    `json:"name"`          // 短名（slug 化）
-	DisplayName  string    `json:"display_name"`  // 人类可读名
-	Description  string    `json:"description"`   // 一句话描述
-	GeneratedAt  time.Time `json:"generated_at"`
+	SkillType   string    `json:"skill_type"`   // contact / self / group / group-member
+	Name        string    `json:"name"`         // 短名（slug 化）
+	DisplayName string    `json:"display_name"` // 人类可读名
+	Description string    `json:"description"`  // 一句话描述
+	GeneratedAt time.Time `json:"generated_at"`
 	// MessageCount 是喂给 LLM 前可用的文本样本数（sanitize 之前、smartSample 之后的 outer 值）。
 	// 非文本消息（图片/表情/红包/小程序分享）已被排除 —— footer 文案明确写成"文本消息"
 	// 避免用户看到"6751 条发言却只生成 132"的困惑。
@@ -53,12 +53,12 @@ type SkillPackage struct {
 	LLMSawCount int `json:"llm_saw_count,omitempty"`
 
 	// LLM 抽取的画像
-	Personality        string   `json:"personality"`         // 性格特征
-	Style              string   `json:"style"`               // 说话风格
-	Vocabulary         []string `json:"vocabulary"`          // 高频词/独特用词
-	Catchphrases       []string `json:"catchphrases"`        // 口头禅
-	Topics             []string `json:"topics"`              // 常聊话题 / 知识领域
-	Relationship       string   `json:"relationship"`        // 关系背景（contact 类型专有）
+	Personality        string   `json:"personality"`  // 性格特征
+	Style              string   `json:"style"`        // 说话风格
+	Vocabulary         []string `json:"vocabulary"`   // 高频词/独特用词
+	Catchphrases       []string `json:"catchphrases"` // 口头禅
+	Topics             []string `json:"topics"`       // 常聊话题 / 知识领域
+	Relationship       string   `json:"relationship"` // 关系背景（contact 类型专有）
 	DosAndDonts        string   `json:"dos_and_donts"`
 	Samples            []string `json:"samples"`             // 代表性对话片段（已脱敏）
 	SignatureBehaviors string   `json:"signature_behaviors"` // 标志性行为模式
@@ -195,11 +195,7 @@ func extractSkillPackage(
 	// 复用 CompleteLLM
 	profPrefs := prefs
 	if profileID != "" {
-		cfg := llmConfigForProfile(profileID, prefs)
-		profPrefs.LLMProvider = cfg.provider
-		profPrefs.LLMAPIKey = cfg.apiKey
-		profPrefs.LLMBaseURL = cfg.baseURL
-		profPrefs.LLMModel = cfg.model
+		profPrefs.DefaultLLMProfileID = profileID
 	}
 
 	// 尝试调用 LLM，遇到内容风控错误则自动重试（逐次缩小样本 + 更激进的过滤）
@@ -258,10 +254,10 @@ func extractSkillPackage(
 	}
 
 	pkg := &SkillPackage{
-		SkillType:          skillType,
-		Name:               slugify(displayName),
-		DisplayName:        displayName,
-		GeneratedAt:        time.Now(),
+		SkillType:   skillType,
+		Name:        slugify(displayName),
+		DisplayName: displayName,
+		GeneratedAt: time.Now(),
 		// MessageCount 这里先填"LLM 实际看到的条数"；ForgeSkillZip 会用 outer samples 覆盖
 		// 成用户可见的"总可用文本数"。两个值都会进 metadata，便于排障。
 		MessageCount:       len(samples),
@@ -368,8 +364,8 @@ func slugifyAgentSkill(name, fallbackSrc string) string {
 // ─── 数据收集：联系人 / 自己 / 群聊 ──────────────────────────────────────────
 
 // smartSample 从 all 中按字符预算做采样：
-//   1. 先取最近 targetCount 条
-//   2. 如果字符数仍超预算，均匀下采样至预算内
+//  1. 先取最近 targetCount 条
+//  2. 如果字符数仍超预算，均匀下采样至预算内
 func smartSample(all []string, targetCount int) []string {
 	if targetCount <= 0 {
 		targetCount = 300
@@ -1187,7 +1183,7 @@ func makeSkillZip(files map[string][]byte) ([]byte, error) {
 
 // ForgeSkillZip 执行炼化，返回 zip 字节 + 建议文件名
 func ForgeSkillZip(svc *service.ContactService, opts ForgeOptions, prefs Preferences) ([]byte, string, error) {
-	if prefs.LLMProvider == "" && opts.ProfileID == "" {
+	if !hasLLMConfig(prefs) && opts.ProfileID == "" {
 		return nil, "", fmt.Errorf("请先在设置中配置 AI 接口")
 	}
 

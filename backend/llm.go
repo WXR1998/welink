@@ -26,12 +26,12 @@ type LLMMessage struct {
 
 // StreamChunk 是 SSE 推给前端的单次增量
 type StreamChunk struct {
-	Delta     string       `json:"delta,omitempty"`
-	Thinking  string       `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
-	Done      bool         `json:"done,omitempty"`
-	Error     string       `json:"error,omitempty"`
-	RagMeta   *RagMeta     `json:"rag_meta,omitempty"`
-	Usage     *StreamUsage `json:"usage,omitempty"` // 本次调用的 token 统计
+	Delta    string       `json:"delta,omitempty"`
+	Thinking string       `json:"thinking,omitempty"` // 思考型模型的推理过程增量（Ollama reasoning 字段）
+	Done     bool         `json:"done,omitempty"`
+	Error    string       `json:"error,omitempty"`
+	RagMeta  *RagMeta     `json:"rag_meta,omitempty"`
+	Usage    *StreamUsage `json:"usage,omitempty"` // 本次调用的 token 统计
 }
 
 // StreamUsage 携带本次 LLM 调用的 token 使用统计。
@@ -44,11 +44,11 @@ type StreamUsage struct {
 
 // RagMeta 携带 RAG 检索统计信息及命中消息（在 LLM 流式响应前发送）。
 type RagMeta struct {
-	Hits      int         `json:"hits"`               // FTS 直接命中数
-	Retrieved int         `json:"retrieved"`          // 含窗口扩展后的消息数
-	Total     int         `json:"total,omitempty"`    // 检索到的总数（截断前）
+	Hits      int         `json:"hits"`                // FTS 直接命中数
+	Retrieved int         `json:"retrieved"`           // 含窗口扩展后的消息数
+	Total     int         `json:"total,omitempty"`     // 检索到的总数（截断前）
 	Truncated bool        `json:"truncated,omitempty"` // 是否因 token 预算截断
-	Messages  []RagSnipet `json:"messages,omitempty"` // 命中消息片段
+	Messages  []RagSnipet `json:"messages,omitempty"`  // 命中消息片段
 }
 
 // RagSnipet 是返回给前端展示的单条检索结果。
@@ -299,19 +299,18 @@ func defaultsFor(p *llmConfig) {
 // ─── Profile 辅助 ──────────────────────────────────────────────────────────────
 
 // llmConfigForProfile 根据 profile_id 从 LLMProfiles 中查找配置；
-// 找不到或 profileID 为空时回退到单配置字段（向后兼容）。
+// profileID 为空时使用用户保存的默认 profile，不再读取顶层连接参数。
 func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
+	if profileID == "" {
+		profileID = prefs.DefaultLLMProfileID
+	}
 	var cfg llmConfig
-	if profileID != "" {
-		for _, p := range prefs.LLMProfiles {
-			if p.ID == profileID {
-				cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold}
-				goto applyGemini
-			}
+	for _, p := range prefs.LLMProfiles {
+		if p.ID == profileID {
+			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold}
+			break
 		}
 	}
-	cfg = llmConfig{provider: prefs.LLMProvider, apiKey: prefs.LLMAPIKey, baseURL: prefs.LLMBaseURL, model: prefs.LLMModel}
-applyGemini:
 	if cfg.provider == "gemini" && cfg.apiKey == "" && prefs.GeminiAccessToken != "" {
 		if token, err := geminiValidToken(&prefs); err == nil {
 			cfg.apiKey = token
@@ -319,6 +318,11 @@ applyGemini:
 	}
 	defaultsFor(&cfg)
 	return cfg
+}
+
+func hasLLMConfig(prefs Preferences) bool {
+	cfg := llmConfigForProfile("", prefs)
+	return cfg.provider != "" && (cfg.apiKey != "" || cfg.provider == "ollama" || (cfg.provider == "gemini" && prefs.GeminiAccessToken != ""))
 }
 
 // ─── 流式调用入口 ──────────────────────────────────────────────────────────────
@@ -346,35 +350,7 @@ func StreamLLM(w http.ResponseWriter, msgs []LLMMessage, prefs Preferences) {
 // streamLLMCore 是流式调用的核心逻辑，接受一个已配置好的 sendChunk 函数。
 // 适用于需要在 LLM 响应前先发送元数据事件的场景（如 RAG）。
 func streamLLMCore(sendChunk func(StreamChunk), msgs []LLMMessage, prefs Preferences) {
-	if DemoMockActive() {
-		demoLLMStream(sendChunk, msgs)
-		return
-	}
-	// Gemini OAuth：若已授权则用 OAuth token 替代 API Key
-	if prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "" {
-		if token, err := geminiValidToken(&prefs); err == nil {
-			prefs.LLMAPIKey = token
-		}
-	}
-	cfg := llmConfig{
-		provider: prefs.LLMProvider,
-		apiKey:   prefs.LLMAPIKey,
-		baseURL:  prefs.LLMBaseURL,
-		model:    prefs.LLMModel,
-	}
-	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
-	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
-	// CompleteLLM 用于记忆提炼等非交互场景，禁用 thinking 大幅加速。
-	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
-		cfg.noThink = true
-	}
-	defaultsFor(&cfg)
-
-	err := dispatchLLMStream(sendChunk, msgs, cfg)
-	if err != nil {
-		sendChunk(StreamChunk{Error: err.Error()})
-	}
-	sendChunk(StreamChunk{Done: true})
+	streamLLMCoreWithProfile(sendChunk, msgs, prefs, "")
 }
 
 // streamLLMCoreWithProfile 与 streamLLMCore 相同，但通过 profileID 解析配置。
@@ -394,17 +370,7 @@ func streamLLMCoreWithProfile(sendChunk func(StreamChunk), msgs []LLMMessage, pr
 // testLLMConnProfile 测试指定 profile 的连接可用性，返回实际使用的模型名。
 func testLLMConnProfile(profileID string, prefs Preferences) (string, error) {
 	cfg := llmConfigForProfile(profileID, prefs)
-	if cfg.baseURL == "" || cfg.model == "" {
-		return "", fmt.Errorf("未配置 Base URL 或模型")
-	}
-	// 复用 testLLMConn 逻辑：构造临时 Preferences 只填 LLM 字段
-	tmp := Preferences{
-		LLMProvider: cfg.provider,
-		LLMAPIKey:   cfg.apiKey,
-		LLMBaseURL:  cfg.baseURL,
-		LLMModel:    cfg.model,
-	}
-	return testLLMConn(tmp)
+	return testLLMConnConfig(cfg)
 }
 
 const defaultContextWindow = 128000
@@ -730,7 +696,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 用于检测 <think>...</think> 标签（MiniMax / DeepSeek-R1 等思考模型）
 	inThinkTag := false
 	thinkBuf := ""
-	parseFails := 0 // 累计 chunk 解析失败数，超阈值即中止，避免静默丢数据（H3）
+	parseFails := 0  // 累计 chunk 解析失败数，超阈值即中止，避免静默丢数据（H3）
 	gotDone := false // 是否收到 [DONE] 标记
 	// 流式响应通常把 usage 放在最后一个 chunk，这里解析并透传给上层。
 	// 不同提供商字段不同：OpenAI 用 usage.prompt_tokens_details.cached_tokens，
@@ -878,17 +844,17 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 // ─── Claude 原生 API 流式实现 ─────────────────────────────────────────────────
 
 type claudeRequest struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
-	Messages  []LLMMessage     `json:"messages"`
-	Stream    bool             `json:"stream"`
-	Thinking  *claudeThinking  `json:"thinking,omitempty"` // Extended Thinking（Sonnet 4+ / Opus 4+）
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"`
+	Messages  []LLMMessage    `json:"messages"`
+	Stream    bool            `json:"stream"`
+	Thinking  *claudeThinking `json:"thinking,omitempty"` // Extended Thinking（Sonnet 4+ / Opus 4+）
 }
 
 type claudeThinking struct {
-	Type         string `json:"type"`           // "enabled"
-	BudgetTokens int    `json:"budget_tokens"`  // 1024-64000
+	Type         string `json:"type"`          // "enabled"
+	BudgetTokens int    `json:"budget_tokens"` // 1024-64000
 }
 
 func streamClaude(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) error {
@@ -958,9 +924,9 @@ func streamClaude(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) erro
 		var event struct {
 			Type  string `json:"type"`
 			Delta struct {
-				Type     string `json:"type"`      // "text_delta" / "thinking_delta"
-				Text     string `json:"text"`      // text_delta
-				Thinking string `json:"thinking"`  // thinking_delta
+				Type     string `json:"type"`     // "text_delta" / "thinking_delta"
+				Text     string `json:"text"`     // text_delta
+				Thinking string `json:"thinking"` // thinking_delta
 			} `json:"delta"`
 		}
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
@@ -1006,9 +972,13 @@ func CompleteLLMFeature(msgs []LLMMessage, prefs Preferences, feature string, pr
 	if len(profileID) > 0 {
 		pid = profileID[0]
 	}
-	// 使用 llmConfigForProfile 解析用户选择的 provider，
-	// 而非默认的 prefs.LLMProvider 字段
 	cfg := llmConfigForProfile(pid, prefs)
+	return completeLLMWithConfig(msgs, cfg, prefs, feature)
+}
+
+// completeLLMWithConfig 执行已解析好的 LLM 配置；专用子系统可传入临时配置，
+// 而无需将连接参数写进 Preferences 顶层。
+func completeLLMWithConfig(msgs []LLMMessage, cfg llmConfig, prefs Preferences, feature string) (string, error) {
 	cfg.feature = feature
 	// Gemini OAuth：若已授权则用 OAuth token 替代 API Key
 	if cfg.provider == "gemini" && cfg.apiKey == "" && prefs.GeminiAccessToken != "" {
@@ -1209,17 +1179,10 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 // testLLMConn 发起流式请求，收到第一个非空 delta 即中止并返回成功。
 // 相比 CompleteLLM，不等待完整响应，对思考型模型（Qwen3+）特别友好。
 func testLLMConn(prefs Preferences) (string, error) {
-	if prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "" {
-		if token, err := geminiValidToken(&prefs); err == nil {
-			prefs.LLMAPIKey = token
-		}
-	}
-	cfg := llmConfig{
-		provider: prefs.LLMProvider,
-		apiKey:   prefs.LLMAPIKey,
-		baseURL:  prefs.LLMBaseURL,
-		model:    prefs.LLMModel,
-	}
+	return testLLMConnConfig(llmConfigForProfile("", prefs))
+}
+
+func testLLMConnConfig(cfg llmConfig) (string, error) {
 	// qwen3 等思考型模型在 Ollama 上默认开启 thinking，
 	// CPU 推理时每批会生成上千个思考 token（5+ 分钟）。
 	// CompleteLLM 用于记忆提炼等非交互场景，禁用 thinking 大幅加速。
@@ -1313,22 +1276,15 @@ type LLMTestStats struct {
 	Model           string  `json:"model"`
 	LatencyMs       int64   `json:"latency_ms"`        // 首 token 时延
 	OutputTokens    int     `json:"output_tokens"`     // 生成 token 数
-	TokensPerSecond float64 `json:"tokens_per_second"`  // 生成速度
+	TokensPerSecond float64 `json:"tokens_per_second"` // 生成速度
 }
 
 // testLLMConnStats 与 testLLMConn 相同，但返回时延和 token 速度统计。
 func testLLMConnStats(prefs Preferences) (*LLMTestStats, error) {
-	if prefs.LLMProvider == "gemini" && prefs.GeminiAccessToken != "" {
-		if token, err := geminiValidToken(&prefs); err == nil {
-			prefs.LLMAPIKey = token
-		}
-	}
-	cfg := llmConfig{
-		provider: prefs.LLMProvider,
-		apiKey:   prefs.LLMAPIKey,
-		baseURL:  prefs.LLMBaseURL,
-		model:    prefs.LLMModel,
-	}
+	return testLLMConnStatsConfig(llmConfigForProfile("", prefs))
+}
+
+func testLLMConnStatsConfig(cfg llmConfig) (*LLMTestStats, error) {
 	if cfg.provider == "ollama" && (strings.Contains(cfg.model, "qwen3") || strings.Contains(cfg.model, "qwen2.5")) {
 		cfg.noThink = true
 	}
@@ -1442,14 +1398,5 @@ func testLLMConnStats(prefs Preferences) (*LLMTestStats, error) {
 // testLLMConnProfileStats 与 testLLMConnProfile 相同，但返回时延和 token 速度统计。
 func testLLMConnProfileStats(profileID string, prefs Preferences) (*LLMTestStats, error) {
 	cfg := llmConfigForProfile(profileID, prefs)
-	if cfg.baseURL == "" || cfg.model == "" {
-		return nil, fmt.Errorf("未配置 Base URL 或模型")
-	}
-	tmp := Preferences{
-		LLMProvider: cfg.provider,
-		LLMAPIKey:   cfg.apiKey,
-		LLMBaseURL:  cfg.baseURL,
-		LLMModel:    cfg.model,
-	}
-	return testLLMConnStats(tmp)
+	return testLLMConnStatsConfig(cfg)
 }

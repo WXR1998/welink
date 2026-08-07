@@ -17,8 +17,9 @@ import (
 var prefsMu sync.Mutex
 
 // resolveDownloadDir 返回当前应该写入导出文件的目录：
-//   1. 用户在设置里配置的 DownloadDir（存在且可写）
-//   2. 平台默认：$HOME/Downloads（Mac/Win）或 $XDG_DOWNLOAD_DIR（Linux）
+//  1. 用户在设置里配置的 DownloadDir（存在且可写）
+//  2. 平台默认：$HOME/Downloads（Mac/Win）或 $XDG_DOWNLOAD_DIR（Linux）
+//
 // 目录必须在用户 home 之下（防止前端传入 /etc 之类触发任意写）。
 func resolveDownloadDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -72,9 +73,9 @@ func migrateConfigYAML() {
 
 // DataDirProfile 单个数据目录配置项（用于多账号切换）。
 type DataDirProfile struct {
-	ID            string `json:"id"`               // 短 UUID，前端用作 key
-	Name          string `json:"name"`             // 用户起的别名，如「主号」「老婆账号」
-	Path          string `json:"path"`             // 解密后 decrypted/ 目录的绝对路径
+	ID            string `json:"id"`                        // 短 UUID，前端用作 key
+	Name          string `json:"name"`                      // 用户起的别名，如「主号」「老婆账号」
+	Path          string `json:"path"`                      // 解密后 decrypted/ 目录的绝对路径
 	LastIndexedAt int64  `json:"last_indexed_at,omitempty"` // 上次成功索引的 Unix 秒
 }
 
@@ -149,7 +150,9 @@ type LLMProfile struct {
 // 只加字段且 zero-value 兼容的改动不用升级版本。
 //
 // v2: ImageProvider/ImageAPIKey/ImageBaseURL/ImageModel 单字段 → ImageProfiles 数组。
-const CurrentSchemaVersion = 2
+// v3: 顶层 LLM 连接参数 → 选中的默认 LLM profile。
+// v4: 顶层 Embedding / 记忆提炼 / Rerank 连接参数 → 对应 profiles。
+const CurrentSchemaVersion = 4
 
 type Preferences struct {
 	// 0 或缺失 = 旧版本（需要迁移）；>= CurrentSchemaVersion = 当前版本
@@ -218,23 +221,12 @@ type Preferences struct {
 	// 「暧昧探测」Lab 排除名单（标记真伴侣/家人/客户等不参与暧昧统计的人）
 	FlirtExcluded []string `json:"flirt_excluded,omitempty"`
 
-	// LLM 配置（多 provider，支持在 AI 分析页面切换）
-	LLMProfiles      []LLMProfile `json:"llm_profiles,omitempty"`
-	// 以下单配置字段保持向后兼容（自动同步为 LLMProfiles[0]）
-	LLMProvider      string `json:"llm_provider,omitempty"` // openai/deepseek/kimi/gemini/claude/grok/glm/ollama/custom
-	LLMAPIKey        string `json:"llm_api_key,omitempty"`
-	LLMBaseURL       string `json:"llm_base_url,omitempty"`
-	LLMModel         string `json:"llm_model,omitempty"`
-	AIAnalysisDBPath string `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
+	// LLM 连接参数只存在于 LLMProfiles；顶层只记录默认选中的 profile。
+	LLMProfiles         []LLMProfile `json:"llm_profiles,omitempty"`
+	DefaultLLMProfileID string       `json:"default_llm_profile_id,omitempty"`
+	AIAnalysisDBPath    string       `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
 
-	// Embedding 配置（向量检索，混合 RAG 模式使用）
-	EmbeddingProvider string `json:"embedding_provider,omitempty"` // openai/jina/ollama/custom；默认 ollama
-	EmbeddingAPIKey   string `json:"embedding_api_key,omitempty"`
-	EmbeddingBaseURL  string `json:"embedding_base_url,omitempty"`
-	EmbeddingModel    string `json:"embedding_model,omitempty"`
-	EmbeddingDims     int    `json:"embedding_dims,omitempty"` // 0 = 由模型默认值决定
-	// 多 Embedding 提供商（fallback）：数组顺序即为优先级。
-	// 为空时回退到上面的单字段配置。
+	// Embedding profiles 的数组顺序即 fallback 优先级。
 	EmbeddingProfiles []EmbeddingProfile `json:"embedding_profiles,omitempty"`
 
 	// 文生图配置（年报封面 / 高光插画 / AI 头像等场景）
@@ -250,22 +242,10 @@ type Preferences struct {
 	// 向量检索缓存（内存）
 	VecCacheMaxKeys int `json:"vec_cache_max_keys,omitempty"` // 最多缓存几个联系人的 embedding，0 = 默认 3
 
-	// 记忆提炼模型（本地隐私专用，默认 Ollama）
-	// 提炼时原始聊天内容只发给此模型，与主 LLM 配置隔离
-	MemLLMBaseURL string `json:"mem_llm_base_url,omitempty"` // 默认 http://localhost:11434/v1
-	MemLLMModel   string `json:"mem_llm_model,omitempty"`    // 默认 qwen2.5:7b
-	MemLLMAPIKey  string `json:"mem_llm_api_key,omitempty"`  // 留空=本地 Ollama(无需key)；填写=使用云端模型
-	// 多记忆提炼 LLM 提供商（fallback）：数组顺序即为优先级。
-	// 为空时回退到上面的单字段配置。
+	// 记忆提炼 profiles 的数组顺序即 fallback 优先级；为空时复用默认 LLM profile。
 	MemLLMProfiles []MemLLMProfile `json:"mem_llm_profiles,omitempty"`
 
-	// Rerank（重排）配置：对向量检索召回的候选做 cross-encoder 精排
-	RerankProvider string `json:"rerank_provider,omitempty"` // jina/cohere/siliconflow/custom；空=不启用 rerank
-	RerankAPIKey   string `json:"rerank_api_key,omitempty"`
-	RerankBaseURL  string `json:"rerank_base_url,omitempty"`
-	RerankModel    string `json:"rerank_model,omitempty"`
-	// 多 Rerank 提供商（fallback）：数组顺序即为优先级。
-	// 为空时回退到上面的单字段配置。
+	// Rerank profiles 的数组顺序即 fallback 优先级；为空时不启用。
 	RerankProfiles []RerankProfile `json:"rerank_profiles,omitempty"`
 
 	// 自定义纪念日
@@ -275,21 +255,21 @@ type Preferences struct {
 	PromptTemplates map[string]string `json:"prompt_templates,omitempty"`
 
 	// 导出中心：第三方笔记/文档平台令牌
-	NotionToken      string `json:"notion_token,omitempty"`       // Notion Integration Token (secret_xxx)
-	NotionParentPage string `json:"notion_parent_page,omitempty"` // 默认上传到的 Page ID（也可在导出时覆盖）
-	FeishuAppID      string `json:"feishu_app_id,omitempty"`      // 飞书自建应用 App ID
-	FeishuAppSecret  string `json:"feishu_app_secret,omitempty"`  // 飞书自建应用 App Secret
+	NotionToken       string `json:"notion_token,omitempty"`        // Notion Integration Token (secret_xxx)
+	NotionParentPage  string `json:"notion_parent_page,omitempty"`  // 默认上传到的 Page ID（也可在导出时覆盖）
+	FeishuAppID       string `json:"feishu_app_id,omitempty"`       // 飞书自建应用 App ID
+	FeishuAppSecret   string `json:"feishu_app_secret,omitempty"`   // 飞书自建应用 App Secret
 	FeishuFolderToken string `json:"feishu_folder_token,omitempty"` // 默认导入到的文件夹 Token（留空 = 我的空间根目录）
 
 	// 导出中心：云盘 / 对象存储
 	// WebDAV（坚果云 / Nextcloud / ownCloud / 群晖等）
-	WebDAVURL      string `json:"webdav_url,omitempty"`      // 完整 URL，例 https://dav.jianguoyun.com/dav/
+	WebDAVURL      string `json:"webdav_url,omitempty"` // 完整 URL，例 https://dav.jianguoyun.com/dav/
 	WebDAVUsername string `json:"webdav_username,omitempty"`
 	WebDAVPassword string `json:"webdav_password,omitempty"` // 应用密码
 	WebDAVPath     string `json:"webdav_path,omitempty"`     // 上传前缀，例 WeLink-Export/
 
 	// S3 兼容（AWS S3 / Cloudflare R2 / 阿里 OSS / 腾讯 COS / 七牛 / MinIO / Backblaze）
-	S3Endpoint     string `json:"s3_endpoint,omitempty"`       // 主机名，空=AWS 官方；自定义端点用于国内云
+	S3Endpoint     string `json:"s3_endpoint,omitempty"` // 主机名，空=AWS 官方；自定义端点用于国内云
 	S3Region       string `json:"s3_region,omitempty"`
 	S3Bucket       string `json:"s3_bucket,omitempty"`
 	S3AccessKey    string `json:"s3_access_key,omitempty"`
@@ -336,8 +316,8 @@ type CustomAnniversary struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Date      string `json:"date"`               // YYYY-MM-DD
-	Recurring bool   `json:"recurring"`           // 每年重复
-	Username  string `json:"username,omitempty"`   // 可选关联联系人
+	Recurring bool   `json:"recurring"`          // 每年重复
+	Username  string `json:"username,omitempty"` // 可选关联联系人
 }
 
 // preferencesPath 返回 preferences.json 的绝对路径。
@@ -358,8 +338,8 @@ func loadPreferences() Preferences {
 	if err != nil {
 		return defaultPreferences()
 	}
-	var p Preferences
-	if err := json.Unmarshal(data, &p); err != nil {
+	p, err := decodePreferences(data)
+	if err != nil {
 		log.Printf("[PREFS] Failed to parse preferences.json: %v", err)
 		return defaultPreferences()
 	}
@@ -385,6 +365,79 @@ func loadPreferences() Preferences {
 		}
 	}
 	return migrated
+}
+
+// legacyLLMFields 仅用于读取 v3 之前的单 LLM 配置，写回时不会保留这些顶层字段。
+type legacyLLMFields struct {
+	Provider          string `json:"llm_provider"`
+	APIKey            string `json:"llm_api_key"`
+	BaseURL           string `json:"llm_base_url"`
+	Model             string `json:"llm_model"`
+	EmbeddingProvider string `json:"embedding_provider"`
+	EmbeddingAPIKey   string `json:"embedding_api_key"`
+	EmbeddingBaseURL  string `json:"embedding_base_url"`
+	EmbeddingModel    string `json:"embedding_model"`
+	EmbeddingDims     int    `json:"embedding_dims"`
+	MemLLMBaseURL     string `json:"mem_llm_base_url"`
+	MemLLMModel       string `json:"mem_llm_model"`
+	MemLLMAPIKey      string `json:"mem_llm_api_key"`
+	RerankProvider    string `json:"rerank_provider"`
+	RerankAPIKey      string `json:"rerank_api_key"`
+	RerankBaseURL     string `json:"rerank_base_url"`
+	RerankModel       string `json:"rerank_model"`
+}
+
+func decodePreferences(data []byte) (Preferences, error) {
+	var p Preferences
+	if err := json.Unmarshal(data, &p); err != nil {
+		return Preferences{}, err
+	}
+	var legacy legacyLLMFields
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return Preferences{}, err
+	}
+	needsMigration := false
+	if len(p.LLMProfiles) == 0 && legacy.Provider != "" {
+		p.LLMProfiles = []LLMProfile{{
+			ID: "llm-default", Name: legacy.Provider,
+			Provider: legacy.Provider, APIKey: legacy.APIKey,
+			BaseURL: legacy.BaseURL, Model: legacy.Model,
+		}}
+		needsMigration = true
+	}
+	if len(p.LLMProfiles) > 0 && p.DefaultLLMProfileID == "" {
+		needsMigration = true
+	}
+	if len(p.EmbeddingProfiles) == 0 && legacy.EmbeddingProvider != "" {
+		p.EmbeddingProfiles = []EmbeddingProfile{{
+			ID: "embedding-default", Name: legacy.EmbeddingProvider,
+			Provider: legacy.EmbeddingProvider, APIKey: legacy.EmbeddingAPIKey,
+			BaseURL: legacy.EmbeddingBaseURL, Model: legacy.EmbeddingModel, Dims: legacy.EmbeddingDims,
+		}}
+		needsMigration = true
+	}
+	if len(p.MemLLMProfiles) == 0 && (legacy.MemLLMBaseURL != "" || legacy.MemLLMModel != "" || legacy.MemLLMAPIKey != "") {
+		provider := legacy.Provider
+		if legacy.MemLLMAPIKey == "" {
+			provider = "ollama"
+		}
+		p.MemLLMProfiles = []MemLLMProfile{{
+			ID: "mem-default", Name: provider, Provider: provider, APIKey: legacy.MemLLMAPIKey,
+			BaseURL: legacy.MemLLMBaseURL, Model: legacy.MemLLMModel,
+		}}
+		needsMigration = true
+	}
+	if len(p.RerankProfiles) == 0 && legacy.RerankProvider != "" {
+		p.RerankProfiles = []RerankProfile{{
+			ID: "rerank-default", Name: legacy.RerankProvider, Provider: legacy.RerankProvider,
+			APIKey: legacy.RerankAPIKey, BaseURL: legacy.RerankBaseURL, Model: legacy.RerankModel,
+		}}
+		needsMigration = true
+	}
+	if needsMigration && p.SchemaVersion >= CurrentSchemaVersion {
+		p.SchemaVersion = CurrentSchemaVersion - 1
+	}
+	return p, nil
 }
 
 // defaultPreferences 返回带有最新 schema_version 的空配置（首次启动用）。
@@ -418,8 +471,6 @@ func sanitizeForExport(p Preferences, stripSecrets bool) Preferences {
 	p.PodcastTTSAPIKey = ""
 
 	// LLM / Embedding / Image
-	p.LLMAPIKey = ""
-	p.EmbeddingAPIKey = ""
 	p.ImageAPIKey = ""
 	for i := range p.LLMProfiles {
 		p.LLMProfiles[i].APIKey = ""
@@ -434,7 +485,6 @@ func sanitizeForExport(p Preferences, stripSecrets bool) Preferences {
 		p.MemLLMProfiles[i].APIKey = ""
 	}
 
-	p.RerankAPIKey = ""
 	for i := range p.RerankProfiles {
 		p.RerankProfiles[i].APIKey = ""
 	}
@@ -475,8 +525,6 @@ func sanitizeForExport(p Preferences, stripSecrets bool) Preferences {
 // 字段清单与 sanitizeForExport 保持一致：新增凭据字段时两处都要补，避免日志里漏脱敏。
 func collectSecrets(p Preferences) []string {
 	candidates := []string{
-		p.LLMAPIKey,
-		p.EmbeddingAPIKey,
 		p.ImageAPIKey,
 		p.PodcastTTSAPIKey,
 		p.NotionToken,
@@ -550,6 +598,16 @@ func migratePreferences(p Preferences) Preferences {
 		}
 		p.SchemaVersion = 2
 	}
+	// v2 → v3：不再持久化顶层 LLM 参数，默认模型由 profile ID 唯一确定。
+	if p.SchemaVersion < 3 {
+		if p.DefaultLLMProfileID == "" && len(p.LLMProfiles) > 0 {
+			p.DefaultLLMProfileID = p.LLMProfiles[0].ID
+		}
+		p.SchemaVersion = 3
+	}
+	if p.SchemaVersion < 4 {
+		p.SchemaVersion = 4
+	}
 	return p
 }
 
@@ -600,12 +658,12 @@ const hasKeyPlaceholder = "__HAS_KEY__"
 // API Key 不返回脱敏值，只返回占位符标记是否已设置。
 func sanitizeForResponse(p Preferences) Preferences {
 	redact := func(s string) string {
-		if s == "" { return "" }
+		if s == "" {
+			return ""
+		}
 		return hasKeyPlaceholder
 	}
 	out := p
-	out.LLMAPIKey = redact(out.LLMAPIKey)
-	out.EmbeddingAPIKey = redact(out.EmbeddingAPIKey)
 	out.ImageAPIKey = redact(out.ImageAPIKey)
 	out.GeminiClientSecret = redact(out.GeminiClientSecret)
 	out.GeminiAccessToken = ""
@@ -622,8 +680,6 @@ func sanitizeForResponse(p Preferences) Preferences {
 	out.OneDriveAccessToken = ""
 	out.OneDriveRefreshToken = ""
 	out.PodcastTTSAPIKey = redact(out.PodcastTTSAPIKey)
-	out.MemLLMAPIKey = redact(out.MemLLMAPIKey)
-	out.RerankAPIKey = redact(out.RerankAPIKey)
 	out.MobilePairingToken = redact(out.MobilePairingToken)
 	if len(out.LLMProfiles) > 0 {
 		sanitized := make([]LLMProfile, len(out.LLMProfiles))

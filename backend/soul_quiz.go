@@ -17,11 +17,11 @@ import (
 )
 
 type SoulQuestion struct {
-	Question     string   `json:"question"`
-	Options      []string `json:"options"`        // 4 个选项
-	AnswerIndex  int      `json:"answer_index"`   // 0-3
-	Why          string   `json:"why,omitempty"`  // 答案的依据，一句话
-	Category     string   `json:"category"`       // "回忆" / "口头禅" / "时间" / "习惯" / "梗"
+	Question    string   `json:"question"`
+	Options     []string `json:"options"`       // 4 个选项
+	AnswerIndex int      `json:"answer_index"`  // 0-3
+	Why         string   `json:"why,omitempty"` // 答案的依据，一句话
+	Category    string   `json:"category"`      // "回忆" / "口头禅" / "时间" / "习惯" / "梗"
 }
 
 type SoulQuizResponse struct {
@@ -133,11 +133,7 @@ func soulQuizHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if body.ProfileID != "" {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = body.ProfileID
 		}
 		raw, err := CompleteLLM([]LLMMessage{
 			{Role: "system", Content: systemPrompt},

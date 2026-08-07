@@ -38,14 +38,14 @@ type DiagnosticsIndex struct {
 }
 
 type DiagnosticsLLMProfile struct {
-	Status     string `json:"status"`
-	Name       string `json:"name"`
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	BaseURL    string `json:"base_url,omitempty"`
-	HasAPIKey  bool   `json:"has_api_key"`
-	LatencyMs  int64  `json:"latency_ms,omitempty"`
-	Message    string `json:"message"`
+	Status    string `json:"status"`
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	BaseURL   string `json:"base_url,omitempty"`
+	HasAPIKey bool   `json:"has_api_key"`
+	LatencyMs int64  `json:"latency_ms,omitempty"`
+	Message   string `json:"message"`
 }
 
 type DiagnosticsDisk struct {
@@ -244,14 +244,6 @@ func llmProbe(p LLMProfile) DiagnosticsLLMProfile {
 func diagLLMProfiles() []DiagnosticsLLMProfile {
 	prefs := loadPreferences()
 	profiles := prefs.LLMProfiles
-	// 兼容老的单字段配置
-	if len(profiles) == 0 && prefs.LLMProvider != "" {
-		profiles = []LLMProfile{{
-			ID: "legacy", Name: prefs.LLMProvider,
-			Provider: prefs.LLMProvider, APIKey: prefs.LLMAPIKey,
-			BaseURL: prefs.LLMBaseURL, Model: prefs.LLMModel,
-		}}
-	}
 	if len(profiles) == 0 {
 		return []DiagnosticsLLMProfile{}
 	}

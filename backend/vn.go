@@ -165,10 +165,11 @@ func vnStartHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 // ── GET (SSE) /vn/stories/:id/next ───────────────────────────────────────────
 
 // 流式生成下一章。事件类型：
-//   {meta: true, chapter_idx, total}
-//   {delta: "..."}          narration 增量
-//   {done: true, chapter}   收尾事件：完整 chapter（含 choices）+ updated state；若到结局还带 ending
-//   {error: "..."}          失败
+//
+//	{meta: true, chapter_idx, total}
+//	{delta: "..."}          narration 增量
+//	{done: true, chapter}   收尾事件：完整 chapter（含 choices）+ updated state；若到结局还带 ending
+//	{error: "..."}          失败
 func vnNextChapterHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		_ = getSvc // 现在不需要 svc，留参数防未来扩展（如 memory 模式从聊天里取片段）
@@ -228,11 +229,7 @@ func vnNextChapterHandler(getSvc func() *service.ContactService) gin.HandlerFunc
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if story.ProfileID != "" {
-			cfg := llmConfigForProfile(story.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = story.ProfileID
 		}
 
 		// 预生成命中检查：上一章存在 + 玩家所选选项被预测对了
@@ -285,10 +282,10 @@ func vnNextChapterHandler(getSvc func() *service.ContactService) gin.HandlerFunc
 		// narration 段内的 delta 立刻 SSE 推给前端（边写边出字）；meta 段 buffer 起来，
 		// 流结束后解析 JSON 拿 choices / state_delta / ending。失败兜底走老 CompleteLLM。
 		var parsed struct {
-			Title      string           `json:"title,omitempty"`
-			Synopsis   string           `json:"synopsis,omitempty"`
-			Choices    []VNChoice       `json:"choices"`
-			Ending     *VNEndingPayload `json:"ending,omitempty"`
+			Title    string           `json:"title,omitempty"`
+			Synopsis string           `json:"synopsis,omitempty"`
+			Choices  []VNChoice       `json:"choices"`
+			Ending   *VNEndingPayload `json:"ending,omitempty"`
 		}
 		narration, metaRaw, streamErr := vnStreamGenerate(systemPrompt, userPrompt, profPrefs, send)
 		if streamErr != nil {
@@ -422,11 +419,11 @@ func emitTypewriter(text string, send func(map[string]interface{})) {
 func vnStreamGenerate(systemPrompt, userPrompt string, prefs Preferences, send func(map[string]interface{})) (string, string, error) {
 	// 段状态机
 	const (
-		stPreface = iota // 还没看到 <narration>，把 chunk 丢掉（兼容 LLM 偶尔前面加废话）
-		stNarr           // 在 <narration>…</narration> 内
-		stBetween        // </narration> 之后、<meta> 之前
-		stMeta           // 在 <meta>…</meta> 内
-		stPostMeta       // </meta> 之后，忽略
+		stPreface  = iota // 还没看到 <narration>，把 chunk 丢掉（兼容 LLM 偶尔前面加废话）
+		stNarr            // 在 <narration>…</narration> 内
+		stBetween         // </narration> 之后、<meta> 之前
+		stMeta            // 在 <meta>…</meta> 内
+		stPostMeta        // </meta> 之后，忽略
 	)
 	var (
 		state          = stPreface
@@ -592,10 +589,10 @@ type vnChooseRequest struct {
 }
 
 type vnChooseResponse struct {
-	State        VNState `json:"state"`
-	CanContinue  bool    `json:"can_continue"`
-	Ended        bool    `json:"ended"`
-	EndingType   string  `json:"ending_type,omitempty"`
+	State       VNState `json:"state"`
+	CanContinue bool    `json:"can_continue"`
+	Ended       bool    `json:"ended"`
+	EndingType  string  `json:"ending_type,omitempty"`
 }
 
 func vnChooseHandler() gin.HandlerFunc {
@@ -894,6 +891,7 @@ func vnSampleFacts(username string, n int) []VNFact {
 // 的自动 prompt prefix 缓存都能在第 2 章起命中：
 //   - 前缀（每次相同）：人设 + facts + 模式 + 输出格式 + 选项规则 + 创作约束
 //   - 尾部（每章不同）：章节进度 + 当前 state + 是否收束
+//
 // 注意：前缀里不要插任何动态字段（chapterIdx、state、quest 之外的 mode-specific 文案要单列）。
 func vnBuildSystemPrompt(story *VNStory) string {
 	var sb strings.Builder

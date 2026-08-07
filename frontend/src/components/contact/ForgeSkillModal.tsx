@@ -62,10 +62,10 @@ export const ForgeSkillModal: React.FC<Props> = ({ open, onClose, skillType, use
 
   useEffect(() => {
     if (!open) return;
-    fetch('/api/preferences').then(r => r.json()).then((d: { llm_profiles?: LLMProfileItem[] }) => {
+    fetch('/api/preferences').then(r => r.json()).then((d: { llm_profiles?: LLMProfileItem[]; default_llm_profile_id?: string }) => {
       const ps = d?.llm_profiles ?? [];
       setProfiles(ps);
-      if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+      if (ps.length > 0 && !profileId) setProfileId(d?.default_llm_profile_id || ps[0].id);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -254,7 +254,7 @@ export const ForgeSkillModal: React.FC<Props> = ({ open, onClose, skillType, use
               >
                 {profiles.map(p => (
                   <option key={p.id} value={p.id}>
-                    {p.provider}{p.model ? ` · ${p.model}` : ''}
+                    {p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${p.provider}${p.model ? ` · ${p.model}` : ''}`)}
                   </option>
                 ))}
               </select>

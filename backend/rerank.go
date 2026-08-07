@@ -17,19 +17,6 @@ type RerankConfig struct {
 	Model    string
 }
 
-// defaultRerankConfig 从 Preferences 构造 RerankConfig 并填充各 provider 默认值。
-// 默认不启用 rerank（Provider 为空）。
-func defaultRerankConfig(prefs Preferences) RerankConfig {
-	cfg := RerankConfig{
-		Provider: prefs.RerankProvider,
-		APIKey:   prefs.RerankAPIKey,
-		BaseURL:  prefs.RerankBaseURL,
-		Model:    prefs.RerankModel,
-	}
-	applyRerankDefaults(&cfg)
-	return cfg
-}
-
 // applyRerankDefaults 为已知 provider 填充默认 baseURL 和 model。
 func applyRerankDefaults(cfg *RerankConfig) {
 	switch cfg.Provider {
@@ -57,8 +44,7 @@ func applyRerankDefaults(cfg *RerankConfig) {
 	}
 }
 
-// rerankConfigs 从 Preferences 构造 []RerankConfig（多提供商 fallback）。
-// 优先使用 RerankProfiles；为空时回退到单字段配置。
+// rerankConfigs 从 Profiles 构造 []RerankConfig（数组顺序即 fallback 优先级）。
 func rerankConfigs(prefs Preferences) []RerankConfig {
 	if len(prefs.RerankProfiles) > 0 {
 		configs := make([]RerankConfig, 0, len(prefs.RerankProfiles))
@@ -74,11 +60,7 @@ func rerankConfigs(prefs Preferences) []RerankConfig {
 		}
 		return configs
 	}
-	single := defaultRerankConfig(prefs)
-	if single.Provider == "" {
-		return nil
-	}
-	return []RerankConfig{single}
+	return nil
 }
 
 // RerankResult 是单条重排结果。

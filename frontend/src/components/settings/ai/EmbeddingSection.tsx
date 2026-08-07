@@ -26,15 +26,10 @@ export const EmbeddingSection: React.FC = () => {
       if (eps && eps.length > 0) {
         setProfiles(eps);
       } else {
-        // Migrate from single config
         setProfiles([{
           id: genId(),
           name: '默认',
-          provider: (r.data.embedding_provider as string) || 'ollama',
-          api_key: (r.data.embedding_api_key as string) || '',
-          base_url: (r.data.embedding_base_url as string) || '',
-          model: (r.data.embedding_model as string) || '',
-          dims: (r.data.embedding_dims as number) || 768,
+          provider: 'ollama', api_key: '', base_url: '', model: '', dims: 768,
         }]);
       }
       setCacheMaxKeys((r.data.vec_cache_max_keys as number) || 3);

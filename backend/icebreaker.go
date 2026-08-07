@@ -144,11 +144,7 @@ func icebreakerHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if body.ProfileID != "" {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = body.ProfileID
 		}
 
 		raw, err := CompleteLLM([]LLMMessage{
@@ -177,8 +173,8 @@ func icebreakerHandler(getSvc func() *service.ContactService) gin.HandlerFunc {
 		}
 		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":     "LLM 返回格式异常：" + err.Error(),
-				"raw":       raw,
+				"error": "LLM 返回格式异常：" + err.Error(),
+				"raw":   raw,
 			})
 			return
 		}

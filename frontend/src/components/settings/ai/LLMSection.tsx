@@ -2,10 +2,11 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Plus, Loader2, Check, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
-import { genId, newProfile, type LLMProfile, type ProviderValue } from './types';
+import { genId, newProfile, type LLMProfile } from './types';
 
 export const LLMSection: React.FC = () => {
   const [profiles, setProfiles] = useState<LLMProfile[]>([newProfile(1)]);
+  const [defaultProfileId, setDefaultProfileId] = useState('');
   const [aiDBPath, setAiDBPath] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -35,22 +36,13 @@ export const LLMSection: React.FC = () => {
     try {
       const r = await axios.get<{
         llm_profiles?: LLMProfile[];
-        llm_provider?: string; llm_api_key?: string;
-        llm_base_url?: string; llm_model?: string;
+        default_llm_profile_id?: string;
         gemini_client_id?: string; gemini_client_secret?: string;
         ai_analysis_db_path?: string;
       }>('/api/preferences');
       if (r.data.llm_profiles && r.data.llm_profiles.length > 0) {
         setProfiles(r.data.llm_profiles);
-      } else if (r.data.llm_provider) {
-        setProfiles([{
-          id: genId(),
-          name: r.data.llm_provider,
-          provider: r.data.llm_provider as ProviderValue,
-          api_key: r.data.llm_api_key ?? '',
-          base_url: r.data.llm_base_url ?? '',
-          model: r.data.llm_model ?? '',
-        }]);
+        setDefaultProfileId(r.data.default_llm_profile_id || r.data.llm_profiles[0].id);
       }
       setGeminiClientID(r.data.gemini_client_id ?? '');
       setGeminiClientSecret(r.data.gemini_client_secret ?? '');
@@ -84,6 +76,7 @@ export const LLMSection: React.FC = () => {
     return {
       ...fresh,
       llm_profiles: profiles,
+      default_llm_profile_id: defaultProfileId || profiles[0]?.id || '',
       gemini_client_id: geminiClientID,
       gemini_client_secret: geminiClientSecret,
       ai_analysis_db_path: aiDBPath,
@@ -216,12 +209,25 @@ export const LLMSection: React.FC = () => {
             onGeminiRevoke={handleGeminiRevoke}
             geminiAuthBusy={geminiAuthBusy}
             onChange={updated => setProfiles(prev => prev.map(x => x.id === updated.id ? updated : x))}
-            onDelete={() => setProfiles(prev => prev.filter(x => x.id !== p.id))}
+            onDelete={() => setProfiles(prev => {
+              const next = prev.filter(x => x.id !== p.id);
+              if (p.id === defaultProfileId) setDefaultProfileId(next[0]?.id ?? '');
+              return next;
+            })}
             onSaveAndTest={handleSaveAndTest}
             testing={testingId === p.id}
             testMsg={testMsgs[p.id] ?? null}
           />
         ))}
+
+        {profiles.length > 1 && (
+          <label className="block text-xs text-gray-500 dark:text-gray-400">
+            默认 AI 配置
+            <select value={defaultProfileId} onChange={e => setDefaultProfileId(e.target.value)} className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white dk-input">
+              {profiles.map((p, i) => <option key={p.id} value={p.id}>{p.name || `配置 ${i + 1}`}</option>)}
+            </select>
+          </label>
+        )}
 
         {/* 添加配置 */}
         <button

@@ -423,7 +423,7 @@ func extractAndStoreFacts(
 				runningSummary.Unresolved = nil
 				runningSummary.ActiveTopics = nil
 			}
-			lbResult, lbErr := extractFactsFromChunk(lookbackChunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx, runningSummary)
+			lbResult, lbErr := extractFactsFromChunk(lookbackChunk, isGroup, displayName, prefs, backgroundCtx, runningSummary)
 			if lbErr == nil {
 				runningSummary = lbResult.ContextSummary
 			}
@@ -449,7 +449,7 @@ func extractAndStoreFacts(
 			runningSummary.ActiveTopics = nil
 		}
 
-		result, err := extractFactsFromChunk(chunk, isGroup, displayName, memLLMPrefs(prefs), backgroundCtx, runningSummary)
+		result, err := extractFactsFromChunk(chunk, isGroup, displayName, prefs, backgroundCtx, runningSummary)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -541,38 +541,6 @@ func extractAndStoreFacts(
 	return total, nil
 }
 
-// memLLMPrefs 返回用于记忆提炼的 Preferences 副本。
-// - 若用户配置了 MemLLMBaseURL 或 MemLLMModel，则使用专用配置。
-//   - 填写了 MemLLMAPIKey → 使用云端模型（OpenAI 兼容，如 OpenRouter / DeepSeek 等）
-//   - 未填写 MemLLMAPIKey → 使用本地 Ollama（隐私保护，数据不出本机）
-//
-// - 若两者均为空，则直接复用主 LLM 配置（与 AI 分析使用同一模型）。
-func memLLMPrefs(prefs Preferences) Preferences {
-	if prefs.MemLLMBaseURL == "" && prefs.MemLLMModel == "" {
-		return prefs
-	}
-	p := prefs
-	if prefs.MemLLMAPIKey != "" {
-		// 云端模型：使用用户提供的 API Key，保持主 LLM 的 provider
-		p.LLMAPIKey = prefs.MemLLMAPIKey
-	} else {
-		// 本地 Ollama：不需要 API Key
-		p.LLMProvider = "ollama"
-		p.LLMAPIKey = ""
-	}
-	if prefs.MemLLMBaseURL != "" {
-		p.LLMBaseURL = prefs.MemLLMBaseURL
-	} else if prefs.MemLLMAPIKey == "" {
-		p.LLMBaseURL = "http://localhost:11434/v1"
-	}
-	if prefs.MemLLMModel != "" {
-		p.LLMModel = prefs.MemLLMModel
-	} else if prefs.MemLLMAPIKey == "" {
-		p.LLMModel = "qwen2.5:7b"
-	}
-	return p
-}
-
 // extractFactsFromChunk 调用 LLM 从一批消息中提炼事实列表，并生成上下文摘要供下一段使用。
 func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, prefs Preferences, backgroundCtx string, priorSummary memContextSummary) (memExtractResult, error) {
 	var sb strings.Builder
@@ -657,7 +625,7 @@ func extractFactsFromChunk(chunk []rawMsg, isGroup bool, displayName string, pre
 			sb.String())
 	}
 
-	reply, err := completeMemLLMWithFallback([]LLMMessage{{Role: "user", Content: prompt}}, memLLMConfigs(prefs))
+	reply, err := completeMemLLMWithFallback([]LLMMessage{{Role: "user", Content: prompt}}, memLLMConfigs(prefs), prefs)
 	if err != nil {
 		return memExtractResult{}, err
 	}
@@ -954,37 +922,32 @@ func SearchMemFactsCoMention(key string, entities, concepts []string, topK int, 
 	return out
 }
 
-// memLLMConfigs 从 Preferences 构造 []Preferences（多提供商 fallback）。
-// 优先使用 MemLLMProfiles；为空时回退到单字段配置。
-func memLLMConfigs(prefs Preferences) []Preferences {
+// memLLMConfigs 从 Profiles 构造运行时配置；为空时复用默认 LLM profile。
+func memLLMConfigs(prefs Preferences) []llmConfig {
 	if len(prefs.MemLLMProfiles) > 0 {
-		configs := make([]Preferences, 0, len(prefs.MemLLMProfiles))
+		configs := make([]llmConfig, 0, len(prefs.MemLLMProfiles))
 		for _, p := range prefs.MemLLMProfiles {
-			cfg := prefs
-			cfg.LLMProvider = p.Provider
-			cfg.LLMAPIKey = p.APIKey
-			cfg.LLMBaseURL = p.BaseURL
-			cfg.LLMModel = p.Model
+			cfg := llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model}
 			configs = append(configs, cfg)
 		}
 		return configs
 	}
-	return []Preferences{memLLMPrefs(prefs)}
+	return []llmConfig{llmConfigForProfile("", prefs)}
 }
 
 // completeMemLLMWithFallback 按多提供商顺序尝试记忆提炼 LLM 调用，带粘性回退。
 // 只有所有提供商都失败才返回错误。
-func completeMemLLMWithFallback(msgs []LLMMessage, prefsList []Preferences) (string, error) {
-	if len(prefsList) == 0 {
+func completeMemLLMWithFallback(msgs []LLMMessage, configs []llmConfig, prefs Preferences) (string, error) {
+	if len(configs) == 0 {
 		return "", fmt.Errorf("未配置记忆提炼模型")
 	}
-	numProviders := len(prefsList)
+	numProviders := len(configs)
 	activeIdx := memLLMFallback.getActiveIndex(numProviders)
 
 	var lastErr error
 	for i := 0; i < numProviders; i++ {
 		idx := (activeIdx + i) % numProviders
-		result, err := CompleteLLM(msgs, prefsList[idx])
+		result, err := completeLLMWithConfig(msgs, configs[idx], prefs, "memory_extraction")
 		if err == nil {
 			memLLMFallback.recordSuccess()
 			return result, nil

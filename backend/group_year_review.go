@@ -20,17 +20,17 @@ func registerGroupYearReviewRoutes(prot *gin.RouterGroup, getSvc func() *service
 
 // GroupYearReviewResponse AI 群聊年报响应
 type GroupYearReviewResponse struct {
-	GroupName        string         `json:"group_name"`
-	Year             int            `json:"year"`
-	TotalMessages    int64          `json:"total_messages"`
-	TotalMembers     int            `json:"total_members"`       // 当年活跃人数
-	BusiestDay       string         `json:"busiest_day"`         // "2025-03-14"
-	BusiestDayCount  int            `json:"busiest_day_count"`
-	TopMembers       []YRMember     `json:"top_members"`         // Top 3 发言者
-	TopTopics        []string       `json:"top_topics"`          // 高频词 Top 3
-	GoldenQuotes     []string       `json:"golden_quotes"`       // AI 提炼 3 句经典语录
-	MonthlyTrend     [12]int        `json:"monthly_trend"`       // 12 月消息量
-	Highlight        string         `json:"highlight,omitempty"` // AI 叙事的一段话
+	GroupName       string     `json:"group_name"`
+	Year            int        `json:"year"`
+	TotalMessages   int64      `json:"total_messages"`
+	TotalMembers    int        `json:"total_members"` // 当年活跃人数
+	BusiestDay      string     `json:"busiest_day"`   // "2025-03-14"
+	BusiestDayCount int        `json:"busiest_day_count"`
+	TopMembers      []YRMember `json:"top_members"`         // Top 3 发言者
+	TopTopics       []string   `json:"top_topics"`          // 高频词 Top 3
+	GoldenQuotes    []string   `json:"golden_quotes"`       // AI 提炼 3 句经典语录
+	MonthlyTrend    [12]int    `json:"monthly_trend"`       // 12 月消息量
+	Highlight       string     `json:"highlight,omitempty"` // AI 叙事的一段话
 }
 
 // YRMember 年报里的成员条目
@@ -224,11 +224,7 @@ func llmGroupReview(resp *GroupYearReviewResponse, samples []string, profileID s
 	prefs := loadPreferences()
 	profPrefs := prefs
 	if profileID != "" {
-		cfg := llmConfigForProfile(profileID, prefs)
-		profPrefs.LLMProvider = cfg.provider
-		profPrefs.LLMAPIKey = cfg.apiKey
-		profPrefs.LLMBaseURL = cfg.baseURL
-		profPrefs.LLMModel = cfg.model
+		profPrefs.DefaultLLMProfileID = profileID
 	}
 
 	raw, err := CompleteLLM([]LLMMessage{

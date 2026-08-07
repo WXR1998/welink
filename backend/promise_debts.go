@@ -27,26 +27,26 @@ import (
 
 // 单条人情债
 type PromiseDebt struct {
-	Text           string `json:"text"`              // LLM 概括的承诺内容（10-30 字，第三人称）
-	Direction      string `json:"direction"`         // "i_owe" / "they_owe" / "mutual"
-	Category       string `json:"category"`          // "聚餐" / "见面" / "寄送" / "借还" / "通话" / "旅行邀约" / "答复" / "其他"
-	TargetDate     string `json:"target_date"`       // "2026-05-12" 解析得到时填，否则空
-	TargetDateText string `json:"target_date_text"`  // 原文出现的时间表达："下周三" / "等我回国" / ""
-	SourceQuote    string `json:"source_quote"`      // 原文（最多 80 字）
-	SourceSpeaker  string `json:"source_speaker"`    // "我" / 对方 displayName
-	SourceDate     string `json:"source_date"`       // 原话发生的日期 YYYY-MM-DD
-	Confidence     string `json:"confidence"`        // "high" / "medium" / "low"
+	Text           string `json:"text"`             // LLM 概括的承诺内容（10-30 字，第三人称）
+	Direction      string `json:"direction"`        // "i_owe" / "they_owe" / "mutual"
+	Category       string `json:"category"`         // "聚餐" / "见面" / "寄送" / "借还" / "通话" / "旅行邀约" / "答复" / "其他"
+	TargetDate     string `json:"target_date"`      // "2026-05-12" 解析得到时填，否则空
+	TargetDateText string `json:"target_date_text"` // 原文出现的时间表达："下周三" / "等我回国" / ""
+	SourceQuote    string `json:"source_quote"`     // 原文（最多 80 字）
+	SourceSpeaker  string `json:"source_speaker"`   // "我" / 对方 displayName
+	SourceDate     string `json:"source_date"`      // 原话发生的日期 YYYY-MM-DD
+	Confidence     string `json:"confidence"`       // "high" / "medium" / "low"
 }
 
 // 接口响应
 type PromiseDebtsResponse struct {
-	DisplayName      string        `json:"display_name"`
-	Avatar           string        `json:"avatar,omitempty"`
-	TotalMessages    int64         `json:"total_messages"`
-	ScannedMessages  int           `json:"scanned_messages"`
-	CandidateCount   int           `json:"candidate_count"`
-	Debts            []PromiseDebt `json:"debts"`
-	GeneratedAt      int64         `json:"generated_at"`
+	DisplayName     string        `json:"display_name"`
+	Avatar          string        `json:"avatar,omitempty"`
+	TotalMessages   int64         `json:"total_messages"`
+	ScannedMessages int           `json:"scanned_messages"`
+	CandidateCount  int           `json:"candidate_count"`
+	Debts           []PromiseDebt `json:"debts"`
+	GeneratedAt     int64         `json:"generated_at"`
 }
 
 // 宽口径承诺/邀约嫌疑正则。
@@ -69,9 +69,9 @@ var promisePattern = regexp.MustCompile(
 // 提取候选窗口（同一窗口里包含多次命中）
 type promiseWindow struct {
 	StartIdx int
-	EndIdx   int       // 闭区间
-	HitDate  string    // 主命中那一条的日期
-	HitTime  string    // 主命中那一条的时间
+	EndIdx   int    // 闭区间
+	HitDate  string // 主命中那一条的日期
+	HitTime  string // 主命中那一条的时间
 }
 
 func registerPromiseDebtsRoutes(prot *gin.RouterGroup, getSvc func() *service.ContactService) {
@@ -253,11 +253,7 @@ func promiseDebtsHandler(getSvc func() *service.ContactService) gin.HandlerFunc 
 		prefs := loadPreferences()
 		profPrefs := prefs
 		if body.ProfileID != "" {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			profPrefs.LLMProvider = cfg.provider
-			profPrefs.LLMAPIKey = cfg.apiKey
-			profPrefs.LLMBaseURL = cfg.baseURL
-			profPrefs.LLMModel = cfg.model
+			profPrefs.DefaultLLMProfileID = body.ProfileID
 		}
 
 		raw, err := CompleteLLM([]LLMMessage{

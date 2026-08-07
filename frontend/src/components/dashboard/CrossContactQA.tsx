@@ -457,7 +457,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [profileId, setProfileId] = useState('');
-  const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; name?: string; provider: string; model?: string }[]>([]);
 
   const [sharedIdx, setSharedIdx] = useState(-1);
   const [shotLoadingIdx, setShotLoadingIdx] = useState(-1);
@@ -501,7 +501,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
       if (exists) {
         setProfileId(saved!);
       } else if (ps.length > 0 && !profileId) {
-        setProfileId(ps[0].id);
+        setProfileId(d?.default_llm_profile_id || ps[0].id);
       }
     }).catch(() => {});
   }, []);
@@ -993,7 +993,7 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
               className="text-[10px] text-[#576b95] bg-[#576b95]/10 px-2 py-0.5 rounded-full font-semibold border-0 outline-none cursor-pointer"
             >
               {profiles.map(p => (
-                <option key={p.id} value={p.id}>{p.provider}{p.model ? ` · ${p.model}` : ''}</option>
+                <option key={p.id} value={p.id}>{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${p.provider}${p.model ? ` · ${p.model}` : ''}`)}</option>
               ))}
             </select>
           )}

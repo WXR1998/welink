@@ -22,19 +22,12 @@ type EmbeddingConfig struct {
 	Dims     int
 }
 
-// defaultEmbeddingConfig 从 Preferences 构造 EmbeddingConfig 并填充各 provider 默认值。
-// 默认 provider 为 ollama（本地免费）。
+// defaultEmbeddingConfig 返回 fallback 列表中的第一个配置；未配置时使用本地 Ollama。
 func defaultEmbeddingConfig(prefs Preferences) EmbeddingConfig {
-	cfg := EmbeddingConfig{
-		Provider: prefs.EmbeddingProvider,
-		APIKey:   prefs.EmbeddingAPIKey,
-		BaseURL:  prefs.EmbeddingBaseURL,
-		Model:    prefs.EmbeddingModel,
-		Dims:     prefs.EmbeddingDims,
+	if configs := embeddingConfigs(prefs); len(configs) > 0 {
+		return configs[0]
 	}
-	if cfg.Provider == "" {
-		cfg.Provider = "ollama"
-	}
+	cfg := EmbeddingConfig{Provider: "ollama"}
 	switch cfg.Provider {
 	case "ollama":
 		if cfg.BaseURL == "" {
@@ -263,8 +256,7 @@ func decodeVec(b []byte) []float32 {
 	return v
 }
 
-// embeddingConfigs 从 Preferences 构造 []EmbeddingConfig（多提供商 fallback）。
-// 优先使用 EmbeddingProfiles；为空时回退到单字段配置。
+// embeddingConfigs 从 Profiles 构造 []EmbeddingConfig（数组顺序即 fallback 优先级）。
 func embeddingConfigs(prefs Preferences) []EmbeddingConfig {
 	if len(prefs.EmbeddingProfiles) > 0 {
 		configs := make([]EmbeddingConfig, 0, len(prefs.EmbeddingProfiles))
@@ -281,7 +273,7 @@ func embeddingConfigs(prefs Preferences) []EmbeddingConfig {
 		}
 		return configs
 	}
-	return []EmbeddingConfig{defaultEmbeddingConfig(prefs)}
+	return nil
 }
 
 // applyEmbeddingDefaults 为已知 provider 填充默认 baseURL 和 model。

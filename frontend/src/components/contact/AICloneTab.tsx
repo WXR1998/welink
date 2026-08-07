@@ -67,7 +67,7 @@ export const AICloneTab: React.FC<Props> = ({ username, displayName, avatarUrl, 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [llmInfo, setLlmInfo] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
-  const [profiles, setProfiles] = useState<{ id: string; provider: string; model?: string }[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; name?: string; provider: string; model?: string }[]>([]);
   const [profileId, setProfileId] = useState('');
   const [sharing, setSharing] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ ok: boolean; text: string; path?: string } | null>(null);
@@ -147,17 +147,15 @@ export const AICloneTab: React.FC<Props> = ({ username, displayName, avatarUrl, 
       'minimax-cn': 'MiniMax-Text-01', openai: 'gpt-4o-mini', claude: 'claude-haiku-4-5-20251001',
       ollama: 'llama3',
     };
-    fetch('/api/preferences').then(r => r.json()).then((d: { llm_profiles?: { id: string; provider: string; model?: string }[]; llm_provider?: string; llm_model?: string }) => {
+    fetch('/api/preferences').then(r => r.json()).then((d: { llm_profiles?: { id: string; name?: string; provider: string; model?: string }[]; default_llm_profile_id?: string }) => {
       const ps = d.llm_profiles ?? [];
       setProfiles(ps);
-      if (ps.length > 0 && !profileId) setProfileId(ps[0].id);
+      if (ps.length > 0 && !profileId) setProfileId(d.default_llm_profile_id || ps[0].id);
       let provider = '', model = '';
       if (ps.length) {
-        provider = ps[0].provider;
-        model = ps[0].model || '';
-      } else if (d.llm_provider) {
-        provider = d.llm_provider;
-        model = d.llm_model || '';
+        const selected = ps.find(p => p.id === (d.default_llm_profile_id || ps[0].id)) ?? ps[0];
+        provider = selected.provider;
+        model = selected.model || '';
       }
       if (!model && provider) model = defaultModels[provider] ?? '';
       setLlmInfo({ provider, model });
@@ -657,7 +655,7 @@ export const AICloneTab: React.FC<Props> = ({ username, displayName, avatarUrl, 
                 className="text-[10px] text-purple-500 bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 rounded-full font-medium border-0 outline-none cursor-pointer"
               >
                 {profiles.map(p => (
-                  <option key={p.id} value={p.id}>{p.provider}{p.model ? ` · ${p.model}` : ''}</option>
+                  <option key={p.id} value={p.id}>{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${p.provider}${p.model ? ` · ${p.model}` : ''}`)}</option>
                 ))}
               </select>
             ) : llmInfo.provider ? (

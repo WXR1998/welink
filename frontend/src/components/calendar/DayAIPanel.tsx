@@ -44,7 +44,7 @@ interface DayAIPanelProps {
   onOpenSettings?: () => void;
 }
 
-interface ProfileItem { id: string; provider: string; model?: string; }
+interface ProfileItem { id: string; name?: string; provider: string; model?: string; }
 
 // ─── 预设问题 ────────────────────────────────────────────────────────────────
 const DAY_PRESETS = [
@@ -189,14 +189,11 @@ export const DayAIPanel: React.FC<DayAIPanelProps> = ({ date, contacts, groups, 
     let alive = true;
     fetch('/api/preferences')
       .then(r => r.json())
-      .then((d: { llm_profiles?: ProfileItem[]; llm_provider?: string; llm_model?: string }) => {
+      .then((d: { llm_profiles?: ProfileItem[]; default_llm_profile_id?: string }) => {
         if (!alive) return;
         if (d.llm_profiles && d.llm_profiles.length > 0) {
           setProfiles(d.llm_profiles);
-          setSelectedProfileId(d.llm_profiles[0].id);
-        } else if (d.llm_provider) {
-          setProfiles([{ id: '__default__', provider: d.llm_provider, model: d.llm_model }]);
-          setSelectedProfileId('__default__');
+          setSelectedProfileId(d.default_llm_profile_id || d.llm_profiles[0].id);
         }
       }).catch(() => {});
     return () => { alive = false; };
@@ -370,7 +367,7 @@ export const DayAIPanel: React.FC<DayAIPanelProps> = ({ date, contacts, groups, 
                     : 'bg-white dark:bg-white/5 text-gray-400 border-gray-200 dark:border-white/10 hover:border-[#576b95] hover:text-[#576b95]'
                 }`}
               >
-                {`${PROVIDER_LABELS[p.provider] ?? p.provider}${p.model ? ` · ${p.model}` : ''}`}
+				{p.name || (p.provider === 'custom' ? (p.model || '未命名模型') : `${PROVIDER_LABELS[p.provider] ?? p.provider}${p.model ? ` · ${p.model}` : ''}`)}
               </button>
             ))}
           </div>

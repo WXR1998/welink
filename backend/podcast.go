@@ -249,7 +249,7 @@ func registerPodcastRoutes(api *gin.RouterGroup, getSvc func() *service.ContactS
 			{Role: "user", Content: user},
 		}
 
-		raw, err := CompleteLLM(msgs, prefs)
+		raw, err := CompleteLLMFeature(msgs, prefs, "", body.ProfileID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "LLM 生成失败：" + err.Error()})
 			return
@@ -478,7 +478,10 @@ func buildPodcastSummary(basics interface{}, detail interface{}, durationMin int
 	sb.WriteString("\n—— 聊天节奏 ——\n")
 	if hourly, ok := d["hourly_dist"].([]interface{}); ok && len(hourly) == 24 {
 		// 找高峰时段
-		type hh struct{ h int; n int }
+		type hh struct {
+			h int
+			n int
+		}
 		hs := make([]hh, 24)
 		for i, v := range hourly {
 			hs[i] = hh{i, int(toFloat(v))}
