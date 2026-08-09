@@ -246,6 +246,7 @@ func buildAnnouncementBlocks(connected bool, now time.Time) []*larkdocx.Block {
 		dividerBlock(),
 		headingBlock(2, "📖 使用方法"),
 		bulletBlock("在群里 @群史官 并发送你的问题，即可向 AI 提问。"),
+		bulletBlock("在群里 @群史官 并发送“清空上下文”，可清空你在本群的问答上下文。"),
 		bulletBlock("提问需指定联系人/群名，例如：“我和邓凯文最近聊了什么？”"),
 		bulletBlock("同一个人的问题回答中会有冷却：上一个问题处理完之前，再次提问会被拒绝，请稍候重试。"),
 		dividerBlock(),

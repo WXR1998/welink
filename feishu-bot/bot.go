@@ -224,6 +224,11 @@ func (b *bot) handleMessage(ctx context.Context, msg *types.NormalizedMessage) {
 		b.safeSend(ctx, msg, "你没有权限使用本机器人。")
 		return
 	}
+	if isClearContextCommand(msg) {
+		b.clearSessionContext(sessionKeyFor(msg))
+		b.safeSend(ctx, msg, "已清空你的上下文。")
+		return
+	}
 	question := cleanMention(msg.Content)
 	if strings.TrimSpace(question) == "" {
 		b.safeSend(ctx, msg, "请输入问题，例如：我和张三最近聊了什么？")
@@ -282,7 +287,7 @@ func (b *bot) process(ctx context.Context, msg *types.NormalizedMessage, questio
 	defer b.releaseBusy(sessionKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	b.processCard(ctx, msg, question, sessionKey)
+	b.processCard(ctx, msg, question, sessionKey, time.Now())
 }
 
 // chatIDFromSession 从 session key 中提取飞书群 chat_id。
@@ -301,7 +306,8 @@ func chatIDFromSession(sessionKey string) string {
 
 // processCard 用卡片流式回答，回复时引用用户的原始提问。
 // 先发送初始卡片并登记 pending（便于崩溃后回滚），回答完成后移除登记。
-func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string) {
+func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, question, sessionKey string, startedAt time.Time) {
+	answerVersion := b.sessionVersion(sessionKey)
 	res, err := b.ch.Send(ctx, &types.SendInput{
 		ChatID:         msg.ChatID,
 		ReplyMessageID: msg.MessageID,
@@ -397,9 +403,11 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	}
 
 	b.untrackPending(messageID)
-	_ = b.patchCard(ctx, messageID, cardJSONFinal("✅ 回答完成", b.contextMetaLine(sessionKey, runMeta), answer))
-	b.remember(sessionKey, question, answer)
-	go b.maybeCompress(context.Background(), sessionKey)
+	remembered := b.rememberIfVersion(sessionKey, answerVersion, question, answer)
+	_ = b.patchCard(ctx, messageID, cardJSONFinal("✅ 回答完成", b.contextMetaLine(sessionKey, runMeta, time.Since(startedAt)), answer))
+	if remembered {
+		go b.maybeCompress(context.Background(), sessionKey)
+	}
 
 	// 提醒提问人：回答已完成（引用卡片并 @ 提问人）
 	b.notifyAnswerDone(ctx, msg, messageID)
@@ -588,10 +596,8 @@ func (b *bot) dropSession(key string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if s := b.sessions[key]; s != nil {
-		s.history = []llmMessage{}
-		s.compressed = false
+		clearSessionContextLocked(s)
 		s.busy = false
-		s.entities = nil
 		b.saveLocked()
 	}
 }
@@ -708,11 +714,50 @@ func (b *bot) remember(key, question, answer string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := b.sessionLocked(key)
+	b.rememberLocked(s, question, answer)
+	b.saveLocked()
+}
+
+func (b *bot) rememberIfVersion(key string, version uint64, question, answer string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	if s.version != version {
+		return false
+	}
+	b.rememberLocked(s, question, answer)
+	b.saveLocked()
+	return true
+}
+
+func (b *bot) rememberLocked(s *session, question, answer string) {
 	s.history = append(s.history, llmMessage{Role: "user", Content: question})
 	s.history = append(s.history, llmMessage{Role: "assistant", Content: answer})
 	s.lastActive = time.Now()
 	s.version++
+}
+
+func (b *bot) sessionVersion(key string) uint64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionLocked(key).version
+}
+
+func (b *bot) clearSessionContext(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	clearSessionContextLocked(b.sessionLocked(key))
 	b.saveLocked()
+}
+
+func clearSessionContextLocked(s *session) {
+	now := time.Now()
+	s.history = []llmMessage{}
+	s.createdAt = now
+	s.lastActive = now
+	s.compressed = false
+	s.entities = nil
+	s.version++
 }
 
 // maybeCompress 若会话达到压缩阈值，则异步调用 LLM 做摘要压缩。
@@ -881,18 +926,27 @@ func cardJSONFinal(title, meta, text string) string {
 
 // contextMetaLine 生成回答卡片上的一行小字灰色元信息：当前会话开始时间。
 // 用 Markdown 引用块渲染，飞书会把该行弱化为偏小偏灰的注释；不展示 token 统计。
-func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta) string {
+func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta, elapsed time.Duration) string {
 	b.mu.Lock()
 	s := b.sessions[key]
 	var createdAt time.Time
+	turns := 0
 	if s != nil {
 		createdAt = s.createdAt
+		for _, message := range s.history {
+			if message.Role == "user" {
+				turns++
+			}
+		}
 	}
 	b.mu.Unlock()
 
 	var lines []string
 	if !createdAt.IsZero() {
-		lines = append(lines, formatContextMetaStart(createdAt, currentCodeRevision()))
+		lines = append(lines, formatContextMetaStart(createdAt, currentCodeRevision(), turns))
+	}
+	if elapsed > 0 {
+		lines = append(lines, formatAnswerElapsed(elapsed))
 	}
 	if runMeta != nil {
 		if detail := formatAnswerRunMeta(*runMeta); detail != "" {
@@ -912,11 +966,9 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 
 	lines := []string{
 		"> **模型**",
-		"| 步骤 | 模型 |",
-		"| --- | --- |",
-		"| 问题分解 | " + model(meta.Models.QueryDecomposition) + " |",
-		"| 查询扩展 | " + model(meta.Models.QueryExpansion) + " |",
-		"| 最终回答 | " + model(meta.Models.FinalAnswer) + " |",
+		"> 问题分解 | " + model(meta.Models.QueryDecomposition),
+		"> 查询扩展 | " + model(meta.Models.QueryExpansion),
+		"> 最终回答 | " + model(meta.Models.FinalAnswer),
 	}
 
 	if section := formatQueryDecompositionTable(meta.Decomposition); section != "" {
@@ -954,10 +1006,10 @@ func formatQueryDecompositionTable(d *queryDecomposition) string {
 	}
 	var rows []string
 	if entities := formatMarkdownTableValues(d.Entities); entities != "" {
-		rows = append(rows, "| 实体 | "+escapeMarkdownTableCell(entities)+" |")
+		rows = append(rows, "> 实体 | "+escapeMarkdownTableCell(entities))
 	}
 	if concepts := formatMarkdownTableValues(d.Concepts); concepts != "" {
-		rows = append(rows, "| 概念 | "+escapeMarkdownTableCell(concepts)+" |")
+		rows = append(rows, "> 概念 | "+escapeMarkdownTableCell(concepts))
 	}
 	if d.TimeFrom != "" || d.TimeTo != "" {
 		timeRange := strings.TrimSpace(d.TimeFrom)
@@ -966,12 +1018,12 @@ func formatQueryDecompositionTable(d *queryDecomposition) string {
 		} else if strings.TrimSpace(d.TimeTo) != "" {
 			timeRange += " ~ " + strings.TrimSpace(d.TimeTo)
 		}
-		rows = append(rows, "| 时间 | "+escapeMarkdownTableCell(timeRange)+" |")
+		rows = append(rows, "> 时间 | "+escapeMarkdownTableCell(timeRange))
 	}
 	if len(rows) == 0 {
 		return ""
 	}
-	return "> **问题分解**\n\n| 维度 | 结果 |\n| --- | --- |\n" + strings.Join(rows, "\n")
+	return "> **问题分解**\n" + strings.Join(rows, "\n")
 }
 
 func formatExpandedQueriesTable(queries []string) string {
@@ -980,12 +1032,12 @@ func formatExpandedQueriesTable(queries []string) string {
 		if query = strings.TrimSpace(query); query == "" {
 			continue
 		}
-		rows = append(rows, fmt.Sprintf("| %d | %s |", len(rows)+1, escapeMarkdownTableCell(query)))
+		rows = append(rows, fmt.Sprintf("> %d | %s", len(rows)+1, escapeMarkdownTableCell(query)))
 	}
 	if len(rows) == 0 {
 		return ""
 	}
-	return "> **查询扩展**\n\n| 序号 | 查询 |\n| --- | --- |\n" + strings.Join(rows, "\n")
+	return "> **查询扩展**\n" + strings.Join(rows, "\n")
 }
 
 func formatMarkdownTableValues(values []string) string {
@@ -1005,6 +1057,13 @@ func escapeMarkdownTableCell(value string) string {
 	value = strings.ReplaceAll(value, "\r\n", "\n")
 	value = strings.ReplaceAll(value, "\r", "\n")
 	return strings.ReplaceAll(value, "\n", "<br>")
+}
+
+func isClearContextCommand(msg *types.NormalizedMessage) bool {
+	return msg != nil &&
+		msg.ChatType == "group" &&
+		msg.MentionedBot &&
+		strings.Contains(cleanMention(msg.Content), "清空上下文")
 }
 
 // cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染

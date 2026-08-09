@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -59,10 +60,21 @@ func shortRevision(revision string) string {
 	return revision
 }
 
-func formatContextMetaStart(createdAt time.Time, revision string) string {
-	line := "> 上下文始于 " + createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04")
+func formatContextMetaStart(createdAt time.Time, revision string, turns int) string {
+	line := fmt.Sprintf("> 上下文含 %d 轮对话，始于 %s", turns, createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04"))
 	if revision != "" {
 		line += " · 代码 `" + shortRevision(revision) + "`"
 	}
 	return line
+}
+
+func formatAnswerElapsed(elapsed time.Duration) string {
+	seconds := int(elapsed.Round(time.Second).Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds < 60 {
+		return fmt.Sprintf("> 本次问答总耗时 %d秒", seconds)
+	}
+	return fmt.Sprintf("> 本次问答总耗时 %d分%02d秒", seconds/60, seconds%60)
 }

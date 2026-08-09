@@ -231,21 +231,16 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	got := formatAnswerRunMeta(meta)
 	for _, want := range []string{
 		"> **模型**",
-		"> **模型**\n\n| 步骤 | 模型 |",
-		"| 步骤 | 模型 |",
-		"| 问题分解 | `glm-5.2` |",
-		"| 查询扩展 | `gpt-5.6-terra` |",
-		"| 最终回答 | `gpt-5.6-terra` |",
+		"> 问题分解 | `glm-5.2`",
+		"> 查询扩展 | `gpt-5.6-terra`",
+		"> 最终回答 | `gpt-5.6-terra`",
 		"> **问题分解**",
-		"> **问题分解**\n\n| 维度 | 结果 |",
-		"| 维度 | 结果 |",
-		"| 实体 | 张三 |",
-		"| 概念 | 旅行 |",
-		"| 时间 | 2026-07-01 ~ 2026-08-09 |",
+		"> 实体 | 张三",
+		"> 概念 | 旅行",
+		"> 时间 | 2026-07-01 ~ 2026-08-09",
 		"> **查询扩展**",
-		"| 序号 | 查询 |",
-		"| 1 | 张三旅行计划 |",
-		"| 2 | 张三旅行时间 |",
+		"> 1 | 张三旅行计划",
+		"> 2 | 张三旅行时间",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %s", want, got)
@@ -259,10 +254,8 @@ func TestFormatProgressResultUsesSharedTables(t *testing.T) {
 	})
 	for _, want := range []string{
 		"> **查询扩展**",
-		"> **查询扩展**\n\n| 序号 | 查询 |",
-		"| 序号 | 查询 |",
-		"| 1 | 张三旅行计划 |",
-		"| 2 | 张三旅行时间 |",
+		"> 1 | 张三旅行计划",
+		"> 2 | 张三旅行时间",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("progress result missing %q: %s", want, got)
@@ -280,10 +273,10 @@ func TestFormatAnswerRunMetaEscapesTableCells(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"| 问题分解 | - |",
-		"| 查询扩展 | - |",
-		"| 最终回答 | `gpt-5.6` |",
-		"| 1 | 张三 \\| 旅行<br>时间<br>地点 |",
+		"> 问题分解 | -",
+		"> 查询扩展 | -",
+		"> 最终回答 | `gpt-5.6`",
+		"> 1 | 张三 \\| 旅行<br>时间<br>地点",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %s", want, got)

@@ -76,9 +76,19 @@ func TestFormatContextMetaStartIncludesRevision(t *testing.T) {
 	got := formatContextMetaStart(
 		time.Date(2026, time.August, 9, 20, 10, 0, 0, time.FixedZone("UTC+8", 8*3600)),
 		"6a06595",
+		3,
 	)
-	if got != "> 上下文始于 08-09 20:10 · 代码 `6a06595`" {
+	if got != "> 上下文含 3 轮对话，始于 08-09 20:10 · 代码 `6a06595`" {
 		t.Fatalf("unexpected context metadata: %s", got)
+	}
+}
+
+func TestFormatAnswerElapsed(t *testing.T) {
+	if got := formatAnswerElapsed(42 * time.Second); got != "> 本次问答总耗时 42秒" {
+		t.Fatalf("short elapsed = %q", got)
+	}
+	if got := formatAnswerElapsed(2*time.Minute + 5*time.Second); got != "> 本次问答总耗时 2分05秒" {
+		t.Fatalf("long elapsed = %q", got)
 	}
 }
 

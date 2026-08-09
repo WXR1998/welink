@@ -92,6 +92,53 @@ func TestBusyLockRejectsConcurrent(t *testing.T) {
 	b.releaseBusy(key)
 }
 
+func TestIsClearContextCommandRequiresGroupMentionAndPhrase(t *testing.T) {
+	if !isClearContextCommand(&types.NormalizedMessage{
+		ChatType: "group", MentionedBot: true, Content: "@群史官 请清空上下文",
+	}) {
+		t.Fatal("expected group mention command to match")
+	}
+	for _, msg := range []*types.NormalizedMessage{
+		{ChatType: "group", MentionedBot: false, Content: "@群史官 清空上下文"},
+		{ChatType: "p2p", MentionedBot: true, Content: "清空上下文"},
+		{ChatType: "group", MentionedBot: true, Content: "@群史官 帮我查询"},
+	} {
+		if isClearContextCommand(msg) {
+			t.Fatalf("unexpected clear command match: %+v", msg)
+		}
+	}
+}
+
+func TestClearSessionContextKeepsInFlightBusyAndPreventsStaleWrite(t *testing.T) {
+	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
+	key := "group:oc_a:user_a"
+	b.remember(key, "q1", "a1")
+	b.mu.Lock()
+	s := b.sessions[key]
+	s.busy = true
+	version := s.version
+	b.mu.Unlock()
+
+	b.clearSessionContext(key)
+
+	b.mu.Lock()
+	s = b.sessions[key]
+	if len(s.history) != 0 || len(s.entities) != 0 || s.compressed {
+		t.Fatalf("context was not cleared: %+v", s)
+	}
+	if !s.busy {
+		t.Fatal("clear must not release an in-flight answer")
+	}
+	if s.version <= version {
+		t.Fatalf("clear must advance version: %d -> %d", version, s.version)
+	}
+	b.mu.Unlock()
+
+	if b.rememberIfVersion(key, version, "stale", "answer") {
+		t.Fatal("stale answer must not be written after context clear")
+	}
+}
+
 func TestSessionExpiresAfterIdle(t *testing.T) {
 	b := &bot{cfg: &Config{}, sessions: map[string]*session{}}
 	key := "p2p:user_b"
@@ -218,12 +265,12 @@ func TestContextMetaLine(t *testing.T) {
 	b := &bot{sessions: map[string]*session{
 		"group:oc_abc:ou_def": {createdAt: created},
 	}}
-	line := b.contextMetaLine("group:oc_abc:ou_def", nil)
-	if !strings.HasPrefix(line, "> 上下文始于") || strings.Contains(line, "token") {
+	line := b.contextMetaLine("group:oc_abc:ou_def", nil, 0)
+	if !strings.HasPrefix(line, "> 上下文含 0 轮对话，始于") || strings.Contains(line, "token") {
 		t.Fatalf("unexpected meta line: %q", line)
 	}
 	// 无 createdAt → 空行
-	line2 := b.contextMetaLine("group:oc_abc:ou_def", nil)
+	line2 := b.contextMetaLine("group:oc_abc:ou_def", nil, 0)
 	if line2 == "" {
 		t.Fatalf("createdAt set should produce meta line")
 	}
@@ -235,11 +282,33 @@ func TestContextMetaLine_ShowsUTC8(t *testing.T) {
 	b := &bot{sessions: map[string]*session{
 		"group:oc_abc:ou_def": {createdAt: created},
 	}}
-	line := b.contextMetaLine("group:oc_abc:ou_def", nil)
-	if !strings.Contains(line, "上下文始于 08-05 18:00") {
+	line := b.contextMetaLine("group:oc_abc:ou_def", nil, 0)
+	if !strings.Contains(line, "上下文含 0 轮对话，始于 08-05 18:00") {
 		t.Fatalf("expected UTC+8 time, got: %q", line)
 	}
 	if !strings.HasPrefix(line, "> ") {
 		t.Fatalf("expected blockquote prefix, got: %q", line)
+	}
+}
+
+func TestContextMetaLineIncludesTurnCountAndElapsed(t *testing.T) {
+	created := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*3600))
+	b := &bot{sessions: map[string]*session{
+		"p2p:user_a": {
+			createdAt: created,
+			history: []llmMessage{
+				{Role: "user", Content: "q1"},
+				{Role: "assistant", Content: "a1"},
+				{Role: "user", Content: "q2"},
+				{Role: "assistant", Content: "a2"},
+			},
+		},
+	}}
+
+	got := b.contextMetaLine("p2p:user_a", nil, 65*time.Second)
+	for _, want := range []string{"上下文含 2 轮对话", "本次问答总耗时 1分05秒"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("meta missing %q: %q", want, got)
+		}
 	}
 }
