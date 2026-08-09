@@ -137,7 +137,7 @@ func runSmoke(ctx context.Context, cfg *Config, question string) error {
 	defer cancel()
 
 	fmt.Println("[1/2] memory-search 检索...")
-	data, err := memorySearch(ctx, cfg, question, convKey, "", false,
+	data, err := memorySearch(ctx, cfg, question, convKey, "", nil, false,
 		func(step, detail string, _ *memorySearchProgress) {
 			fmt.Printf("  - %s: %s\n", step, detail)
 		},

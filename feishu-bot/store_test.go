@@ -21,6 +21,13 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 			lastActive: time.Now(),
 			version:    3,
 			entities:   []string{"邓凯文"},
+			decomposition: &queryDecomposition{
+				NeedsMemory: true,
+				Entities:    []string{"邓凯文"},
+				Concepts:    []string{"旅行"},
+				TimeFrom:    "2026-08-01",
+				TimeTo:      "2026-08-09",
+			},
 		},
 	}
 	if err := st.Save(in); err != nil {
@@ -45,6 +52,12 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 	if len(s.entities) != 1 || s.entities[0] != "邓凯文" {
 		t.Fatalf("entities not preserved: %v", s.entities)
 	}
+	if s.decomposition == nil || len(s.decomposition.Entities) != 1 || s.decomposition.Entities[0] != "邓凯文" {
+		t.Fatalf("previous decomposition not preserved: %+v", s.decomposition)
+	}
+	if len(s.decomposition.Concepts) != 1 || s.decomposition.Concepts[0] != "旅行" {
+		t.Fatalf("previous decomposition concepts not preserved: %+v", s.decomposition)
+	}
 	if s.lastActive.IsZero() {
 		t.Fatalf("lastActive not preserved")
 	}
@@ -64,7 +77,6 @@ func TestSessionStoreEmptyPathNoop(t *testing.T) {
 		t.Fatalf("expected empty, got %d", len(out))
 	}
 }
-
 
 func TestPendingStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -123,6 +135,7 @@ func TestDropSessionClearsState(t *testing.T) {
 	b.mu.Lock()
 	b.sessions["p2p:user_x"].busy = true
 	b.sessions["p2p:user_x"].entities = []string{"邓凯文"}
+	b.sessions["p2p:user_x"].decomposition = &queryDecomposition{Entities: []string{"邓凯文"}}
 	b.mu.Unlock()
 
 	b.dropSession("p2p:user_x")
@@ -138,5 +151,8 @@ func TestDropSessionClearsState(t *testing.T) {
 	}
 	if len(s.entities) != 0 {
 		t.Fatalf("expected entities cleared")
+	}
+	if s.decomposition != nil {
+		t.Fatalf("expected decomposition cleared: %+v", s.decomposition)
 	}
 }

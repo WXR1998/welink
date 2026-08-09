@@ -10,11 +10,12 @@ import (
 
 // sessionDump 是 session 的可序列化形态，只持久化需要跨重启保留的字段。
 type sessionDump struct {
-	History    []llmMessage `json:"history"`
-	CreatedAt  time.Time    `json:"created_at,omitempty"`
-	LastActive time.Time    `json:"last_active"`
-	Version    uint64       `json:"version"`
-	Entities   []string     `json:"entities,omitempty"`
+	History               []llmMessage        `json:"history"`
+	CreatedAt             time.Time           `json:"created_at,omitempty"`
+	LastActive            time.Time           `json:"last_active"`
+	Version               uint64              `json:"version"`
+	Entities              []string            `json:"entities,omitempty"`
+	PreviousDecomposition *queryDecomposition `json:"previous_decomposition,omitempty"`
 }
 
 // sessionStore 负责把内存会话持久化到 JSON 文件。
@@ -47,11 +48,12 @@ func (st *sessionStore) Load() (map[string]*session, error) {
 	out := make(map[string]*session, len(dumps))
 	for k, d := range dumps {
 		out[k] = &session{
-			history:    d.History,
-			createdAt:  d.CreatedAt,
-			lastActive: d.LastActive,
-			version:    d.Version,
-			entities:   d.Entities,
+			history:       d.History,
+			createdAt:     d.CreatedAt,
+			lastActive:    d.LastActive,
+			version:       d.Version,
+			entities:      d.Entities,
+			decomposition: cloneQueryDecomposition(d.PreviousDecomposition),
 		}
 	}
 	return out, nil
@@ -65,11 +67,12 @@ func (st *sessionStore) Save(sessions map[string]*session) error {
 	dumps := make(map[string]sessionDump, len(sessions))
 	for k, s := range sessions {
 		dumps[k] = sessionDump{
-			History:    s.history,
-			CreatedAt:  s.createdAt,
-			LastActive: s.lastActive,
-			Version:    s.version,
-			Entities:   s.entities,
+			History:               s.history,
+			CreatedAt:             s.createdAt,
+			LastActive:            s.lastActive,
+			Version:               s.version,
+			Entities:              s.entities,
+			PreviousDecomposition: cloneQueryDecomposition(s.decomposition),
 		}
 	}
 	b, err := json.MarshalIndent(dumps, "", "  ")
@@ -89,16 +92,15 @@ func (st *sessionStore) Save(sessions map[string]*session) error {
 	return os.Rename(tmp, st.path)
 }
 
-
 // ─── 进行中卡片持久化 ────────────────────────────────────────────────────────
 
 // pendingItem 记录一条正在处理的卡片消息（answer 尚未完成）。
 type pendingItem struct {
-	MessageID string `json:"message_id"`
-	ChatID    string `json:"chat_id,omitempty"`
-	SessionKey string `json:"session_key"`
-	Question  string `json:"question,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	MessageID  string    `json:"message_id"`
+	ChatID     string    `json:"chat_id,omitempty"`
+	SessionKey string    `json:"session_key"`
+	Question   string    `json:"question,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // pendingStore 把"正在处理的卡片"持久化到 JSON，供重启后回滚半成品消息。

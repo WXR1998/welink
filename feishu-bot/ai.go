@@ -127,9 +127,10 @@ func (d *memorySearchData) hasResolvedEntity() bool {
 
 // memorySearchRequest 对应 POST /api/ai/memory-search。
 type memorySearchRequest struct {
-	Query           string `json:"query"`
-	ConversationKey string `json:"conversation_key"`
-	ChatID          string `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
+	Query                 string              `json:"query"`
+	ConversationKey       string              `json:"conversation_key"`
+	PreviousDecomposition *queryDecomposition `json:"previous_decomposition,omitempty"`
+	ChatID                string              `json:"chat_id,omitempty"` // 飞书群 chat_id，用于后端白名单过滤
 }
 
 // analyzeRequest 对应 POST /api/ai/analyze（cross-contact 模式）。
@@ -284,13 +285,15 @@ var errMissingEntity = fmt.Errorf("问题里没有指定联系人/群，且本�
 var errEntityNotFound = fmt.Errorf("问题中指定的联系人/群名未在数据中找到")
 
 // memorySearch 调用 POST /api/ai/memory-search，返回检索结果与过程。
+// previousDecomposition 是上一次带实体的查询分解，供后端消解省略主语的追问。
 // hasPriorEntity 表示会话历史里是否已有明确实体（追问时可放行无实体问题）。
 // onResolveEntities 在收到 resolve_entities 进度时回调，可在无实体时主动中止。
-func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, hasPriorEntity bool, cb func(step, detail string, progress *memorySearchProgress), onResolveEntities func(names []string)) (*memorySearchData, error) {
+func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, previousDecomposition *queryDecomposition, hasPriorEntity bool, cb func(step, detail string, progress *memorySearchProgress), onResolveEntities func(names []string)) (*memorySearchData, error) {
 	payload, _ := json.Marshal(memorySearchRequest{
-		Query:           query,
-		ConversationKey: convKey,
-		ChatID:          chatID,
+		Query:                 query,
+		ConversationKey:       convKey,
+		PreviousDecomposition: previousDecomposition,
+		ChatID:                chatID,
 	})
 
 	var result *memorySearchData

@@ -123,7 +123,7 @@ func TestClearSessionContextKeepsInFlightBusyAndPreventsStaleWrite(t *testing.T)
 
 	b.mu.Lock()
 	s = b.sessions[key]
-	if len(s.history) != 0 || len(s.entities) != 0 || s.compressed {
+	if len(s.history) != 0 || len(s.entities) != 0 || s.decomposition != nil || s.compressed {
 		t.Fatalf("context was not cleared: %+v", s)
 	}
 	if !s.busy {
@@ -149,9 +149,13 @@ func TestSessionExpiresAfterIdle(t *testing.T) {
 	// 模拟已空闲超过 2 小时
 	b.mu.Lock()
 	b.sessions[key].lastActive = time.Now().Add(-(sessionIdleTTL + time.Minute))
+	b.sessions[key].decomposition = &queryDecomposition{Entities: []string{"邓凯文"}}
 	b.mu.Unlock()
 	if len(b.historyOf(key)) != 0 {
 		t.Fatalf("expected history reset after idle, got %d", len(b.historyOf(key)))
+	}
+	if got := b.decompositionOf(key); got != nil {
+		t.Fatalf("expected decomposition reset after idle, got %+v", got)
 	}
 }
 
@@ -309,6 +313,37 @@ func TestContextMetaLineIncludesTurnCountAndElapsed(t *testing.T) {
 	for _, want := range []string{"上下文含 2 轮对话", "第一轮提问 | q1", "本次问答总耗时 1分05秒"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestContextMetaLineKeepsAllDetailsInOneQuoteBlock(t *testing.T) {
+	b := &bot{sessions: map[string]*session{
+		"p2p:user_a": {
+			createdAt: time.Date(2026, time.August, 9, 8, 0, 0, 0, time.UTC),
+			history: []llmMessage{
+				{Role: "user", Content: "刘荟琪的评价"},
+				{Role: "assistant", Content: "回答"},
+			},
+		},
+	}}
+
+	got := b.contextMetaLine("p2p:user_a", &answerRunMeta{
+		Models: qaStepModels{
+			QueryDecomposition: "glm-5.2",
+			QueryExpansion:     "glm-5.2",
+			FinalAnswer:        "glm-5.2",
+		},
+		Decomposition:   &queryDecomposition{Entities: []string{"刘荟琪"}, Concepts: []string{"评价"}},
+		ExpandedQueries: []string{"刘荟琪的评价"},
+	}, time.Second)
+
+	if strings.Contains(got, "\n\n") {
+		t.Fatalf("context metadata must be one contiguous quote block, got: %q", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(line, "> ") {
+			t.Fatalf("context metadata line must stay inside the quote block: %q", line)
 		}
 	}
 }

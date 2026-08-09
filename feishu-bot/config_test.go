@@ -72,6 +72,21 @@ func TestProgressCardBodyPreservesQuotedLLMResults(t *testing.T) {
 	}
 }
 
+func TestProgressCardBodyKeepsResultNotesInOneQuoteBlock(t *testing.T) {
+	got := progressCardBody([]string{
+		"> **问题分解**\n> 实体 | 刘荟琪",
+		"> **查询扩展**\n> 1 | 刘荟琪的评价",
+	}, "")
+	if strings.Contains(got, "\n\n") {
+		t.Fatalf("progress result notes must be one contiguous quote block, got: %q", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(line, "> ") {
+			t.Fatalf("progress note line must stay inside the quote block: %q", line)
+		}
+	}
+}
+
 func TestFormatContextMetaStartIncludesRevision(t *testing.T) {
 	got := formatContextMetaStart(
 		time.Date(2026, time.August, 9, 20, 10, 0, 0, time.FixedZone("UTC+8", 8*3600)),

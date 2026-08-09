@@ -46,13 +46,14 @@ type bot struct {
 
 // session 表示单个用户在单个群聊/单聊中的独立上下文。
 type session struct {
-	history    []llmMessage // 完整问答历史（user + assistant）
-	createdAt  time.Time    // 本次会话/上下文的开始时间（清空后重新计时）
-	lastActive time.Time    // 最近一次提问时间
-	compressed bool         // 是否已做过压缩摘要（供日志/调试）
-	busy       bool         // 该会话是否正在回答中（冷却锁）
-	version    uint64       // 每次追加问答递增，用于压缩写回时的并发保护
-	entities   []string     // 最近成功解析出的实体展示名（追问时沿用）
+	history       []llmMessage        // 完整问答历史（user + assistant）
+	createdAt     time.Time           // 本次会话/上下文的开始时间（清空后重新计时）
+	lastActive    time.Time           // 最近一次提问时间
+	compressed    bool                // 是否已做过压缩摘要（供日志/调试）
+	busy          bool                // 该会话是否正在回答中（冷却锁）
+	version       uint64              // 每次追加问答递增，用于压缩写回时的并发保护
+	entities      []string            // 最近成功解析出的实体展示名（追问时沿用）
+	decomposition *queryDecomposition // 最近一次带实体的查询分解（消解省略主语的追问）
 }
 
 // newBot 构造飞书客户端与高层 channel。
@@ -278,6 +279,8 @@ func (b *bot) sessionLocked(key string) *session {
 		s.history = []llmMessage{}
 		s.createdAt = time.Now()
 		s.compressed = false
+		s.entities = nil
+		s.decomposition = nil
 	}
 	return s
 }
@@ -605,17 +608,18 @@ func (b *bot) dropSession(key string) {
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
 // 返回回答文本、本次 LLM token 用量（可能为 nil）与错误信息。
 func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string, progress *memorySearchProgress), onAnswerDelta func(string)) (string, *answerRunMeta, string) {
-	// 取会话历史与前序解析出的实体
+	// 取会话历史与前序解析出的实体、结构化分解。
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
-	hasPriorEntity := len(priorEntities) > 0
+	priorDecomposition := b.decompositionOf(sessionKey)
+	hasPriorEntity := len(priorEntities) > 0 || len(priorDecomposition.Entities) > 0
 
 	convKey := "feishu:" + sessionKey
 	// 进度跟踪器：把后端步骤转成单调递增的 (current, total)。
 	tracker := newProgressTracker()
 
 	// 1. memory-search 跨联系人检索（进度回调打印日志 + 驱动卡片进度；无实体则中止）
-	data, err := memorySearch(ctx, b.cfg, question, convKey, chatID, hasPriorEntity,
+	data, err := memorySearch(ctx, b.cfg, question, convKey, chatID, priorDecomposition, hasPriorEntity,
 		func(step, detail string, progress *memorySearchProgress) {
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
 			if onProgress != nil {
@@ -656,6 +660,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 			b.setEntities(sessionKey, names)
 		}
 	}
+	b.setDecomposition(sessionKey, data.Decomposition)
 
 	// 2. 把检索结果拼成上下文
 	dataContext := buildDataContext(data)
@@ -709,6 +714,39 @@ func (b *bot) setEntities(key string, names []string) {
 	s.entities = append([]string(nil), names...)
 }
 
+// decompositionOf 返回可安全交给下一轮检索的上一轮结构化分解。
+func (b *bot) decompositionOf(key string) *queryDecomposition {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if s := b.sessions[key]; s != nil {
+		return cloneQueryDecomposition(s.decomposition)
+	}
+	return nil
+}
+
+// setDecomposition 保存最近一次带实体的查询分解。没有实体的“更详细一些”
+// 这类追问不能覆盖已有主语，否则下一轮会再次丢失指代。
+func (b *bot) setDecomposition(key string, decomposition *queryDecomposition) {
+	if decomposition == nil || len(decomposition.Entities) == 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sessionLocked(key)
+	s.decomposition = cloneQueryDecomposition(decomposition)
+	b.saveLocked()
+}
+
+func cloneQueryDecomposition(in *queryDecomposition) *queryDecomposition {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Entities = append([]string(nil), in.Entities...)
+	out.Concepts = append([]string(nil), in.Concepts...)
+	return &out
+}
+
 // remember 追加问答到会话并更新活跃时间。
 func (b *bot) remember(key, question, answer string) {
 	b.mu.Lock()
@@ -757,6 +795,7 @@ func clearSessionContextLocked(s *session) {
 	s.lastActive = now
 	s.compressed = false
 	s.entities = nil
+	s.decomposition = nil
 	s.version++
 }
 
@@ -911,9 +950,9 @@ func progressCardBody(notes []string, status string) string {
 		return status
 	}
 	if status == "" {
-		return strings.Join(notes, "\n\n")
+		return strings.Join(notes, "\n")
 	}
-	return strings.Join(notes, "\n\n") + "\n\n" + status
+	return strings.Join(notes, "\n") + "\n\n" + status
 }
 
 // cardJSONFinal 生成回答完成卡片，meta 为非空时在正文上方渲染一行元信息。
@@ -960,7 +999,7 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta, elapsed time.D
 			lines = append(lines, detail)
 		}
 	}
-	return strings.Join(lines, "\n\n")
+	return strings.Join(lines, "\n")
 }
 
 func formatAnswerRunMeta(meta answerRunMeta) string {
@@ -984,7 +1023,7 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 	if section := formatExpandedQueriesTable(meta.ExpandedQueries); section != "" {
 		lines = append(lines, section)
 	}
-	return strings.Join(lines, "\n\n")
+	return strings.Join(lines, "\n")
 }
 
 func formatProgressResult(step, detail string, progress *memorySearchProgress) string {

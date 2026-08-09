@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -88,7 +90,7 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	var steps []string
-	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", "", false,
+	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", "", nil, false,
 		func(step, detail string, _ *memorySearchProgress) {
 			steps = append(steps, step)
 		},
@@ -102,6 +104,82 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 	}
 	if len(steps) == 0 || steps[0] != "decompose" {
 		t.Fatalf("expected progress callback, got %v", steps)
+	}
+}
+
+func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	if err := os.WriteFile(path, []byte(`{
+		"p2p:user_a": {
+			"history": [],
+			"created_at": "2026-08-09T08:00:00Z",
+			"last_active": "9999-01-01T00:00:00Z",
+			"previous_decomposition": {
+				"needs_memory": true,
+				"entities": ["刘荟琪"],
+				"concepts": ["评价"],
+				"time_from": "2021-01-01",
+				"time_to": "2023-12-31"
+			}
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("write persisted session: %v", err)
+	}
+
+	store := newSessionStore(path)
+	sessions, err := store.Load()
+	if err != nil {
+		t.Fatalf("load persisted session: %v", err)
+	}
+
+	var previous json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch r.URL.Path {
+		case "/api/ai/memory-search":
+			var payload map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode memory-search request: %v", err)
+				return
+			}
+			previous = payload["previous_decomposition"]
+			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[],"decomposition":{"needs_memory":true,"entities":["刘荟琪"],"concepts":["评价"]}}}` + "\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
+		case "/api/ai/analyze":
+			_, _ = w.Write([]byte("data: {\"delta\":\"回答\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	b := &bot{
+		cfg:      &Config{WeLinkBaseURL: server.URL},
+		store:    store,
+		sessions: sessions,
+	}
+	answer, _, errMsg := b.answer(context.Background(), "p2p:user_a", "", "更详细一些呢", nil, nil)
+	if errMsg != "" {
+		t.Fatalf("answer failed: %s", errMsg)
+	}
+	if answer != "回答" {
+		t.Fatalf("answer = %q, want 回答", answer)
+	}
+	if len(previous) == 0 {
+		t.Fatal("memory-search request omitted previous_decomposition")
+	}
+
+	var got queryDecomposition
+	if err := json.Unmarshal(previous, &got); err != nil {
+		t.Fatalf("decode previous_decomposition: %v", err)
+	}
+	if len(got.Entities) != 1 || got.Entities[0] != "刘荟琪" {
+		t.Fatalf("previous entities = %v, want 刘荟琪", got.Entities)
+	}
+	if len(got.Concepts) != 1 || got.Concepts[0] != "评价" {
+		t.Fatalf("previous concepts = %v, want 评价", got.Concepts)
 	}
 }
 
@@ -128,7 +206,7 @@ func TestMemorySearch_AbortsOnEntityNotFound(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
+	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", nil, false,
 		func(step, detail string, _ *memorySearchProgress) {},
 		func(names []string) {},
 	)
@@ -148,7 +226,7 @@ func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
+	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", nil, false,
 		func(step, detail string, _ *memorySearchProgress) {},
 		func(names []string) {},
 	)
@@ -196,7 +274,7 @@ func TestMemorySearchForwardsStructuredProgressData(t *testing.T) {
 	defer server.Close()
 
 	var progress *memorySearchProgress
-	_, err := memorySearch(context.Background(), &Config{WeLinkBaseURL: server.URL}, "张三旅行", "feishu:p2p:u", "", false,
+	_, err := memorySearch(context.Background(), &Config{WeLinkBaseURL: server.URL}, "张三旅行", "feishu:p2p:u", "", nil, false,
 		func(step, detail string, data *memorySearchProgress) {
 			if step == "decompose_result" {
 				progress = data
@@ -244,6 +322,14 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "\n\n") {
+		t.Fatalf("metadata must be one contiguous quote block, got: %q", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(line, "> ") {
+			t.Fatalf("metadata line must stay inside the quote block: %q", line)
 		}
 	}
 }
