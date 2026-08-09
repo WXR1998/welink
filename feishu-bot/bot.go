@@ -903,39 +903,85 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta) string {
 }
 
 func formatAnswerRunMeta(meta answerRunMeta) string {
-	var lines []string
-	var modelParts []string
-	if meta.Models.QueryDecomposition != "" {
-		modelParts = append(modelParts, "问题分解 `"+meta.Models.QueryDecomposition+"`")
-	}
-	if meta.Models.QueryExpansion != "" {
-		modelParts = append(modelParts, "查询扩展 `"+meta.Models.QueryExpansion+"`")
-	}
-	if meta.Models.FinalAnswer != "" {
-		modelParts = append(modelParts, "最终回答 `"+meta.Models.FinalAnswer+"`")
-	}
-	if len(modelParts) > 0 {
-		lines = append(lines, "> 模型："+strings.Join(modelParts, " · "))
-	}
-	if d := meta.Decomposition; d != nil {
-		var parts []string
-		if len(d.Entities) > 0 {
-			parts = append(parts, "实体 "+strings.Join(d.Entities, "、"))
+	model := func(value string) string {
+		if strings.TrimSpace(value) == "" {
+			return "-"
 		}
-		if len(d.Concepts) > 0 {
-			parts = append(parts, "概念 "+strings.Join(d.Concepts, "、"))
+		return "`" + escapeMarkdownTableCell(value) + "`"
+	}
+
+	lines := []string{
+		"> **模型**",
+		"| 步骤 | 模型 |",
+		"| --- | --- |",
+		"| 问题分解 | " + model(meta.Models.QueryDecomposition) + " |",
+		"| 查询扩展 | " + model(meta.Models.QueryExpansion) + " |",
+		"| 最终回答 | " + model(meta.Models.FinalAnswer) + " |",
+	}
+
+	if d := meta.Decomposition; d != nil {
+		var rows []string
+		if entities := formatMarkdownTableValues(d.Entities); entities != "" {
+			rows = append(rows, "| 实体 | "+escapeMarkdownTableCell(entities)+" |")
+		}
+		if concepts := formatMarkdownTableValues(d.Concepts); concepts != "" {
+			rows = append(rows, "| 概念 | "+escapeMarkdownTableCell(concepts)+" |")
 		}
 		if d.TimeFrom != "" || d.TimeTo != "" {
-			parts = append(parts, "时间 "+d.TimeFrom+" ~ "+d.TimeTo)
+			timeRange := strings.TrimSpace(d.TimeFrom)
+			if timeRange == "" {
+				timeRange = strings.TrimSpace(d.TimeTo)
+			} else if strings.TrimSpace(d.TimeTo) != "" {
+				timeRange += " ~ " + strings.TrimSpace(d.TimeTo)
+			}
+			rows = append(rows, "| 时间 | "+escapeMarkdownTableCell(timeRange)+" |")
 		}
-		if len(parts) > 0 {
-			lines = append(lines, "> 问题分解："+strings.Join(parts, "；"))
+		if len(rows) > 0 {
+			lines = append(lines,
+				"> **问题分解**",
+				"| 维度 | 结果 |",
+				"| --- | --- |",
+			)
+			lines = append(lines, rows...)
 		}
 	}
-	if len(meta.ExpandedQueries) > 0 {
-		lines = append(lines, "> 查询扩展："+strings.Join(meta.ExpandedQueries, "；"))
+	var queryRows []string
+	for _, query := range meta.ExpandedQueries {
+		if query = strings.TrimSpace(query); query == "" {
+			continue
+		}
+		queryRows = append(queryRows,
+			fmt.Sprintf("| %d | %s |", len(queryRows)+1, escapeMarkdownTableCell(query)),
+		)
+	}
+	if len(queryRows) > 0 {
+		lines = append(lines,
+			"> **查询扩展**",
+			"| 序号 | 查询 |",
+			"| --- | --- |",
+		)
+		lines = append(lines, queryRows...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatMarkdownTableValues(values []string) string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return strings.Join(result, "、")
+}
+
+func escapeMarkdownTableCell(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\\", "\\\\")
+	value = strings.ReplaceAll(value, "|", "\\|")
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.ReplaceAll(value, "\n", "<br>")
 }
 
 // cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染

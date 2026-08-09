@@ -196,16 +196,49 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 		Decomposition: &queryDecomposition{
 			Entities: []string{"张三"},
 			Concepts: []string{"旅行"},
+			TimeFrom: "2026-07-01",
+			TimeTo:   "2026-08-09",
 		},
 		ExpandedQueries: []string{"张三旅行计划", "张三旅行时间"},
 	}
 
 	got := formatAnswerRunMeta(meta)
 	for _, want := range []string{
-		"模型：问题分解 `glm-5.2`",
-		"最终回答 `gpt-5.6-terra`",
-		"问题分解：实体 张三；概念 旅行",
-		"查询扩展：张三旅行计划；张三旅行时间",
+		"> **模型**",
+		"| 步骤 | 模型 |",
+		"| 问题分解 | `glm-5.2` |",
+		"| 查询扩展 | `gpt-5.6-terra` |",
+		"| 最终回答 | `gpt-5.6-terra` |",
+		"> **问题分解**",
+		"| 维度 | 结果 |",
+		"| 实体 | 张三 |",
+		"| 概念 | 旅行 |",
+		"| 时间 | 2026-07-01 ~ 2026-08-09 |",
+		"> **查询扩展**",
+		"| 序号 | 查询 |",
+		"| 1 | 张三旅行计划 |",
+		"| 2 | 张三旅行时间 |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("meta missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestFormatAnswerRunMetaEscapesTableCells(t *testing.T) {
+	got := formatAnswerRunMeta(answerRunMeta{
+		Models: qaStepModels{FinalAnswer: "gpt-5.6"},
+		ExpandedQueries: []string{
+			"",
+			"张三 | 旅行\n时间\r地点",
+		},
+	})
+
+	for _, want := range []string{
+		"| 问题分解 | - |",
+		"| 查询扩展 | - |",
+		"| 最终回答 | `gpt-5.6` |",
+		"| 1 | 张三 \\| 旅行<br>时间<br>地点 |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %s", want, got)
