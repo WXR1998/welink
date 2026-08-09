@@ -324,12 +324,19 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	// lastPct 记录上次渲染的百分比，保证进度条只增不减
 	// （total 动态增长时 current/total 可能下降，这里在渲染层强制单调）。
 	lastPct := -1
-	answer, usage, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage string, current, total int) {
+	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
 		if stage == "search" {
 			title = "🔎 正在检索"
 			body = "正在跨联系人检索相关聊天记录…"
+			if step == "decompose_result" {
+				title = "🧠 问题分解"
+				body = detail
+			} else if step == "query_expansion_result" {
+				title = "🧩 查询扩展"
+				body = detail
+			}
 		} else if stage == "answer" {
 			title = "✍️ 正在整理回答"
 			body = "检索完成，正在生成回答…"
@@ -338,7 +345,8 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 		if total > 0 {
 			pct = current * 100 / total
 		}
-		if pct < lastPct {
+		showResult := step == "decompose_result" || step == "query_expansion_result"
+		if pct < lastPct || (pct == lastPct && !showResult) {
 			return // 百分比下降，忽略本次更新，保证进度条只增不减
 		}
 		lastPct = pct
@@ -359,7 +367,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	}
 
 	b.untrackPending(messageID)
-	_ = b.patchCard(ctx, messageID, cardJSONFinal("✅ 回答完成", b.contextMetaLine(sessionKey, usage), answer))
+	_ = b.patchCard(ctx, messageID, cardJSONFinal("✅ 回答完成", b.contextMetaLine(sessionKey, runMeta), answer))
 	b.remember(sessionKey, question, answer)
 	go b.maybeCompress(context.Background(), sessionKey)
 
@@ -487,7 +495,7 @@ func (b *bot) dropSession(key string) {
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
 // 返回回答文本、本次 LLM token 用量（可能为 nil）与错误信息。
-func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage string, current, total int)) (string, *analyzeUsage, string) {
+func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string)) (string, *answerRunMeta, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
@@ -503,7 +511,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
 			if onProgress != nil {
 				cur, total := tracker.Observe(step, detail)
-				onProgress("search", cur, total)
+				onProgress("search", step, cur, total, detail)
 			}
 		},
 		func(names []string) {
@@ -513,7 +521,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 			}
 			if onProgress != nil {
 				cur, total := tracker.Observe("resolve_entities", "")
-				onProgress("search", cur, total)
+				onProgress("search", "resolve_entities", cur, total, "")
 			}
 		},
 	)
@@ -546,7 +554,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	// 2b. 检索完成，进入生成回答阶段
 	if onProgress != nil {
 		cur, total := tracker.Observe("answer", "")
-		onProgress("answer", cur, total)
+		onProgress("answer", "answer", cur, total, "")
 	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）。
@@ -557,9 +565,14 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	}
 	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, dataContext)
 	if err != nil {
-		return "", usage, "生成回答失败，请稍后重试。\n\n" + err.Error()
+		return "", &answerRunMeta{Usage: usage}, "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}
-	return answer, usage, ""
+	return answer, &answerRunMeta{
+		Usage:           usage,
+		Models:          data.LLMModels,
+		Decomposition:   data.Decomposition,
+		ExpandedQueries: data.ExpandedQueries,
+	}, ""
 }
 
 func (b *bot) historyOf(key string) []llmMessage {
@@ -755,7 +768,7 @@ func cardJSONFinal(title, meta, text string) string {
 
 // contextMetaLine 生成回答卡片上的一行小字灰色元信息：当前会话开始时间。
 // 用 Markdown 引用块渲染，飞书会把该行弱化为偏小偏灰的注释；不展示 token 统计。
-func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
+func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta) string {
 	b.mu.Lock()
 	s := b.sessions[key]
 	var createdAt time.Time
@@ -764,11 +777,53 @@ func (b *bot) contextMetaLine(key string, usage *analyzeUsage) string {
 	}
 	b.mu.Unlock()
 
-	if createdAt.IsZero() {
-		return ""
+	var lines []string
+	if !createdAt.IsZero() {
+		// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
+		lines = append(lines, "> 上下文始于 "+createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04"))
 	}
-	// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
-	return "> 上下文始于 " + createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04")
+	if runMeta != nil {
+		if detail := formatAnswerRunMeta(*runMeta); detail != "" {
+			lines = append(lines, detail)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatAnswerRunMeta(meta answerRunMeta) string {
+	var lines []string
+	var modelParts []string
+	if meta.Models.QueryDecomposition != "" {
+		modelParts = append(modelParts, "问题分解 `"+meta.Models.QueryDecomposition+"`")
+	}
+	if meta.Models.QueryExpansion != "" {
+		modelParts = append(modelParts, "查询扩展 `"+meta.Models.QueryExpansion+"`")
+	}
+	if meta.Models.FinalAnswer != "" {
+		modelParts = append(modelParts, "最终回答 `"+meta.Models.FinalAnswer+"`")
+	}
+	if len(modelParts) > 0 {
+		lines = append(lines, "> 模型："+strings.Join(modelParts, " · "))
+	}
+	if d := meta.Decomposition; d != nil {
+		var parts []string
+		if len(d.Entities) > 0 {
+			parts = append(parts, "实体 "+strings.Join(d.Entities, "、"))
+		}
+		if len(d.Concepts) > 0 {
+			parts = append(parts, "概念 "+strings.Join(d.Concepts, "、"))
+		}
+		if d.TimeFrom != "" || d.TimeTo != "" {
+			parts = append(parts, "时间 "+d.TimeFrom+" ~ "+d.TimeTo)
+		}
+		if len(parts) > 0 {
+			lines = append(lines, "> 问题分解："+strings.Join(parts, "；"))
+		}
+	}
+	if len(meta.ExpandedQueries) > 0 {
+		lines = append(lines, "> 查询扩展："+strings.Join(meta.ExpandedQueries, "；"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // cardJSON 生成飞书卡片 JSON 2.0。body.elements 里的 markdown 组件会正确渲染
@@ -787,7 +842,7 @@ func cardJSON(title, text, progress string) string {
 
 // progressBar 返回一个固定格数的等宽进度条行。
 // 进度条用几何块字符 █/░（跨平台等宽、不会被替换成 emoji），
-// 百分比数字包在反引号里由飞书卡片按等宽字体渲染，跳动时宽度不变。
+// 百分比数字使用飞书 Markdown 的 $$12%$$ 数学渲染语法，避免比例数字跳动。
 const maxProgressCells = 10
 
 func progressBar(current, total int) string {
@@ -812,5 +867,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("`%d%%` %s%s", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
+	return fmt.Sprintf("$$%d%%$$ %s%s", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
 }

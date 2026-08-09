@@ -168,11 +168,41 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if !strings.Contains(gotBody, "不要把聊天记录写成 Markdown 标题、表格或代码块") {
 		t.Fatalf("system prompt must forbid Markdown record containers, body=%s", gotBody)
 	}
+	if !strings.Contains(gotBody, "聊天记录原文作为证据") || !strings.Contains(gotBody, "```text") {
+		t.Fatalf("system prompt must provide a fenced raw-record example, body=%s", gotBody)
+	}
 	if strings.Contains(gotBody, "不同记录之间用“---”分隔") {
 		t.Fatalf("system prompt must not request --- separators, body=%s", gotBody)
 	}
 	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
 		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
+	}
+}
+
+func TestFormatAnswerRunMeta(t *testing.T) {
+	meta := answerRunMeta{
+		Models: qaStepModels{
+			QueryDecomposition: "glm-5.2",
+			QueryExpansion:     "gpt-5.6-terra",
+			FinalAnswer:        "gpt-5.6-terra",
+		},
+		Decomposition: &queryDecomposition{
+			Entities: []string{"张三"},
+			Concepts: []string{"旅行"},
+		},
+		ExpandedQueries: []string{"张三旅行计划", "张三旅行时间"},
+	}
+
+	got := formatAnswerRunMeta(meta)
+	for _, want := range []string{
+		"模型：问题分解 `glm-5.2`",
+		"最终回答 `gpt-5.6-terra`",
+		"问题分解：实体 张三；概念 旅行",
+		"查询扩展：张三旅行计划；张三旅行时间",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("meta missing %q: %s", want, got)
+		}
 	}
 }
 

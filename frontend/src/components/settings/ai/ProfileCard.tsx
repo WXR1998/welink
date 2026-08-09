@@ -223,7 +223,7 @@ export const ProfileCard: React.FC<{
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${profile.use_responses_api ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
             title="使用 OpenAI Responses API"
           >
-            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.use_responses_api ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.use_responses_api ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
           </button>
         </div>
       )}
@@ -251,7 +251,7 @@ export const ProfileCard: React.FC<{
             onClick={() => onChange({ ...profile, no_think: !profile.no_think })}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${profile.no_think ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
           >
-            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.no_think ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.no_think ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
           </button>
         </div>
       )}

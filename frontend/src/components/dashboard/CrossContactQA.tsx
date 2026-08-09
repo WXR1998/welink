@@ -147,11 +147,11 @@ interface ProgressPhase {
 }
 
 const PHASES: ProgressPhase[] = [
-  { key: 'decompose', label: '分解问题', steps: ['decompose', 'resolve_entities'] },
+  { key: 'decompose', label: '分解问题', steps: ['decompose', 'decompose_result', 'resolve_entities'] },
   {
     key: 'search',
     label: '语义检索',
-    steps: ['query_expansion', 'vector_search', 'bm25_search', 'vecmsg_search', 'expanded_search', 'search_facts', 'comention_search'],
+    steps: ['query_expansion', 'query_expansion_result', 'vector_search', 'bm25_search', 'vecmsg_search', 'expanded_search', 'search_facts', 'comention_search'],
   },
   {
     key: 'rank',
@@ -774,7 +774,13 @@ export const CrossContactQA: React.FC<Props> = ({ onOpenSettings, onContactClick
 3. 如果数据不足以回答，诚实说明
 4. 用 Markdown 格式排版（列表、粗体等）
 5. 如果涉及多个联系人，用列表列出并简要说明
-6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。` },
+6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。
+7. 当把聊天记录原文作为证据逐条展示时，将同一连续片段放进一个紧凑的 \`\`\`text 代码块。代码块内每条记录只占一行，不插入空行，也不要在一条记录内部无故换行。例如：
+\`\`\`text
+2026-08-09 14:05 ｜ 张三 ｜ 我周末到上海
+2026-08-09 14:06 ｜ 李四 ｜ 那我去接你
+\`\`\`
+代码块外再写必要的解释；不要把总结、推测或补充说明塞进原文代码块。` },
         ...history,
         { role: 'user', content: `问题：${answerQ}\n\n${dataContext}` },
       ];

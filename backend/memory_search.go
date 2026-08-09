@@ -655,6 +655,7 @@ type MemorySearchResponse struct {
 	PinnedContactAliases []PinnedContactAlias `json:"pinned_contact_aliases,omitempty"` // 注入置顶记忆的联系人外号，供 LLM 辨识人物
 	TokenUsage           *StreamUsage         `json:"token_usage"`                      // DecomposeQuery 消耗的 token
 	DecomposePrompt      []LLMMessage         `json:"decompose_prompt"`                 // DecomposeQuery 发给 LLM 的原始 prompt
+	LLMModels            AIQAStepModels       `json:"llm_models,omitempty"`             // 本轮问答各 LLM 步骤实际使用的模型
 	NormalizedQuery      string               `json:"normalized_query"`                 // 外号还原为原名后的提问，供最终回答使用
 	// 增强检索结果
 	VecMessages     []VecMessageHit   `json:"vec_messages"`     // 双路检索：原始消息命中
@@ -694,6 +695,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		prefs := loadPreferences()
+		stepModels := aiQAStepModelNames(prefs, body.ProfileID)
 		cfg := llmConfigForProfile(body.ProfileID, prefs)
 		if body.Model != "" {
 			cfg.model = body.Model
@@ -752,11 +754,12 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		}
 
 		// Step 1: LLM 查询分解
-		sendProgress("decompose", "正在用 LLM 分解问题...")
+		sendProgress("decompose", fmt.Sprintf("正在使用 %s 分解问题...", stepModels.QueryDecomposition))
 		svc := getSvc()
 		// 先把原文提问里的外号还原为原名，让后续整条链路都围绕原名进行。
 		body.Query = normalizeEntityNames(body.Query, svc)
 		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID, svc)
+		sendProgress("decompose_result", formatQueryDecompositionResult(decomp))
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
@@ -765,6 +768,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				Decomposition:   decomp,
 				TokenUsage:      decompUsage,
 				DecomposePrompt: decompPrompt,
+				LLMModels:       stepModels,
 			})
 			sendDone()
 			return
@@ -995,6 +999,7 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			PinnedContactAliases: pinnedContactAliases,
 			TokenUsage:           decompUsage,
 			DecomposePrompt:      decompPrompt,
+			LLMModels:            stepModels,
 			NormalizedQuery:      body.Query,
 			VecMessages:          vecMessages,
 		}
@@ -1010,6 +1015,29 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		sendResult(resp)
 		sendDone()
 	})
+}
+
+func formatQueryDecompositionResult(decomp *QueryDecomposition) string {
+	if decomp == nil {
+		return "问题分解结果：未返回有效结果，已按原问题继续检索"
+	}
+	var parts []string
+	if !decomp.NeedsMemory {
+		parts = append(parts, "无需检索记忆")
+	}
+	if len(decomp.Entities) > 0 {
+		parts = append(parts, "实体 "+strings.Join(decomp.Entities, "、"))
+	}
+	if len(decomp.Concepts) > 0 {
+		parts = append(parts, "概念 "+strings.Join(decomp.Concepts, "、"))
+	}
+	if decomp.TimeFrom != "" || decomp.TimeTo != "" {
+		parts = append(parts, "时间 "+decomp.TimeFrom+" ~ "+decomp.TimeTo)
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "未识别出额外实体或概念")
+	}
+	return "问题分解结果：" + strings.Join(parts, "；")
 }
 
 // filterSourcesByTime 按时间范围过滤源聊天记录。

@@ -78,6 +78,20 @@ type pinnedContactAlias struct {
 	Aliases     []string `json:"aliases"`
 }
 
+type queryDecomposition struct {
+	NeedsMemory bool     `json:"needs_memory"`
+	Entities    []string `json:"entities"`
+	Concepts    []string `json:"concepts"`
+	TimeFrom    string   `json:"time_from"`
+	TimeTo      string   `json:"time_to"`
+}
+
+type qaStepModels struct {
+	QueryDecomposition string `json:"query_decomposition"`
+	QueryExpansion     string `json:"query_expansion"`
+	FinalAnswer        string `json:"final_answer"`
+}
+
 type memorySearchData struct {
 	Facts                []memFact            `json:"facts"`
 	Sources              []factSource         `json:"sources"`
@@ -87,9 +101,9 @@ type memorySearchData struct {
 	RawHits              []rawExcerpt         `json:"raw_hits"`
 	ResolvedEntities     []resolvedEntity     `json:"resolved_entities"`
 	NormalizedQuery      string               `json:"normalized_query"`
-	Decomposition        *struct {
-		NeedsMemory bool `json:"needs_memory"`
-	} `json:"decomposition"`
+	Decomposition        *queryDecomposition  `json:"decomposition"`
+	LLMModels            qaStepModels         `json:"llm_models"`
+	ExpandedQueries      []string             `json:"expanded_queries"`
 }
 
 // hasResolvedEntity 返回是否解析出至少一个可检索实体（联系人/群）。
@@ -129,6 +143,13 @@ type analyzeUsage struct {
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
 	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+type answerRunMeta struct {
+	Usage           *analyzeUsage
+	Models          qaStepModels
+	Decomposition   *queryDecomposition
+	ExpandedQueries []string
 }
 
 // analyzeChunk 解析后端 /api/ai/analyze 的 SSE data 帧。
@@ -430,6 +451,7 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 	sys.WriteString("6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。\n")
 	sys.WriteString("7. 当用户提出“探索一下”“找一下”“列举一下”“有什么有趣的事情”等开放性请求时，请尽量给出详尽的内容：凡是主体和客体对应正确、即使只是略有相关的信息或案例，都尽量纳入回答；这类问题不要追求过度简洁，应把有价值的信息尽可能多地列出来，都不要遗漏。\n")
 	sys.WriteString("8. 当用户要求把聊天记录整理或格式化输出时，请采用确定且统一的格式：每条记录单独一行，且每行必须以 Markdown 引用标记 `> ` 开头；引用标记后按“时间 ｜ 发送者 ｜ 内容”顺序排列，时间统一用 YYYY-MM-DD HH:MM；记录之间不使用 `---` 或其他分隔线；不要把聊天记录写成 Markdown 标题、表格或代码块。\n")
+	sys.WriteString("9. 当把聊天记录原文作为证据逐条展示时，将同一连续片段放进一个紧凑的 ` ```text ` 代码块，代码块内每条记录只占一行，不插入空行，也不要在一条记录内部无故换行。示例：\n```text\n2026-08-09 14:05 ｜ 张三 ｜ 我周末到上海\n2026-08-09 14:06 ｜ 李四 ｜ 那我去接你\n```\n代码块外再写必要的解释；不要把总结、推测或补充说明塞进原文代码块。\n")
 	if dataContext != "" {
 		sys.WriteString("\n以下是本次检索到的相关数据：\n" + dataContext + "\n")
 	}

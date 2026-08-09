@@ -11,7 +11,6 @@ func TestAIQAStepProfileID(t *testing.T) {
 		AIQALLMProfiles: AIQALLMProfiles{
 			QueryDecomposition: "fast",
 			QueryExpansion:     "missing",
-			SourceSelection:    "",
 			FinalAnswer:        "capable",
 		},
 	}
@@ -23,7 +22,7 @@ func TestAIQAStepProfileID(t *testing.T) {
 		want      string
 	}{
 		{name: "uses configured valid profile", step: "query_decomposition", requestID: "capable", want: "fast"},
-		{name: "empty override falls back to request profile", step: "source_selection", requestID: "fast", want: "fast"},
+		{name: "unknown step falls back to request profile", step: "source_selection", requestID: "fast", want: "fast"},
 		{name: "deleted override falls back to request profile", step: "query_expansion", requestID: "capable", want: "capable"},
 		{name: "final answer uses configured profile", step: "final_answer", requestID: "fast", want: "capable"},
 	}

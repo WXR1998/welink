@@ -7,14 +7,12 @@ import { genId, newProfile, type LLMProfile } from './types';
 interface AIQALLMProfiles {
   query_decomposition?: string;
   query_expansion?: string;
-  source_selection?: string;
   final_answer?: string;
 }
 
 const aiQASteps: { key: keyof AIQALLMProfiles; label: string }[] = [
   { key: 'query_decomposition', label: '问题分解' },
   { key: 'query_expansion', label: '查询扩展' },
-  { key: 'source_selection', label: '原文候选筛选' },
   { key: 'final_answer', label: '最终回答' },
 ];
 
@@ -254,7 +252,7 @@ export const LLMSection: React.FC = () => {
           </label>
         )}
 
-        <div className="border border-gray-100 p-4 space-y-3 dk-border">
+        <div className="rounded-xl border border-gray-100 p-4 space-y-3 dk-border">
           <div>
             <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">问答步骤模型</p>
             <p className="mt-1 text-[11px] text-gray-400">留空时跟随 AI 问答页面当前选择的模型。</p>

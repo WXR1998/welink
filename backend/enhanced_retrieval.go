@@ -686,12 +686,13 @@ func EnhancedRetrieval(
 	// 只有配置了 LLM 时才做查询改写
 	hasLLM := hasLLMConfig(prefs)
 	if hasLLM {
-		progress("query_expansion", "正在用 LLM 扩展子查询...")
+		modelName := aiQAStepModelNames(prefs, profileID).QueryExpansion
+		progress("query_expansion", fmt.Sprintf("正在使用 %s 扩展子查询...", modelName))
 		// Query Expansion: 生成子查询
 		subQueries, err := ExpandQuery(query, decomp, prefs, profileID, svc)
 		if err == nil && len(subQueries) > 0 {
 			result.ExpandedQueries = subQueries
-			progress("query_expansion", fmt.Sprintf("生成了 %d 个子查询", len(subQueries)))
+			progress("query_expansion_result", "查询扩展结果："+strings.Join(subQueries, "；"))
 		}
 	}
 

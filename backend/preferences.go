@@ -150,7 +150,13 @@ type LLMProfile struct {
 type AIQALLMProfiles struct {
 	QueryDecomposition string `json:"query_decomposition,omitempty"`
 	QueryExpansion     string `json:"query_expansion,omitempty"`
-	SourceSelection    string `json:"source_selection,omitempty"`
+	FinalAnswer        string `json:"final_answer,omitempty"`
+}
+
+// AIQAStepModels 是一次跨联系人问答各 LLM 步骤实际使用的模型名。
+type AIQAStepModels struct {
+	QueryDecomposition string `json:"query_decomposition,omitempty"`
+	QueryExpansion     string `json:"query_expansion,omitempty"`
 	FinalAnswer        string `json:"final_answer,omitempty"`
 }
 
@@ -163,8 +169,6 @@ func aiQAStepProfileID(prefs Preferences, step, requestProfileID string) string 
 		configuredID = prefs.AIQALLMProfiles.QueryDecomposition
 	case "query_expansion":
 		configuredID = prefs.AIQALLMProfiles.QueryExpansion
-	case "source_selection":
-		configuredID = prefs.AIQALLMProfiles.SourceSelection
 	case "final_answer":
 		configuredID = prefs.AIQALLMProfiles.FinalAnswer
 	}
@@ -174,6 +178,18 @@ func aiQAStepProfileID(prefs Preferences, step, requestProfileID string) string 
 		}
 	}
 	return requestProfileID
+}
+
+func aiQAStepModelNames(prefs Preferences, requestProfileID string) AIQAStepModels {
+	modelFor := func(step string) string {
+		profileID := aiQAStepProfileID(prefs, step, requestProfileID)
+		return llmConfigForProfile(profileID, prefs).model
+	}
+	return AIQAStepModels{
+		QueryDecomposition: modelFor("query_decomposition"),
+		QueryExpansion:     modelFor("query_expansion"),
+		FinalAnswer:        modelFor("final_answer"),
+	}
 }
 
 // sanitizeAIQALLMProfiles 移除指向已删除 LLM profile 的步骤覆盖配置。
@@ -187,9 +203,6 @@ func sanitizeAIQALLMProfiles(profiles AIQALLMProfiles, llmProfiles []LLMProfile)
 	}
 	if _, ok := valid[profiles.QueryExpansion]; !ok {
 		profiles.QueryExpansion = ""
-	}
-	if _, ok := valid[profiles.SourceSelection]; !ok {
-		profiles.SourceSelection = ""
 	}
 	if _, ok := valid[profiles.FinalAnswer]; !ok {
 		profiles.FinalAnswer = ""
