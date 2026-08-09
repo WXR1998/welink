@@ -10,19 +10,31 @@ import (
 var (
 	codeRevisionOnce sync.Once
 	codeRevision     string
+	buildRevision    string
 )
 
 func currentCodeRevision() string {
 	codeRevisionOnce.Do(func() {
-		if info, ok := debug.ReadBuildInfo(); ok {
-			if revision, found := revisionFromBuildInfo(info); found {
-				codeRevision = revision
-				return
-			}
+		var info *debug.BuildInfo
+		if buildInfo, ok := debug.ReadBuildInfo(); ok {
+			info = buildInfo
 		}
-		codeRevision = "unknown"
+		codeRevision = preferredCodeRevision(buildRevision, info)
+		if codeRevision == "" {
+			codeRevision = "unknown"
+		}
 	})
 	return codeRevision
+}
+
+func preferredCodeRevision(injected string, info *debug.BuildInfo) string {
+	if revision := shortRevision(injected); revision != "" {
+		return revision
+	}
+	if revision, ok := revisionFromBuildInfo(info); ok {
+		return revision
+	}
+	return ""
 }
 
 func revisionFromBuildInfo(info *debug.BuildInfo) (string, bool) {

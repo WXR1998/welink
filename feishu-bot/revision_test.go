@@ -26,3 +26,16 @@ func TestRevisionFromBuildInfoRejectsMissingRevision(t *testing.T) {
 		t.Fatalf("expected no revision, got %q", got)
 	}
 }
+
+func TestPreferredCodeRevisionUsesInjectedBuildRevision(t *testing.T) {
+	info := &debug.BuildInfo{
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "748f174496839be50c5e9abfd439afd11e934d00"},
+		},
+	}
+
+	got := preferredCodeRevision("fd7be7be3d214f978539c6764d336aeb978e41d4", info)
+	if got != "fd7be7be3d21" {
+		t.Fatalf("expected injected build revision, got %q", got)
+	}
+}

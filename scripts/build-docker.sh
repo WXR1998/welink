@@ -70,6 +70,7 @@ echo "   Dockerfile: feishu-bot/Dockerfile"
 echo ""
 docker build --network=host \
   -f feishu-bot/Dockerfile \
+  --build-arg "GIT_SHA=$SHA" \
   -t "welink-feishu-bot:$SHA" \
   feishu-bot/
 
