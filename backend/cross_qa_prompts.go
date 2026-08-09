@@ -3,7 +3,13 @@ package main
 import "strings"
 
 const defaultCrossQADecompositionPrompt = `你是 WeLink（微信聊天数据分析平台）的查询分析助手。
-分析用户的问题，判断是否需要检索聊天记忆库。{{aliases_table}}{{pinned_memories}}{{previous_decomposition}}
+分析用户的问题，判断是否需要检索聊天记忆库。
+
+{{aliases_table}}
+
+{{pinned_memories}}
+
+{{previous_decomposition}}
 
 今天是 {{today}}。输出严格 JSON，不要任何解释或代码围栏：
 {"needs_memory": true, "entities": ["人名或群名"], "concepts": ["语义概念"], "search_terms": ["近义词/口语检索词"], "time_from": "YYYY-MM-DD", "time_to": "YYYY-MM-DD", "groups": ["群聊名"], "lookup_raw": false}
@@ -32,7 +38,9 @@ const defaultCrossQAExpansionPrompt = `你是查询扩展助手。将用户的�
 每个子查询应从不同角度覆盖原始查询的意图。
 查询中如果出现外号、简称或昵称，必须依据下面的映射关系把它还原为对应的真实姓名，再用真实姓名生成子查询；不要使用外号/简称。
 
-{{aliases_table}}{{pinned_memories}}
+{{aliases_table}}
+
+{{pinned_memories}}
 
 输出严格 JSON 数组，不要任何解释或代码围栏：
 ["子查询1", "子查询2", "子查询3"]`

@@ -112,3 +112,18 @@ func TestBuildQueryDecompositionPromptUsesDatabaseTemplate(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultQueryPromptsKeepInjectedBlocksOnSeparateLines(t *testing.T) {
+	if !strings.Contains(
+		defaultCrossQADecompositionPrompt,
+		"检索聊天记忆库。\n\n{{aliases_table}}\n\n{{pinned_memories}}\n\n{{previous_decomposition}}\n\n今天是 {{today}}。",
+	) {
+		t.Fatalf("decomposition template joins injected blocks with surrounding text: %q", defaultCrossQADecompositionPrompt)
+	}
+	if !strings.Contains(
+		defaultCrossQAExpansionPrompt,
+		"不要使用外号/简称。\n\n{{aliases_table}}\n\n{{pinned_memories}}\n\n输出严格 JSON 数组",
+	) {
+		t.Fatalf("expansion template joins injected blocks with surrounding text: %q", defaultCrossQAExpansionPrompt)
+	}
+}
