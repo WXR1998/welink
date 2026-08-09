@@ -142,6 +142,58 @@ type LLMProfile struct {
 	CompressThreshold int `json:"compress_threshold,omitempty"`
 }
 
+// AIQALLMProfiles 指定跨联系人问答各 LLM 步骤的可选模型。
+// 留空时跟随前端当前选择的问答模型，保持旧版单模型行为。
+type AIQALLMProfiles struct {
+	QueryDecomposition string `json:"query_decomposition,omitempty"`
+	QueryExpansion     string `json:"query_expansion,omitempty"`
+	SourceSelection    string `json:"source_selection,omitempty"`
+	FinalAnswer        string `json:"final_answer,omitempty"`
+}
+
+// aiQAStepProfileID 返回问答步骤应使用的 profile。
+// 仅接受仍存在的步骤覆盖配置；失效或空配置一律回退到当前问答请求的 profile。
+func aiQAStepProfileID(prefs Preferences, step, requestProfileID string) string {
+	var configuredID string
+	switch step {
+	case "query_decomposition":
+		configuredID = prefs.AIQALLMProfiles.QueryDecomposition
+	case "query_expansion":
+		configuredID = prefs.AIQALLMProfiles.QueryExpansion
+	case "source_selection":
+		configuredID = prefs.AIQALLMProfiles.SourceSelection
+	case "final_answer":
+		configuredID = prefs.AIQALLMProfiles.FinalAnswer
+	}
+	for _, profile := range prefs.LLMProfiles {
+		if profile.ID == configuredID {
+			return configuredID
+		}
+	}
+	return requestProfileID
+}
+
+// sanitizeAIQALLMProfiles 移除指向已删除 LLM profile 的步骤覆盖配置。
+func sanitizeAIQALLMProfiles(profiles AIQALLMProfiles, llmProfiles []LLMProfile) AIQALLMProfiles {
+	valid := make(map[string]struct{}, len(llmProfiles))
+	for _, profile := range llmProfiles {
+		valid[profile.ID] = struct{}{}
+	}
+	if _, ok := valid[profiles.QueryDecomposition]; !ok {
+		profiles.QueryDecomposition = ""
+	}
+	if _, ok := valid[profiles.QueryExpansion]; !ok {
+		profiles.QueryExpansion = ""
+	}
+	if _, ok := valid[profiles.SourceSelection]; !ok {
+		profiles.SourceSelection = ""
+	}
+	if _, ok := valid[profiles.FinalAnswer]; !ok {
+		profiles.FinalAnswer = ""
+	}
+	return profiles
+}
+
 // Preferences 是唯一的持久化结构体，合并了用户偏好和 App 配置。
 // App 模式存储在 ~/Library/Application Support/WeLink/preferences.json，
 // Docker/CLI 模式存储路径由环境变量 PREFERENCES_PATH 指定，默认为工作目录的 preferences.json。
@@ -223,9 +275,10 @@ type Preferences struct {
 	FlirtExcluded []string `json:"flirt_excluded,omitempty"`
 
 	// LLM 连接参数只存在于 LLMProfiles；顶层只记录默认选中的 profile。
-	LLMProfiles         []LLMProfile `json:"llm_profiles,omitempty"`
-	DefaultLLMProfileID string       `json:"default_llm_profile_id,omitempty"`
-	AIAnalysisDBPath    string       `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
+	LLMProfiles         []LLMProfile    `json:"llm_profiles,omitempty"`
+	DefaultLLMProfileID string          `json:"default_llm_profile_id,omitempty"`
+	AIQALLMProfiles     AIQALLMProfiles `json:"ai_qa_llm_profiles,omitempty"`
+	AIAnalysisDBPath    string          `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
 
 	EmbeddingProfiles         []EmbeddingProfile `json:"embedding_profiles,omitempty"`
 	DefaultEmbeddingProfileID string             `json:"default_embedding_profile_id,omitempty"`

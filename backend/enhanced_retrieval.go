@@ -359,7 +359,7 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_expansion", profileID)
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_expansion", aiQAStepProfileID(prefs, "query_expansion", profileID))
 		ch <- llmResult{text, err}
 	}()
 

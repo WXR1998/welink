@@ -361,7 +361,7 @@ func DecomposeQuery(query string, prevDecomp *QueryDecomposition, prefs Preferen
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_decomposition", profileID)
+		text, err := CompleteLLMFeature(llmMsgs, prefs, "query_decomposition", aiQAStepProfileID(prefs, "query_decomposition", profileID))
 		ch <- llmResult{text, err}
 	}()
 

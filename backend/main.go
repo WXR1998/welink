@@ -157,7 +157,7 @@ func pickRelevantByLLM(query string, candidates []RawExcerpt, prefs Preferences,
 	}
 	ch := make(chan llmResult, 1)
 	go func() {
-		text, err := CompleteLLMFeature(msgs, prefs, "prior_excerpt_selection", profileID)
+		text, err := CompleteLLMFeature(msgs, prefs, "prior_excerpt_selection", aiQAStepProfileID(prefs, "source_selection", profileID))
 		ch <- llmResult{text, err}
 	}()
 	var result string
@@ -1293,6 +1293,7 @@ func serverMain() {
 		var incoming struct {
 			LLMProfiles               []LLMProfile       `json:"llm_profiles"`
 			DefaultLLMProfileID       string             `json:"default_llm_profile_id"`
+			AIQALLMProfiles           AIQALLMProfiles    `json:"ai_qa_llm_profiles"`
 			GeminiClientID            string             `json:"gemini_client_id"`
 			GeminiClientSecret        string             `json:"gemini_client_secret"`
 			AIAnalysisDBPath          string             `json:"ai_analysis_db_path"`
@@ -1360,6 +1361,7 @@ func serverMain() {
 			}
 			existing.DefaultLLMProfileID = defaultID
 		}
+		existing.AIQALLMProfiles = sanitizeAIQALLMProfiles(incoming.AIQALLMProfiles, incoming.LLMProfiles)
 		if keepOld(incoming.GeminiClientSecret) {
 			// 保留原值
 		} else {
@@ -1843,7 +1845,8 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		cfg := llmConfigForProfile(body.ProfileID, prefs)
+		finalAnswerProfileID := aiQAStepProfileID(prefs, "final_answer", body.ProfileID)
+		cfg := llmConfigForProfile(finalAnswerProfileID, prefs)
 		if body.Model != "" {
 			cfg.model = body.Model
 		}
@@ -2087,7 +2090,7 @@ func serverMain() {
 			}
 		}
 
-		streamLLMCoreWithProfile(sendChunk, body.Messages, prefs, body.ProfileID)
+		streamLLMCoreWithProfile(sendChunk, body.Messages, prefs, finalAnswerProfileID)
 
 		close(keepaliveDone)
 	})

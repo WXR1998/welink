@@ -4,9 +4,24 @@ import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
 import { genId, newProfile, type LLMProfile } from './types';
 
+interface AIQALLMProfiles {
+  query_decomposition?: string;
+  query_expansion?: string;
+  source_selection?: string;
+  final_answer?: string;
+}
+
+const aiQASteps: { key: keyof AIQALLMProfiles; label: string }[] = [
+  { key: 'query_decomposition', label: '问题分解' },
+  { key: 'query_expansion', label: '查询扩展' },
+  { key: 'source_selection', label: '原文候选筛选' },
+  { key: 'final_answer', label: '最终回答' },
+];
+
 export const LLMSection: React.FC = () => {
   const [profiles, setProfiles] = useState<LLMProfile[]>([newProfile(1)]);
   const [defaultProfileId, setDefaultProfileId] = useState('');
+  const [aiQALLMProfiles, setAIQALLMProfiles] = useState<AIQALLMProfiles>({});
   const [aiDBPath, setAiDBPath] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -37,6 +52,7 @@ export const LLMSection: React.FC = () => {
       const r = await axios.get<{
         llm_profiles?: LLMProfile[];
         default_llm_profile_id?: string;
+        ai_qa_llm_profiles?: AIQALLMProfiles;
         gemini_client_id?: string; gemini_client_secret?: string;
         ai_analysis_db_path?: string;
       }>('/api/preferences');
@@ -44,6 +60,7 @@ export const LLMSection: React.FC = () => {
         setProfiles(r.data.llm_profiles);
         setDefaultProfileId(r.data.default_llm_profile_id || r.data.llm_profiles[0].id);
       }
+      setAIQALLMProfiles(r.data.ai_qa_llm_profiles ?? {});
       setGeminiClientID(r.data.gemini_client_id ?? '');
       setGeminiClientSecret(r.data.gemini_client_secret ?? '');
       setAiDBPath(r.data.ai_analysis_db_path ?? '');
@@ -77,6 +94,7 @@ export const LLMSection: React.FC = () => {
       ...fresh,
       llm_profiles: profiles,
       default_llm_profile_id: defaultProfileId || profiles[0]?.id || '',
+      ai_qa_llm_profiles: aiQALLMProfiles,
       gemini_client_id: geminiClientID,
       gemini_client_secret: geminiClientSecret,
       ai_analysis_db_path: aiDBPath,
@@ -212,6 +230,13 @@ export const LLMSection: React.FC = () => {
             onDelete={() => setProfiles(prev => {
               const next = prev.filter(x => x.id !== p.id);
               if (p.id === defaultProfileId) setDefaultProfileId(next[0]?.id ?? '');
+              setAIQALLMProfiles(current => {
+                const updated = { ...current };
+                for (const step of aiQASteps) {
+                  if (updated[step.key] === p.id) updated[step.key] = '';
+                }
+                return updated;
+              });
               return next;
             })}
             onSaveAndTest={handleSaveAndTest}
@@ -228,6 +253,28 @@ export const LLMSection: React.FC = () => {
             </select>
           </label>
         )}
+
+        <div className="border border-gray-100 p-4 space-y-3 dk-border">
+          <div>
+            <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">问答步骤模型</p>
+            <p className="mt-1 text-[11px] text-gray-400">留空时跟随 AI 问答页面当前选择的模型。</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {aiQASteps.map(step => (
+              <label key={step.key} className="block text-xs text-gray-500 dark:text-gray-400">
+                {step.label}
+                <select
+                  value={aiQALLMProfiles[step.key] ?? ''}
+                  onChange={e => setAIQALLMProfiles(current => ({ ...current, [step.key]: e.target.value }))}
+                  className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white dk-input"
+                >
+                  <option value="">跟随当前问答模型</option>
+                  {profiles.map((p, i) => <option key={p.id} value={p.id}>{p.name || `配置 ${i + 1}`}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+        </div>
 
         {/* 添加配置 */}
         <button
