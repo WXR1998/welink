@@ -1,0 +1,305 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+)
+
+type PromptTemplate struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Prompt        string `json:"prompt"`
+	DefaultPrompt string `json:"default_prompt"`
+}
+
+type promptTemplateDefinition struct {
+	ID            string
+	Name          string
+	Description   string
+	DefaultPrompt string
+}
+
+var defaultPromptTemplates = []promptTemplateDefinition{
+	{
+		ID:          "insight_report",
+		Name:        "关系报告",
+		Description: "分析两人关系的发展阶段、沟通特点和关键数字",
+		DefaultPrompt: `你是一位资深的人际关系分析师。请基于以下统计数据和聊天采样，写一份关于「我」和「{{name}}」的关系深度分析报告。
+
+要求：
+1. 用温暖但客观的语气，中文撰写
+2. 分为以下章节：
+   - **关系概览**（一句话总结这段关系的特点）
+   - **发展阶段**（根据月度消息量变化，划分2-4个阶段，每个阶段命名并描述）
+   - **沟通特点**（双方消息量对比、回复风格差异、活跃时段）
+   - **关键数字**（挑出最有趣的3-5个统计亮点）
+   - **AI 感言**（一段感性的总结，像朋友跟你聊天一样）
+3. 每个章节 100-200 字
+4. 结合采样消息给出具体例子
+5. 不要编造不存在的事实`,
+	},
+	{
+		ID:          "insight_profile",
+		Name:        "风格画像",
+		Description: "提炼联系人的性格标签、口头禅和聊天习惯",
+		DefaultPrompt: `你是一位人格分析专家。请基于以下聊天统计和消息采样，为「{{name}}」生成一张聊天风格画像卡。
+
+要求：
+1. 用轻松有趣的语气，中文撰写
+2. 包含以下内容：
+   - **性格标签**（3-5个标签词，如"话痨""秒回达人""深夜党""表情达人"等）
+   - **口头禅 / 常用语**（从采样消息中提取 TA 常说的话或口头禅）
+   - **聊天习惯**（TA 喜欢什么时候聊天、消息长短、是否爱发表情、回复速度快慢）
+   - **趣味类比**（TA 的聊天风格像什么？比如"像一本翻不完的杂志""像凌晨的电台DJ"）
+   - **给你的建议**（基于 TA 的风格，一句话建议怎么和 TA 聊天最舒服）
+3. 总长 300-500 字
+4. 语气像在和朋友八卦一样`,
+	},
+	{
+		ID:          "insight_diary",
+		Name:        "AI 日记",
+		Description: "根据当天聊天记录生成第一人称日记",
+		DefaultPrompt: `你是一位日记作家。请基于以下当天的聊天采样，以「我」的第一人称视角，写一篇关于这一天和「{{name}}」聊天的日记。
+
+要求：
+1. 用温暖、私密的语气，像真的在写日记
+2. 把聊天内容转化为叙事（不要直接复制消息，要改写成日记体）
+3. 加入合理的心理活动和感受
+4. 200-400 字
+5. 开头用日期，结尾用一句感悟收束`,
+	},
+	{
+		ID:          "insight_story",
+		Name:        "关系剧本",
+		Description: "把一段关系浓缩成 3-5 个剧情节点的时间线",
+		DefaultPrompt: `你是一位故事编辑。请基于以下统计数据和采样消息，把「我」和「{{name}}」的关系提炼成一条时间线，标出 **3-5 个关键剧情节点**。
+
+要求：
+1. 每个节点必须对应一个真实的时间点（月份或日期），并配一个 8-16 字的标题（像小说章节名）
+2. 每个节点下 50-100 字描述：发生了什么故事转折、基于什么数据（例如"月消息量从 45 涨到 312""半年没聊突然回来"等），引用 1-2 条采样消息作为佐证
+3. 时间顺序从早到晚；起点通常是"初识"，终点是"现状"
+4. 用小说叙事语气，**不要**编造未在数据里出现的事件
+5. 输出为 Markdown，每个节点用 ### YYYY-MM · 章节名 标题，下面接描述段落
+6. 数据里如果有明显的骤降 / 失联 / 回归，一定要点出来，这些是“剧情”的关键转折
+
+开头加一句总结“这是一段 XX 的关系”，结尾用一句感悟收束。不要罗列数字。`,
+	},
+	{
+		ID:          "cross_qa_intent",
+		Name:        "跨联系人问答 · 意图解析",
+		Description: "解析用户问题，提取关键词和时间范围",
+		DefaultPrompt: `你是一个问题解析助手。用户会问关于微信聊天记录的跨联系人问题。
+请分析用户意图并返回一个 JSON 对象（不要其他内容），格式：
+{
+  "type": "search" 或 "calendar" 或 "both",
+  "keywords": ["关键词1", "关键词2"],
+  "date_from": "YYYY-MM-DD" 或 null,
+  "date_to": "YYYY-MM-DD" 或 null,
+  "search_type": "all" 或 "contact" 或 "group",
+  "summary": "一句话描述你理解的意图"
+}
+
+规则：
+- 如果问题包含具体关键词（如"旅行""加班""买房"），type 设为 "search"
+- 如果问题包含时间范围（如"去年国庆""上个月"），type 设为 "calendar" 或 "both"
+- 今天是 {{today}}
+- keywords 提取核心搜索词，不要太泛
+- 只返回 JSON，不要其他文字`,
+	},
+	{
+		ID:            "cross_qa_answer",
+		Name:          "跨联系人问答 · 汇总回答",
+		Description:   "基于搜索结果生成最终回答；{{fence}} 会被飞书群附加提示替换。",
+		DefaultPrompt: defaultCrossQAAnswerPrompt,
+	},
+	{
+		ID:            "cross_qa_raw_evidence",
+		Name:          "跨联系人问答 · 原文证据注入",
+		Description:   "将前序检索到的原文注入最终回答。必须保留 {{records}} 占位符。",
+		DefaultPrompt: defaultCrossQARawEvidencePrompt,
+	},
+	{
+		ID:          "group_sim",
+		Name:        "AI 群聊模拟",
+		Description: "模拟群友按各自风格继续聊天",
+		DefaultPrompt: `你正在模拟一个微信群聊。每个成员有独特的说话风格，你必须严格区分不同成员的性格和表达方式。
+
+【重要规则】
+1. 每个成员的说话风格差异很大，不能千篇一律
+2. 注意模仿每个人的用词习惯、语气、消息长度、是否用表情
+3. 承接上文话题，不要重复已说过的话
+4. 如果有人（包括「我」）刚说了话，后续成员应该自然回应`,
+	},
+	{
+		ID:          "clone_continue",
+		Name:        "AI 对话续写",
+		Description: "AI 模拟双方继续聊天",
+		DefaultPrompt: `基于你已经学习的这个人的聊天风格，现在请模拟「{{my_name}}」和「TA」之间的一段自然对话。
+
+要求：
+1. 交替生成双方的消息，共 {{rounds}} 轮（每轮一问一答）
+2.「TA」的风格严格按照你学习到的说话习惯（用词、语气、长度、表情）
+3.「{{my_name}}」的风格也要自然，像真实的微信聊天
+4. 每条消息单独一行，格式严格为：
+   {{my_name}}：消息内容
+   TA：消息内容
+5. 不要加任何其他说明文字、括号注释或旁白
+6. 内容要自然流畅，承接上下文`,
+	},
+}
+
+func initPromptTemplateTable() error {
+	if aiDB == nil {
+		return fmt.Errorf("prompt templates: database not initialized")
+	}
+	if _, err := aiDB.Exec(`CREATE TABLE IF NOT EXISTS prompt_templates (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		description    TEXT NOT NULL DEFAULT '',
+		prompt         TEXT NOT NULL,
+		default_prompt TEXT NOT NULL,
+		position       INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("prompt templates: create table: %w", err)
+	}
+	for position, template := range defaultPromptTemplates {
+		if _, err := aiDB.Exec(`
+			INSERT INTO prompt_templates(id, name, description, prompt, default_prompt, position)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO NOTHING`,
+			template.ID, template.Name, template.Description, template.DefaultPrompt, template.DefaultPrompt, position,
+		); err != nil {
+			return fmt.Errorf("prompt templates: seed %s: %w", template.ID, err)
+		}
+	}
+	return migrateLegacyPromptTemplates()
+}
+
+func migrateLegacyPromptTemplates() error {
+	legacy := loadPreferences().PromptTemplates
+	if len(legacy) == 0 {
+		return nil
+	}
+	for id, prompt := range legacy {
+		if strings.TrimSpace(prompt) == "" || defaultPromptTemplateByID(id) == nil {
+			continue
+		}
+		if _, err := aiDB.Exec(`UPDATE prompt_templates SET prompt = ? WHERE id = ?`, prompt, id); err != nil {
+			return fmt.Errorf("prompt templates: import %s: %w", id, err)
+		}
+	}
+	_, err := updatePreferences(func(p *Preferences) {
+		p.PromptTemplates = nil
+	})
+	return err
+}
+
+func listPromptTemplates() ([]PromptTemplate, error) {
+	aiDBMu.Lock()
+	defer aiDBMu.Unlock()
+	if aiDB == nil {
+		return nil, fmt.Errorf("prompt templates: database not initialized")
+	}
+	rows, err := aiDB.Query(`SELECT id, name, description, prompt, default_prompt FROM prompt_templates ORDER BY position, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	templates := make([]PromptTemplate, 0, len(defaultPromptTemplates))
+	for rows.Next() {
+		var template PromptTemplate
+		if err := rows.Scan(&template.ID, &template.Name, &template.Description, &template.Prompt, &template.DefaultPrompt); err != nil {
+			return nil, err
+		}
+		templates = append(templates, template)
+	}
+	return templates, rows.Err()
+}
+
+func getPromptTemplate(id string) (PromptTemplate, error) {
+	aiDBMu.Lock()
+	defer aiDBMu.Unlock()
+	if aiDB == nil {
+		return PromptTemplate{}, fmt.Errorf("prompt templates: database not initialized")
+	}
+	var template PromptTemplate
+	err := aiDB.QueryRow(`
+		SELECT id, name, description, prompt, default_prompt
+		FROM prompt_templates WHERE id = ?`, id,
+	).Scan(&template.ID, &template.Name, &template.Description, &template.Prompt, &template.DefaultPrompt)
+	if err != nil {
+		return PromptTemplate{}, err
+	}
+	return template, nil
+}
+
+func updatePromptTemplate(id, prompt string) error {
+	if strings.TrimSpace(prompt) == "" {
+		return fmt.Errorf("prompt template cannot be empty")
+	}
+	aiDBMu.Lock()
+	defer aiDBMu.Unlock()
+	if aiDB == nil {
+		return fmt.Errorf("prompt templates: database not initialized")
+	}
+	result, err := aiDB.Exec(`UPDATE prompt_templates SET prompt = ? WHERE id = ?`, prompt, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func resetPromptTemplate(id string) (PromptTemplate, error) {
+	aiDBMu.Lock()
+	defer aiDBMu.Unlock()
+	if aiDB == nil {
+		return PromptTemplate{}, fmt.Errorf("prompt templates: database not initialized")
+	}
+	result, err := aiDB.Exec(`UPDATE prompt_templates SET prompt = default_prompt WHERE id = ?`, id)
+	if err != nil {
+		return PromptTemplate{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return PromptTemplate{}, err
+	}
+	if affected == 0 {
+		return PromptTemplate{}, sql.ErrNoRows
+	}
+	var template PromptTemplate
+	err = aiDB.QueryRow(`
+		SELECT id, name, description, prompt, default_prompt
+		FROM prompt_templates WHERE id = ?`, id,
+	).Scan(&template.ID, &template.Name, &template.Description, &template.Prompt, &template.DefaultPrompt)
+	return template, err
+}
+
+func promptTemplateContent(id string) string {
+	template, err := getPromptTemplate(id)
+	if err == nil && strings.TrimSpace(template.Prompt) != "" {
+		return template.Prompt
+	}
+	if definition := defaultPromptTemplateByID(id); definition != nil {
+		return definition.DefaultPrompt
+	}
+	return ""
+}
+
+func defaultPromptTemplateByID(id string) *promptTemplateDefinition {
+	for index := range defaultPromptTemplates {
+		if defaultPromptTemplates[index].ID == id {
+			return &defaultPromptTemplates[index]
+		}
+	}
+	return nil
+}

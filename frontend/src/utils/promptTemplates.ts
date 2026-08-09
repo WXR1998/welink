@@ -1,190 +1,36 @@
 /**
- * AI Prompt 模板管理 — 默认模板 + 用户自定义加载
+ * AI Prompt 模板管理。模板内容由后端 AI SQLite 数据库提供。
  */
 
 export interface PromptTemplate {
   id: string;
   name: string;
   description: string;
-  defaultPrompt: string;
+  prompt: string;
+  default_prompt: string;
 }
 
-export const PROMPT_TEMPLATES: PromptTemplate[] = [
-  {
-    id: 'insight_report',
-    name: '关系报告',
-    description: '分析两人关系的发展阶段、沟通特点和关键数字',
-    defaultPrompt: `你是一位资深的人际关系分析师。请基于以下统计数据和聊天采样，写一份关于「我」和「{{name}}」的关系深度分析报告。
-
-要求：
-1. 用温暖但客观的语气，中文撰写
-2. 分为以下章节：
-   - **关系概览**（一句话总结这段关系的特点）
-   - **发展阶段**（根据月度消息量变化，划分2-4个阶段，每个阶段命名并描述）
-   - **沟通特点**（双方消息量对比、回复风格差异、活跃时段）
-   - **关键数字**（挑出最有趣的3-5个统计亮点）
-   - **AI 感言**（一段感性的总结，像朋友跟你聊天一样）
-3. 每个章节 100-200 字
-4. 结合采样消息给出具体例子
-5. 不要编造不存在的事实`,
-  },
-  {
-    id: 'insight_profile',
-    name: '风格画像',
-    description: '提炼联系人的性格标签、口头禅和聊天习惯',
-    defaultPrompt: `你是一位人格分析专家。请基于以下聊天统计和消息采样，为「{{name}}」生成一张聊天风格画像卡。
-
-要求：
-1. 用轻松有趣的语气，中文撰写
-2. 包含以下内容：
-   - **性格标签**（3-5个标签词，如"话痨""秒回达人""深夜党""表情达人"等）
-   - **口头禅 / 常用语**（从采样消息中提取 TA 常说的话或口头禅）
-   - **聊天习惯**（TA 喜欢什么时候聊天、消息长短、是否爱发表情、回复速度快慢）
-   - **趣味类比**（TA 的聊天风格像什么？比如"像一本翻不完的杂志""像凌晨的电台DJ"）
-   - **给你的建议**（基于 TA 的风格，一句话建议怎么和 TA 聊天最舒服）
-3. 总长 300-500 字
-4. 语气像在和朋友八卦一样`,
-  },
-  {
-    id: 'insight_diary',
-    name: 'AI 日记',
-    description: '根据当天聊天记录生成第一人称日记',
-    defaultPrompt: `你是一位日记作家。请基于以下当天的聊天采样，以「我」的第一人称视角，写一篇关于这一天和「{{name}}」聊天的日记。
-
-要求：
-1. 用温暖、私密的语气，像真的在写日记
-2. 把聊天内容转化为叙事（不要直接复制消息，要改写成日记体）
-3. 加入合理的心理活动和感受
-4. 200-400 字
-5. 开头用日期，结尾用一句感悟收束`,
-  },
-  {
-    id: 'insight_story',
-    name: '关系剧本',
-    description: '把一段关系浓缩成 3-5 个剧情节点的时间线',
-    defaultPrompt: `你是一位故事编辑。请基于以下统计数据和采样消息，把「我」和「{{name}}」的关系提炼成一条时间线，标出 **3-5 个关键剧情节点**。
-
-要求：
-1. 每个节点必须对应一个真实的时间点（月份或日期），并配一个 8-16 字的标题（像小说章节名）
-2. 每个节点下 50-100 字描述：发生了什么故事转折、基于什么数据（例如"月消息量从 45 涨到 312""半年没聊突然回来"等），引用 1-2 条采样消息作为佐证
-3. 时间顺序从早到晚；起点通常是"初识"，终点是"现状"
-4. 用小说叙事语气，**不要**编造未在数据里出现的事件
-5. 输出为 Markdown，每个节点用 \`### YYYY-MM · 章节名\` 标题，下面接描述段落
-6. 数据里如果有明显的骤降 / 失联 / 回归，一定要点出来 —— 这些是"剧情"的关键转折
-
-开头加一句总结"这是一段 XX 的关系"，结尾用一句感悟收束。不要罗列数字。`,
-  },
-  {
-    id: 'cross_qa_intent',
-    name: '跨联系人问答 · 意图解析',
-    description: '解析用户问题，提取关键词和时间范围',
-    defaultPrompt: `你是一个问题解析助手。用户会问关于微信聊天记录的跨联系人问题。
-请分析用户意图并返回一个 JSON 对象（不要其他内容），格式：
-{
-  "type": "search" 或 "calendar" 或 "both",
-  "keywords": ["关键词1", "关键词2"],
-  "date_from": "YYYY-MM-DD" 或 null,
-  "date_to": "YYYY-MM-DD" 或 null,
-  "search_type": "all" 或 "contact" 或 "group",
-  "summary": "一句话描述你理解的意图"
-}
-
-规则：
-- 如果问题包含具体关键词（如"旅行""加班""买房"），type 设为 "search"
-- 如果问题包含时间范围（如"去年国庆""上个月"），type 设为 "calendar" 或 "both"
-- 今天是 {{today}}
-- keywords 提取核心搜索词，不要太泛
-- 只返回 JSON，不要其他文字`,
-  },
-  {
-    id: 'cross_qa_answer',
-    name: '跨联系人问答 · 汇总回答',
-    description: '基于搜索结果生成最终回答；由后端统一注入。',
-    defaultPrompt: `你是 WeLink 的跨联系人 AI 助手，用户刚问了一个关于微信聊天记录的问题。
-以下是从数据库中检索到的相关数据。请基于这些数据回答用户的问题。
-
-要求：
-1. 用中文回答，简洁清晰。
-2. 直接回答问题，不要废话。
-3. 如果数据不足以回答，诚实说明。
-4. 使用 Markdown 排版。
-5. 如果涉及多个联系人，用列表列出并简要说明。
-6. 每段故事、结论或场景都要说明其依据的聊天记录原文（含前后上下文）作为佐证；引用原文时至少保留该事件前后各 5 条上下文聊天信息；若前后各 5 条仍不足以完整表达一个事件或观点，则继续延伸，直到能完整表达该事件为止。
-7. 当用户提出“探索一下”“找一下”“列举一下”“有什么有趣的事情”等开放性请求时，请尽量给出详尽的内容：凡是主体和客体对应正确、即使只是略有相关的信息或案例，都尽量纳入回答；这类问题不要追求过度简洁，应把有价值的信息尽可能多地列出来，都不要遗漏。
-8. 当把聊天记录原文作为证据逐条展示时，将同一连续片段放进一个紧凑的 \`\`\`text 代码块。代码块内每条记录只占一行，不插入空行，也不要在一条记录内部无故换行。示例：
-\`\`\`text
-2026-08-09 14:05 ｜ 张三 ｜ 我周末到上海
-2026-08-09 14:06 ｜ 李四 ｜ 那我去接你
-\`\`\`
-代码块外再写必要的解释；不要把总结、推测或补充说明塞进原文代码块。
-9. 如果用户要求找原文、原话或原句，只有当对话或检索结果中确实存在原始聊天记录片段时，才直接引用原文并标注来源与时间；不要根据记忆 summary 逐字转述成原文。若未定位到原文，明确说明“未能在聊天记录中定位到原文”，不要编造。`,
-  },
-  {
-    id: 'cross_qa_raw_evidence',
-    name: '跨联系人问答 · 原文证据注入',
-    description: '将前序检索到的原文注入最终回答。必须保留 {{records}} 占位符。',
-    defaultPrompt: `【本轮之前对话中已检索到的相关原文（来自前序检索，可直接引用）】
-\`\`\`text
-{{records}}
-\`\`\`
-以上是已经确认检索到的聊天记录原文。请优先直接引用这些原文，并在引用时标注来源；连续原文引用时保持每条一行，不插入不必要的空行。`,
-  },
-  {
-    id: 'group_sim',
-    name: 'AI 群聊模拟',
-    description: '模拟群友按各自风格继续聊天',
-    defaultPrompt: `你正在模拟一个微信群聊。每个成员有独特的说话风格，你必须严格区分不同成员的性格和表达方式。
-
-【重要规则】
-1. 每个成员的说话风格差异很大，不能千篇一律
-2. 注意模仿每个人的用词习惯、语气、消息长度、是否用表情
-3. 承接上文话题，不要重复已说过的话
-4. 如果有人（包括「我」）刚说了话，后续成员应该自然回应`,
-  },
-  {
-    id: 'clone_continue',
-    name: 'AI 对话续写',
-    description: 'AI 模拟双方继续聊天',
-    defaultPrompt: `基于你已经学习的这个人的聊天风格，现在请模拟「{{my_name}}」和「TA」之间的一段自然对话。
-
-要求：
-1. 交替生成双方的消息，共 {{rounds}} 轮（每轮一问一答）
-2.「TA」的风格严格按照你学习到的说话习惯（用词、语气、长度、表情）
-3.「{{my_name}}」的风格也要自然，像真实的微信聊天
-4. 每条消息单独一行，格式严格为：
-   {{my_name}}：消息内容
-   TA：消息内容
-5. 不要加任何其他说明文字、括号注释或旁白
-6. 内容要自然流畅，承接上下文`,
-  },
-];
-
-/** 获取 prompt（优先用户自定义，否则用默认值） */
 export function getPrompt(
   id: string,
-  customTemplates: Record<string, string> | undefined,
+  templates: PromptTemplate[],
   vars?: Record<string, string>,
 ): string {
-  let prompt = customTemplates?.[id] ?? '';
-  if (!prompt) {
-    prompt = PROMPT_TEMPLATES.find(t => t.id === id)?.defaultPrompt ?? '';
-  }
-  // 替换变量
+  let prompt = templates.find(template => template.id === id)?.prompt ?? '';
   if (vars) {
-    for (const [key, val] of Object.entries(vars)) {
-      prompt = prompt.replaceAll(`{{${key}}}`, val);
+    for (const [key, value] of Object.entries(vars)) {
+      prompt = prompt.replaceAll(`{{${key}}}`, value);
     }
   }
   return prompt;
 }
 
-/** 从后端加载用户自定义 prompt 模板 */
-export async function loadCustomPrompts(): Promise<Record<string, string>> {
+export async function loadPromptTemplates(): Promise<PromptTemplate[]> {
   try {
-    const resp = await fetch('/api/preferences');
-    const data = await resp.json();
-    return data?.prompt_templates ?? {};
+    const response = await fetch('/api/preferences/prompts');
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data?.templates ?? [];
   } catch {
-    return {};
+    return [];
   }
 }

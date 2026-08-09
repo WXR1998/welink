@@ -118,21 +118,28 @@ func TestInjectFeishuGroupPrompt(t *testing.T) {
 		},
 	}
 
-	// 已有 system 消息 → 补充提示作为第 9 点插在第 8 点（格式化输出要求）之后
-	msgs := []LLMMessage{{Role: "system", Content: "要求：\n8. 格式化输出请严格套用统一格式，不要自行变化。\n下面是正文"}, {Role: "user", Content: "hi"}}
+	// 汇总回答模板包含 {{fence}} 时，群提示必须在占位位置替换而不是按编号追加。
+	msgs := []LLMMessage{{Role: "system", Content: "要求：\n{{fence}}\n下面是正文"}, {Role: "user", Content: "hi"}}
 	got := injectFeishuGroupPrompt(msgs, "oc_g1", prefs)
 	if len(got) != 2 {
 		t.Fatalf("expected length 2, got %d", len(got))
 	}
-	want := "要求：\n8. 格式化输出请严格套用统一格式，不要自行变化。\n9. 本群成员主要使用粤语交流。\n下面是正文"
+	want := "要求：\n本群成员主要使用粤语交流。\n下面是正文"
 	if got[0].Content != want {
 		t.Fatalf("unexpected system content: %q", got[0].Content)
 	}
 
-	// 无固定开场白 → 回退追加到 system 末尾
+	// 未配置群提示时，仍要移除占位符，避免向 LLM 暴露内部变量。
+	msgsWithoutGroupPrompt := []LLMMessage{{Role: "system", Content: "要求：\n{{fence}}\n下面是正文"}, {Role: "user", Content: "hi"}}
+	gotWithoutGroupPrompt := injectFeishuGroupPrompt(msgsWithoutGroupPrompt, "oc_missing", prefs)
+	if gotWithoutGroupPrompt[0].Content != "要求：\n\n下面是正文" {
+		t.Fatalf("placeholder must be removed when group prompt is absent: %q", gotWithoutGroupPrompt[0].Content)
+	}
+
+	// 没有占位符的其他调用方保留兼容追加行为。
 	msgs3 := []LLMMessage{{Role: "system", Content: "base"}, {Role: "user", Content: "hi"}}
 	got3 := injectFeishuGroupPrompt(msgs3, "oc_g1", prefs)
-	if got3[0].Content != "base\n\n9. 本群成员主要使用粤语交流。\n" {
+	if got3[0].Content != "base\n\n本群成员主要使用粤语交流。\n" {
 		t.Fatalf("unexpected fallback system content: %q", got3[0].Content)
 	}
 

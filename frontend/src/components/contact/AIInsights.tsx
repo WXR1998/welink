@@ -13,7 +13,7 @@ import { truncateMsgContent } from '../../utils/formatters';
 import { preserveMarkdownBlockquote } from '../../utils/formatters';
 import { RevealLink } from '../common/RevealLink';
 import { TTSButton } from '../common/TTSButton';
-import { getPrompt, loadCustomPrompts } from '../../utils/promptTemplates';
+import { getPrompt, loadPromptTemplates, PromptTemplate } from '../../utils/promptTemplates';
 
 interface Props {
   username: string;
@@ -52,19 +52,19 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
   const [diaryDate, setDiaryDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [profileId, setProfileId] = useState('');
   const [profiles, setProfiles] = useState<{ id: string; name?: string; provider: string; model?: string }[]>([]);
-  const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
   const [showPrompt, setShowPrompt] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // 加载 LLM profiles + 自定义 prompts
+  // 加载 LLM profiles + 数据库存储的 Prompt 模板
   useEffect(() => {
     fetch('/api/preferences').then(r => r.json()).then(d => {
       const ps = d?.llm_profiles ?? [];
       setProfiles(ps);
       if (ps.length > 0 && !profileId) setProfileId(d?.default_llm_profile_id || ps[0].id);
-      if (d?.prompt_templates) setCustomPrompts(d.prompt_templates);
     }).catch(() => {});
+    loadPromptTemplates().then(setPromptTemplates);
   }, []);
 
   // 预加载摘要数据
@@ -113,7 +113,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
 
     // 构造 prompt
     const name = privacyMode ? '联系人' : displayName;
-    const systemPrompt = getPrompt(INSIGHT_PROMPT_IDS[type], customPrompts, { name });
+    const systemPrompt = getPrompt(INSIGHT_PROMPT_IDS[type], promptTemplates, { name });
 
     // 统计数据摘要
     let dataContext = `【统计数据】\n`;
@@ -315,7 +315,7 @@ export const AIInsights: React.FC<Props> = ({ username, displayName, avatarUrl, 
             <span className="text-[10px] text-gray-300">可在设置 → Prompt 模板中自定义</span>
           </div>
           <pre className="text-[11px] text-gray-500 dark:text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono leading-relaxed">
-            {getPrompt(INSIGHT_PROMPT_IDS[type], customPrompts, { name: privacyMode ? '联系人' : displayName })}
+            {getPrompt(INSIGHT_PROMPT_IDS[type], promptTemplates, { name: privacyMode ? '联系人' : displayName })}
           </pre>
         </div>
       )}

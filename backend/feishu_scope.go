@@ -87,35 +87,32 @@ func filterVecMessagesByScope(hits []VecMessageHit, chatID string, prefs Prefere
 	return out
 }
 
-// injectFeishuGroupPrompt 把 chat_id 对应的群补充提示插入到 system prompt 的固定开场白之后。
-// 返回注入后的 messages；未配置或提示为空时原样返回。
+const feishuGroupPromptPlaceholder = "{{fence}}"
+
+// injectFeishuGroupPrompt 把 chat_id 对应的群补充提示填入 system prompt 的 {{fence}} 占位符。
+// 没有占位符的旧调用方继续在 system 末尾追加，保持兼容。
 func injectFeishuGroupPrompt(msgs []LLMMessage, chatID string, prefs Preferences) []LLMMessage {
-	if chatID == "" {
-		return msgs
-	}
 	prompt := strings.TrimSpace(prefs.FeishuGroupPrompts[chatID])
-	if prompt == "" {
-		return msgs
-	}
-	// 补充提示作为第 9 点追加在“格式化输出”要求（第 8 点）之后，且不留空行。
-	const introMarker = "不要自行变化。\n"
-	// 命中锚点时直接接在行尾（无空行）；回退追加到末尾时才补空行分隔。
-	item := "9. " + prompt + "\n"
-	fallbackItem := "\n\n9. " + prompt + "\n"
 	for i := range msgs {
 		if msgs[i].Role == "system" {
 			content := msgs[i].Content
-			if idx := strings.Index(content, introMarker); idx >= 0 {
-				at := idx + len(introMarker)
-				msgs[i].Content = content[:at] + item + content[at:]
-			} else {
-				// 找不到固定要求结尾（如其它调用方），退回追加到 system 末尾。
-				msgs[i].Content += fallbackItem
+			if strings.Contains(content, feishuGroupPromptPlaceholder) {
+				msgs[i].Content = strings.ReplaceAll(content, feishuGroupPromptPlaceholder, prompt)
+				return msgs
 			}
+		}
+	}
+	if prompt == "" {
+		return msgs
+	}
+	// 兼容未改造为模板占位符的其他 AI 调用。
+	for i := range msgs {
+		if msgs[i].Role == "system" {
+			msgs[i].Content += "\n\n" + prompt + "\n"
 			return msgs
 		}
 	}
-	return append(msgs, LLMMessage{Role: "system", Content: item})
+	return append(msgs, LLMMessage{Role: "system", Content: prompt})
 }
 
 // filterRawHitsByScope 过滤原始命中，只保留 contact_key 在允许范围内的项。

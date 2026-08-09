@@ -1,35 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import { Bot } from 'lucide-react';
-import { PROMPT_TEMPLATES } from '../../../utils/promptTemplates';
+import { loadPromptTemplates, PromptTemplate } from '../../../utils/promptTemplates';
 
 export const PromptTemplateSection: React.FC = () => {
-  const [templates, setTemplates] = useState<Record<string, string>>({});
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    fetch('/api/preferences').then(r => r.json()).then(d => {
-      setTemplates(d?.prompt_templates ?? {});
-    }).catch(() => {});
+    loadPromptTemplates().then(setTemplates);
   }, []);
 
   const handleSave = async (id: string, value: string) => {
     setSaving(true);
-    const next = { ...templates };
-    if (value.trim()) {
-      next[id] = value.trim();
-    } else {
-      delete next[id]; // 清空则恢复默认
-    }
     try {
-      await fetch('/api/preferences/prompts', {
-        method: 'PUT',
+      const response = await fetch(
+        value.trim() ? `/api/preferences/prompts/${encodeURIComponent(id)}` : `/api/preferences/prompts/${encodeURIComponent(id)}/reset`,
+        {
+          method: value.trim() ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt_templates: next }),
-      });
-      setTemplates(next);
+          body: value.trim() ? JSON.stringify({ prompt: value.trim() }) : undefined,
+        },
+      );
+      if (!response.ok) throw new Error('保存失败');
+      const data = await response.json();
+      const updated: PromptTemplate = data.template;
+      setTemplates(prev => prev.map(template => template.id === id ? updated : template));
       setEditingId(null);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -46,9 +44,9 @@ export const PromptTemplateSection: React.FC = () => {
       <p className="text-xs text-gray-400 mb-4">自定义各 AI 功能的系统提示词。留空则使用默认值。</p>
 
       <div className="space-y-3">
-        {PROMPT_TEMPLATES.map(t => {
+        {templates.map(t => {
           const isEditing = editingId === t.id;
-          const hasCustom = !!templates[t.id];
+          const hasCustom = t.prompt !== t.default_prompt;
           return (
             <div key={t.id} className="border border-gray-100 dark:border-white/10 rounded-xl p-3">
               <div className="flex items-center justify-between mb-1">
@@ -59,7 +57,7 @@ export const PromptTemplateSection: React.FC = () => {
                 <button
                   onClick={() => {
                     if (isEditing) { setEditingId(null); }
-                    else { setEditingId(t.id); setEditValue(templates[t.id] ?? t.defaultPrompt); }
+                    else { setEditingId(t.id); setEditValue(t.prompt); }
                   }}
                   className="text-[10px] text-gray-400 hover:text-[#07c160] transition-colors"
                 >
@@ -86,13 +84,13 @@ export const PromptTemplateSection: React.FC = () => {
                     </button>
                     {hasCustom && (
                       <button
-                        onClick={() => { setEditValue(t.defaultPrompt); handleSave(t.id, ''); }}
+                        onClick={() => { setEditValue(t.default_prompt); handleSave(t.id, ''); }}
                         className="px-3 py-1 text-xs text-gray-400 hover:text-red-400 transition-colors"
                       >
                         恢复默认
                       </button>
                     )}
-                    <span className="text-[10px] text-gray-300">支持变量：{'{{name}}'} {'{{today}}'} {'{{rounds}}'} 等</span>
+                    <span className="text-[10px] text-gray-300">支持变量：{'{{name}}'} {'{{today}}'} {'{{rounds}}'} {'{{fence}}'} 等</span>
                   </div>
                 </div>
               )}

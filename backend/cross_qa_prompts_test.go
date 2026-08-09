@@ -5,25 +5,33 @@ import (
 	"testing"
 )
 
-func TestEffectiveCrossQAPromptUsesCustomValue(t *testing.T) {
-	prefs := Preferences{PromptTemplates: map[string]string{
-		"cross_qa_answer": "自定义最终回答提示词",
-	}}
+func TestEffectiveCrossQAPromptUsesDatabaseValue(t *testing.T) {
+	withPromptTemplateTestDB(t)
+	if err := initPromptTemplateTable(); err != nil {
+		t.Fatalf("initialize prompt template table: %v", err)
+	}
+	if err := updatePromptTemplate("cross_qa_answer", "数据库中的最终回答提示词"); err != nil {
+		t.Fatalf("update prompt template: %v", err)
+	}
 
-	got := effectiveCrossQAPrompt(prefs, "cross_qa_answer")
-	if got != "自定义最终回答提示词" {
-		t.Fatalf("expected custom prompt, got %q", got)
+	got := effectiveCrossQAPrompt("cross_qa_answer")
+	if got != "数据库中的最终回答提示词" {
+		t.Fatalf("expected database prompt, got %q", got)
 	}
 }
 
 func TestInjectCrossQAPromptPrependsEffectiveSystemMessage(t *testing.T) {
-	prefs := Preferences{PromptTemplates: map[string]string{
-		"cross_qa_answer": "自定义最终回答提示词",
-	}}
+	withPromptTemplateTestDB(t)
+	if err := initPromptTemplateTable(); err != nil {
+		t.Fatalf("initialize prompt template table: %v", err)
+	}
+	if err := updatePromptTemplate("cross_qa_answer", "数据库中的最终回答提示词"); err != nil {
+		t.Fatalf("update prompt template: %v", err)
+	}
 	messages := []LLMMessage{{Role: "user", Content: "问题"}}
 
-	got := injectCrossQAPrompt(messages, "cross_qa_answer", prefs)
-	if len(got) != 2 || got[0].Role != "system" || got[0].Content != "自定义最终回答提示词" {
+	got := injectCrossQAPrompt(messages, "cross_qa_answer")
+	if len(got) != 2 || got[0].Role != "system" || got[0].Content != "数据库中的最终回答提示词" {
 		t.Fatalf("unexpected prompt injection: %+v", got)
 	}
 	if got[1] != messages[0] {

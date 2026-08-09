@@ -1,85 +1,42 @@
 package main
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 )
 
 var (
-	codeRevisionOnce   sync.Once
-	codeRevision       string
-	gitRevisionCommand = func(dir string) (string, error) {
-		out, err := exec.Command("git", "-C", dir, "rev-parse", "--short=12", "HEAD").Output()
-		return string(out), err
-	}
+	codeRevisionOnce sync.Once
+	codeRevision     string
 )
 
 func currentCodeRevision() string {
 	codeRevisionOnce.Do(func() {
-		workingDir, _ := os.Getwd()
-		executable, _ := os.Executable()
-		candidates := repositoryDirCandidates(workingDir, executable)
-		if repoDir := strings.TrimSpace(os.Getenv("WELINK_REPO_DIR")); repoDir != "" {
-			candidates = append([]string{repoDir}, candidates...)
-		}
-		for _, dir := range candidates {
-			if revision, ok := gitRevisionForDir(dir); ok {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			if revision, found := revisionFromBuildInfo(info); found {
 				codeRevision = revision
 				return
 			}
 		}
-		// 只展示运行时读取的仓库 HEAD，不以构建时 VCS 信息替代，便于与部署目录对齐。
 		codeRevision = "unknown"
 	})
 	return codeRevision
 }
 
-func gitRevisionForDir(dir string) (string, bool) {
-	dir = strings.TrimSpace(dir)
-	if dir == "" {
+func revisionFromBuildInfo(info *debug.BuildInfo) (string, bool) {
+	if info == nil {
 		return "", false
 	}
-	out, err := gitRevisionCommand(dir)
-	if err != nil {
-		return "", false
-	}
-	revision := shortRevision(out)
-	return revision, revision != ""
-}
-
-func repositoryDirCandidates(workingDir, executable string) []string {
-	candidates := make([]string, 0, 8)
-	appendCandidate := func(dir string) {
-		dir = strings.TrimSpace(dir)
-		if dir == "" {
-			return
+	for _, setting := range info.Settings {
+		if setting.Key != "vcs.revision" {
+			continue
 		}
-		dir = filepath.Clean(dir)
-		for _, existing := range candidates {
-			if existing == dir {
-				return
-			}
-		}
-		candidates = append(candidates, dir)
+		revision := shortRevision(setting.Value)
+		return revision, revision != ""
 	}
-
-	appendCandidate(workingDir)
-	if executable == "" {
-		return candidates
-	}
-	for dir := filepath.Dir(executable); ; {
-		appendCandidate(dir)
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return candidates
+	return "", false
 }
 
 func shortRevision(revision string) string {

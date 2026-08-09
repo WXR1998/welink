@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1265,22 +1266,51 @@ func serverMain() {
 		c.JSON(http.StatusOK, existing.CustomAnniversaries)
 	})
 
-	// Prompt 模板保存
-	api.PUT("/preferences/prompts", func(c *gin.Context) {
+	// Prompt 模板保存在 AI SQLite 数据库中；首次初始化时才从代码默认值 seed。
+	api.GET("/preferences/prompts", func(c *gin.Context) {
+		templates, err := listPromptTemplates()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取 Prompt 模板失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"templates": templates})
+	})
+
+	api.PUT("/preferences/prompts/:id", func(c *gin.Context) {
 		var body struct {
-			PromptTemplates map[string]string `json:"prompt_templates"`
+			Prompt string `json:"prompt"`
 		}
-		if err := c.ShouldBindJSON(&body); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+		if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Prompt) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Prompt 不能为空"})
 			return
 		}
-		existing := loadPreferences()
-		existing.PromptTemplates = body.PromptTemplates
-		if err := savePreferences(existing); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		if err := updatePromptTemplate(c.Param("id"), body.Prompt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Prompt 模板不存在"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 Prompt 模板失败"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+		template, err := getPromptTemplate(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取已保存的 Prompt 模板失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"template": template})
+	})
+
+	api.POST("/preferences/prompts/:id/reset", func(c *gin.Context) {
+		template, err := resetPromptTemplate(c.Param("id"))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Prompt 模板不存在"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复默认 Prompt 失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"template": template})
 	})
 
 	// LLM 配置单独保存，避免与屏蔽名单 PUT 冲突
@@ -1847,7 +1877,7 @@ func serverMain() {
 		}
 		prefs := loadPreferences()
 		if body.PromptTemplate == "cross_qa_answer" {
-			body.Messages = injectCrossQAPrompt(body.Messages, body.PromptTemplate, prefs)
+			body.Messages = injectCrossQAPrompt(body.Messages, body.PromptTemplate)
 		}
 		finalAnswerProfileID := aiQAStepProfileID(prefs, "final_answer", body.ProfileID)
 		cfg := llmConfigForProfile(finalAnswerProfileID, prefs)
@@ -1955,7 +1985,7 @@ func serverMain() {
 				fmt.Fprintf(&records, "%s ｜ %s ｜ %s ｜ %s\n", e.SourceName, e.Datetime, sender, e.Content)
 			}
 			injected := "\n\n" + renderCrossQARawEvidencePrompt(
-				effectiveCrossQAPrompt(prefs, "cross_qa_raw_evidence"),
+				effectiveCrossQAPrompt("cross_qa_raw_evidence"),
 				strings.TrimSuffix(records.String(), "\n"),
 			)
 			foundSys := false

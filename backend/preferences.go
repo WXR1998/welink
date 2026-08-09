@@ -323,7 +323,7 @@ type Preferences struct {
 	// 自定义纪念日
 	CustomAnniversaries []CustomAnniversary `json:"custom_anniversaries,omitempty"`
 
-	// 自定义 Prompt 模板（key → prompt 文本，为空则用默认值）
+	// 旧版 Prompt 模板暂存字段。启动时会迁移进 AI SQLite 数据库并清空。
 	PromptTemplates map[string]string `json:"prompt_templates,omitempty"`
 
 	// 导出中心：第三方笔记/文档平台令牌

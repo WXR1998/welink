@@ -19,7 +19,9 @@ const defaultCrossQAAnswerPrompt = `你是 WeLink 的跨联系人 AI 助手，�
 2026-08-09 14:06 ｜ 李四 ｜ 那我去接你
 ` + "```" + `
 代码块外再写必要的解释；不要把总结、推测或补充说明塞进原文代码块。
-9. 如果用户要求找原文、原话或原句，只有当对话或检索结果中确实存在原始聊天记录片段时，才直接引用原文并标注来源与时间；不要根据记忆 summary 逐字转述成原文。若未定位到原文，明确说明“未能在聊天记录中定位到原文”，不要编造。`
+9. 如果用户要求找原文、原话或原句，只有当对话或检索结果中确实存在原始聊天记录片段时，才直接引用原文并标注来源与时间；不要根据记忆 summary 逐字转述成原文。若未定位到原文，明确说明“未能在聊天记录中定位到原文”，不要编造。
+
+{{fence}}`
 
 const defaultCrossQARawEvidencePrompt = `【本轮之前对话中已检索到的相关原文（来自前序检索，可直接引用）】
 ` + "```text" + `
@@ -27,18 +29,8 @@ const defaultCrossQARawEvidencePrompt = `【本轮之前对话中已检索到的
 ` + "```" + `
 以上是已经确认检索到的聊天记录原文。请优先直接引用这些原文，并在引用时标注来源；连续原文引用时保持每条一行，不插入不必要的空行。`
 
-func effectiveCrossQAPrompt(prefs Preferences, key string) string {
-	if custom := strings.TrimSpace(prefs.PromptTemplates[key]); custom != "" {
-		return custom
-	}
-	switch key {
-	case "cross_qa_answer":
-		return defaultCrossQAAnswerPrompt
-	case "cross_qa_raw_evidence":
-		return defaultCrossQARawEvidencePrompt
-	default:
-		return ""
-	}
+func effectiveCrossQAPrompt(key string) string {
+	return promptTemplateContent(key)
 }
 
 func renderCrossQARawEvidencePrompt(template, records string) string {
@@ -48,8 +40,8 @@ func renderCrossQARawEvidencePrompt(template, records string) string {
 	return strings.TrimSpace(template) + "\n\n" + records
 }
 
-func injectCrossQAPrompt(messages []LLMMessage, templateID string, prefs Preferences) []LLMMessage {
-	prompt := effectiveCrossQAPrompt(prefs, templateID)
+func injectCrossQAPrompt(messages []LLMMessage, templateID string) []LLMMessage {
+	prompt := effectiveCrossQAPrompt(templateID)
 	if prompt == "" {
 		return messages
 	}

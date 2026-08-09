@@ -76,6 +76,11 @@ func InitAIDB() error {
 		return fmt.Errorf("ai_store: create table: %w", err)
 	}
 	aiDB = db
+	if err := initPromptTemplateTable(); err != nil {
+		db.Close()
+		aiDB = nil
+		return fmt.Errorf("ai_store: %w", err)
+	}
 	if err := initFTSTables(); err != nil {
 		db.Close()
 		aiDB = nil
