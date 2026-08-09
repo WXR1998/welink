@@ -859,7 +859,8 @@ func cardJSON(title, text, progress string) string {
 }
 
 // progressBar 返回一个固定格数的等宽进度条行。
-// 使用 fenced code block 触发飞书卡片的等宽字体，空白格使用 ASCII 下划线。
+// 使用 inline code 触发飞书卡片的等宽字体，避免代码块显示行号。
+// 实心方块与空心方块使用同一组几何字形，移动端的字形底部可保持对齐。
 const maxProgressCells = 16
 
 func progressBar(current, total int) string {
@@ -884,5 +885,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("```\n%3d%% %s%s\n```", pct, strings.Repeat("█", filled), strings.Repeat("_", empty))
+	return fmt.Sprintf("`%3d%% %s%s`", pct, strings.Repeat("■", filled), strings.Repeat("□", empty))
 }
