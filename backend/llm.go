@@ -76,6 +76,7 @@ type llmConfig struct {
 	reasoningEffort   string // off / low / medium / high；空字符串 = off
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
 	compressThreshold int    // 上下文压缩阈值，0 = contextWindow 的 70%
+	useResponsesAPI   bool   // 使用 OpenAI Responses API（/responses）
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
@@ -307,7 +308,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	var cfg llmConfig
 	for _, p := range prefs.LLMProfiles {
 		if p.ID == profileID {
-			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold}
+			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold, useResponsesAPI: p.UseResponsesAPI}
 			break
 		}
 	}
@@ -603,7 +604,11 @@ func dispatchLLMStream(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig)
 	case "vertex":
 		err = streamVertex(wrappedSend, msgs, cfg)
 	default:
-		err = streamOpenAICompat(wrappedSend, msgs, cfg)
+		if cfg.useResponsesAPI {
+			err = streamOpenAIResponses(wrappedSend, msgs, cfg)
+		} else {
+			err = streamOpenAICompat(wrappedSend, msgs, cfg)
+		}
 	}
 	t.Done(err,
 		"provider", cfg.provider,
@@ -1048,6 +1053,9 @@ func completeLLMWithConfig(msgs []LLMMessage, cfg llmConfig, prefs Preferences, 
 }
 
 func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
+	if cfg.useResponsesAPI {
+		return completeOpenAIResponsesSync(msgs, cfg)
+	}
 	if cfg.apiKey == "" && cfg.provider != "ollama" {
 		return "", fmt.Errorf("未配置 API Key")
 	}
@@ -1233,6 +1241,16 @@ func testLLMConnConfig(cfg llmConfig) (string, error) {
 	if cfg.provider == "vertex" {
 		return testVertexConn(cfg)
 	}
+	if cfg.useResponsesAPI {
+		result, err := completeOpenAIResponsesSync([]LLMMessage{{Role: "user", Content: "Hi"}}, cfg)
+		if err != nil {
+			return cfg.model, err
+		}
+		if result == "" {
+			return cfg.model, fmt.Errorf("响应为空")
+		}
+		return cfg.model, nil
+	}
 
 	body, _ := json.Marshal(openAIRequest{Model: cfg.model, Messages: []LLMMessage{{Role: "user", Content: "Hi"}}, Stream: true})
 	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -1341,6 +1359,19 @@ func testLLMConnStatsConfig(cfg llmConfig) (*LLMTestStats, error) {
 		}
 		latencyMs := time.Since(start).Milliseconds()
 		return &LLMTestStats{Model: cfg.model, LatencyMs: latencyMs, OutputTokens: 0, TokensPerSecond: 0}, nil
+	}
+	if cfg.useResponsesAPI {
+		result, err := completeOpenAIResponsesSync([]LLMMessage{{Role: "user", Content: "Hi"}}, cfg)
+		if err != nil {
+			return nil, err
+		}
+		latencyMs := time.Since(start).Milliseconds()
+		tokens := estimateTokens(result)
+		var tps float64
+		if latencyMs > 0 {
+			tps = float64(tokens) / float64(latencyMs) * 1000
+		}
+		return &LLMTestStats{Model: cfg.model, LatencyMs: latencyMs, OutputTokens: tokens, TokensPerSecond: tps}, nil
 	}
 
 	body, _ := json.Marshal(openAIRequest{Model: cfg.model, Messages: []LLMMessage{{Role: "user", Content: "Hi"}}, Stream: true})

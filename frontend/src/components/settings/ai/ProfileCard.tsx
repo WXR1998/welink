@@ -66,6 +66,7 @@ export const ProfileCard: React.FC<{
               api_key: providerChanged ? '' : profile.api_key,
               base_url: '',
               model: '',
+              use_responses_api: false,
               ...(shouldAutoRename ? { name: newProvider } : {}),
             });
           }}
@@ -209,6 +210,23 @@ export const ProfileCard: React.FC<{
           placeholder={provInfo.defaultModel ? `默认：${provInfo.defaultModel}` : '请输入模型名'}
           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input" />
       </div>
+
+      {(profile.provider === 'openai' || profile.provider === 'custom') && (
+        <div className="flex items-center justify-between py-1 gap-3">
+          <div className="min-w-0">
+            <span className="text-sm text-[#1d1d1f] dark:text-gray-200">使用 Responses API</span>
+            <p className="text-[11px] text-gray-400 mt-0.5">请求发送到 /responses；非流式步骤会在 WeLink 内部聚合上游 SSE。适用于 Lingjun GPT-5.6 等网关。</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange({ ...profile, use_responses_api: !profile.use_responses_api })}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${profile.use_responses_api ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
+            title="使用 OpenAI Responses API"
+          >
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.use_responses_api ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+      )}
 
       {/* MiniMax 思考模型提示 */}
       {(profile.provider === 'minimax' || profile.provider === 'minimax-cn') && (profile.model ?? '').toLowerCase().includes('m2') && (

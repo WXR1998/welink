@@ -140,6 +140,9 @@ type LLMProfile struct {
 	// 上下文压缩阈值（token 数）。对话 token 数超过此值时触发压缩。
 	// 0 = 使用 context_window 的 70%（给输出和检索注入预留空间）。
 	CompressThreshold int `json:"compress_threshold,omitempty"`
+	// 使用 OpenAI Responses API（POST /responses）而不是 Chat Completions。
+	// 适用于仅支持 Responses API 的 OpenAI 兼容网关。
+	UseResponsesAPI bool `json:"use_responses_api,omitempty"`
 }
 
 // AIQALLMProfiles 指定跨联系人问答各 LLM 步骤的可选模型。
