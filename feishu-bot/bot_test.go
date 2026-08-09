@@ -14,7 +14,7 @@ func TestCardStreamUpdaterKeepsOnlyLatestPendingCard(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	patched := make(chan string, 2)
-	updater := newCardStreamUpdater(context.Background(), func(_ context.Context, card string) {
+	updater := newCardStreamUpdater(context.Background(), 5*time.Millisecond, func(_ context.Context, card string) {
 		if card == "first" {
 			close(started)
 			<-release
@@ -38,6 +38,29 @@ func TestCardStreamUpdaterKeepsOnlyLatestPendingCard(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("timed out waiting for %q card", want)
 		}
+	}
+}
+
+func TestCardStreamUpdaterPublishesAtInterval(t *testing.T) {
+	patched := make(chan string, 1)
+	updater := newCardStreamUpdater(context.Background(), 50*time.Millisecond, func(_ context.Context, card string) {
+		patched <- card
+	})
+	defer updater.Stop()
+
+	updater.Submit("latest full answer")
+	select {
+	case got := <-patched:
+		t.Fatalf("card was published before interval elapsed: %q", got)
+	case <-time.After(10 * time.Millisecond):
+	}
+	select {
+	case got := <-patched:
+		if got != "latest full answer" {
+			t.Fatalf("patched card = %q, want latest full answer", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for interval update")
 	}
 }
 

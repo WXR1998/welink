@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	maxHistoryMsgs  = 48            // 后端 Profile 预算之外的本地兜底条数
-	maxHistoryChars = 120000        // 后端 Profile 预算之外的本地兜底字符数
-	sessionIdleTTL  = 2 * time.Hour // 2 小时无新提问自动新开会话
+	maxHistoryMsgs           = 48            // 后端 Profile 预算之外的本地兜底条数
+	maxHistoryChars          = 120000        // 后端 Profile 预算之外的本地兜底字符数
+	sessionIdleTTL           = 2 * time.Hour // 2 小时无新提问自动新开会话
+	cardStreamUpdateInterval = time.Second
 )
 
 // bot 持有飞书通道与配置，并维护每个用户的独立会话。
@@ -328,7 +329,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	seenProgressNotes := make(map[string]bool)
 	streamBuffer := newAnswerStreamBuffer(20)
 	answerCurrent, answerTotal := 1, 1
-	streamUpdater := newCardStreamUpdater(ctx, func(updateCtx context.Context, card string) {
+	streamUpdater := newCardStreamUpdater(ctx, cardStreamUpdateInterval, func(updateCtx context.Context, card string) {
 		_ = b.patchCard(updateCtx, messageID, card)
 	})
 	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
@@ -444,7 +445,7 @@ func (b *bot) patchCard(ctx context.Context, messageID, card string) error {
 	return nil
 }
 
-// cardStreamUpdater 串行发送卡片更新，并在发送落后时只保留最新状态。
+// cardStreamUpdater 串行发送卡片更新，并按固定时间间隔发送最新状态。
 // 这样飞书 PATCH 的网络延迟不会阻塞 LLM SSE 的读取与最终回答生成。
 type cardStreamUpdater struct {
 	updates chan string
@@ -452,7 +453,10 @@ type cardStreamUpdater struct {
 	done    chan struct{}
 }
 
-func newCardStreamUpdater(parent context.Context, patch func(context.Context, string)) *cardStreamUpdater {
+func newCardStreamUpdater(parent context.Context, interval time.Duration, patch func(context.Context, string)) *cardStreamUpdater {
+	if interval <= 0 {
+		interval = time.Second
+	}
 	ctx, cancel := context.WithCancel(parent)
 	u := &cardStreamUpdater{
 		updates: make(chan string, 1),
@@ -461,12 +465,29 @@ func newCardStreamUpdater(parent context.Context, patch func(context.Context, st
 	}
 	go func() {
 		defer close(u.done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		latest := ""
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case card := <-u.updates:
-				patch(ctx, card)
+				latest = card
+			case <-ticker.C:
+				for {
+					select {
+					case card := <-u.updates:
+						latest = card
+					default:
+						if latest != "" {
+							patch(ctx, latest)
+							latest = ""
+						}
+						goto next
+					}
+				}
+			next:
 			}
 		}
 	}()
