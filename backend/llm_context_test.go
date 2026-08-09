@@ -26,6 +26,12 @@ func TestRecentConversationBudgetReservesSpaceForSystemContext(t *testing.T) {
 	}
 }
 
+func TestEstimateContextTokensUsesConservativeChineseBudget(t *testing.T) {
+	if got := estimateContextTokens(strings.Repeat("证", 10)); got != 11 {
+		t.Fatalf("10 Chinese runes should reserve 11 context tokens, got %d", got)
+	}
+}
+
 func TestTruncatePromptToTokenBudgetKeepsPromptWithinBudget(t *testing.T) {
 	msgs := []LLMMessage{
 		{Role: "system", Content: strings.Repeat("系", 400)},
@@ -41,5 +47,23 @@ func TestTruncatePromptToTokenBudgetKeepsPromptWithinBudget(t *testing.T) {
 	}
 	if got[1].Content != msgs[1].Content {
 		t.Fatalf("user message must be retained, got %q", got[1].Content)
+	}
+}
+
+func TestTruncatePromptToTokenBudgetTruncatesOversizedUserEvidence(t *testing.T) {
+	msgs := []LLMMessage{
+		{Role: "system", Content: "你是助手"},
+		{Role: "user", Content: "问题：最新问题\n\n检索证据：\n" + strings.Repeat("证", 400)},
+	}
+
+	got := truncatePromptToTokenBudget(msgs, 100)
+	if tokens := estimateContextMsgTokens(got); tokens > 100 {
+		t.Fatalf("prompt exceeds conservative context budget: %d", tokens)
+	}
+	if !strings.Contains(got[1].Content, "问题：最新问题") {
+		t.Fatalf("latest user question must be retained: %q", got[1].Content)
+	}
+	if !strings.Contains(got[1].Content, "因长度限制已截断部分聊天记录") {
+		t.Fatalf("oversized user evidence must be truncated: %q", got[1].Content)
 	}
 }

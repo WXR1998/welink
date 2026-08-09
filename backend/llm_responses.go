@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -271,6 +272,10 @@ func consumeOpenAIResponsesSSE(reader io.Reader, send func(StreamChunk)) (string
 		return parseOpenAIResponsesJSON([]byte(raw.String()), send)
 	}
 	if !completed {
+		if content.Len() > 0 {
+			log.Printf("[llm] Responses 流缺少完成事件，按干净 EOF 保留已接收正文")
+			return content.String(), usage, nil
+		}
 		return "", nil, fmt.Errorf("Responses 响应流意外结束")
 	}
 	return content.String(), usage, nil

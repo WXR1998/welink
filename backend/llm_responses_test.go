@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,22 @@ func TestStreamOpenAIResponsesForwardsDeltasAndUsage(t *testing.T) {
 	}
 	if chunks[2].Usage == nil || chunks[2].Usage.TotalTokens != 5 {
 		t.Fatalf("usage was not forwarded: %+v", chunks[2])
+	}
+}
+
+func TestConsumeOpenAIResponsesSSEAcceptsCleanEOFWithContent(t *testing.T) {
+	content, usage, err := consumeOpenAIResponsesSSE(
+		strings.NewReader("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"可保留的正文\"}\n\n"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("clean EOF after output delta should be accepted: %v", err)
+	}
+	if content != "可保留的正文" {
+		t.Fatalf("content = %q, want streamed text", content)
+	}
+	if usage != nil {
+		t.Fatalf("unexpected usage without completion event: %+v", usage)
 	}
 }
 
