@@ -37,6 +37,24 @@ func TestInitPromptTemplateTableSeedsDefaultTemplates(t *testing.T) {
 			t.Fatalf("cross QA template missing %s: %q", placeholder, template.Prompt)
 		}
 	}
+	decomposition, err := getPromptTemplate("cross_qa_decomposition")
+	if err != nil {
+		t.Fatalf("get query decomposition template: %v", err)
+	}
+	for _, placeholder := range []string{"{{today}}", "{{previous_decomposition}}", "{{pinned_memories}}", "{{aliases_table}}"} {
+		if !strings.Contains(decomposition.Prompt, placeholder) {
+			t.Fatalf("query decomposition template missing %s: %q", placeholder, decomposition.Prompt)
+		}
+	}
+	expansion, err := getPromptTemplate("cross_qa_expansion")
+	if err != nil {
+		t.Fatalf("get query expansion template: %v", err)
+	}
+	for _, placeholder := range []string{"{{pinned_memories}}", "{{aliases_table}}"} {
+		if !strings.Contains(expansion.Prompt, placeholder) {
+			t.Fatalf("query expansion template missing %s: %q", placeholder, expansion.Prompt)
+		}
+	}
 }
 
 func TestUpdatePromptTemplatePersistsInDatabase(t *testing.T) {

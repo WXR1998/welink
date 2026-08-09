@@ -115,6 +115,18 @@ var defaultPromptTemplates = []promptTemplateDefinition{
 		DefaultPrompt: defaultCrossQAAnswerPrompt,
 	},
 	{
+		ID:            "cross_qa_decomposition",
+		Name:          "跨联系人问答 · 问题分解",
+		Description:   "判断是否检索、提取实体、概念和时间范围；支持 {{today}}、{{previous_decomposition}}、{{aliases_table}}、{{pinned_memories}}。",
+		DefaultPrompt: defaultCrossQADecompositionPrompt,
+	},
+	{
+		ID:            "cross_qa_expansion",
+		Name:          "跨联系人问答 · 查询扩展",
+		Description:   "将原问题改写为多条检索子查询；支持 {{aliases_table}}、{{pinned_memories}}。",
+		DefaultPrompt: defaultCrossQAExpansionPrompt,
+	},
+	{
 		ID:            "cross_qa_raw_evidence",
 		Name:          "跨联系人问答 · 原文证据注入",
 		Description:   "将前序检索到的原文注入最终回答。必须保留 {{records}} 占位符。",

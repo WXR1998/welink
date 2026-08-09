@@ -74,3 +74,41 @@ func TestRenderCrossQAAnswerPromptInjectsPinnedMemoriesAndAliases(t *testing.T) 
 		t.Fatalf("missing rendered context: %q", got)
 	}
 }
+
+func TestRenderPromptTemplateInjectsDecompositionVariables(t *testing.T) {
+	template := "日期：{{today}}\n上一轮：{{previous_decomposition}}\n别名：{{aliases_table}}\n置顶：{{pinned_memories}}"
+	got := renderPromptTemplate(template, map[string]string{
+		"today":                  "2026-08-09",
+		"previous_decomposition": "实体: 张三",
+		"aliases_table":          "小张 -> 张三",
+		"pinned_memories":        "张三常驻上海",
+	})
+
+	for _, want := range []string{"2026-08-09", "实体: 张三", "小张 -> 张三", "张三常驻上海"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered prompt missing %q: %q", want, got)
+		}
+	}
+	for _, placeholder := range []string{"{{today}}", "{{previous_decomposition}}", "{{aliases_table}}", "{{pinned_memories}}"} {
+		if strings.Contains(got, placeholder) {
+			t.Fatalf("template variable %s was not rendered: %q", placeholder, got)
+		}
+	}
+}
+
+func TestBuildQueryDecompositionPromptUsesDatabaseTemplate(t *testing.T) {
+	withPromptTemplateTestDB(t)
+	if err := initPromptTemplateTable(); err != nil {
+		t.Fatalf("initialize prompt template table: %v", err)
+	}
+	if err := updatePromptTemplate("cross_qa_decomposition", "日期：{{today}}\n上一轮：{{previous_decomposition}}\n自定义分解提示词"); err != nil {
+		t.Fatalf("update query decomposition template: %v", err)
+	}
+
+	got := buildQueryDecompositionPrompt("2026-08-09", "实体: 张三", "", "")
+	for _, want := range []string{"2026-08-09", "实体: 张三", "自定义分解提示词"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("query decomposition prompt missing %q: %q", want, got)
+		}
+	}
+}
