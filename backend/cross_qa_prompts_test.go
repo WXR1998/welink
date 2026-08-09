@@ -45,3 +45,12 @@ func TestRenderCrossQARawEvidencePromptInjectsRecords(t *testing.T) {
 		t.Fatalf("rendered prompt must retain text code fence: %q", got)
 	}
 }
+
+func TestDefaultCrossQAAnswerPromptUsesOnlyCodeBlockRuleForChatRecords(t *testing.T) {
+	if strings.Contains(defaultCrossQAAnswerPrompt, "Markdown 引用标记") {
+		t.Fatalf("chat-record prompt must not include a competing quote-line rule: %q", defaultCrossQAAnswerPrompt)
+	}
+	if !strings.Contains(defaultCrossQAAnswerPrompt, "```text") {
+		t.Fatalf("chat-record prompt must retain the code-block rule: %q", defaultCrossQAAnswerPrompt)
+	}
+}
