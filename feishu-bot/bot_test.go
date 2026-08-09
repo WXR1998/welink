@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,37 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	"github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
+
+func TestCardStreamUpdaterKeepsOnlyLatestPendingCard(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	patched := make(chan string, 2)
+	updater := newCardStreamUpdater(context.Background(), func(_ context.Context, card string) {
+		if card == "first" {
+			close(started)
+			<-release
+		}
+		patched <- card
+	})
+	defer updater.Stop()
+
+	updater.Submit("first")
+	<-started
+	updater.Submit("second")
+	updater.Submit("third")
+	close(release)
+
+	for _, want := range []string{"first", "third"} {
+		select {
+		case got := <-patched:
+			if got != want {
+				t.Fatalf("patched card = %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %q card", want)
+		}
+	}
+}
 
 func TestSessionKeyFor_GroupIsolation(t *testing.T) {
 	a := &types.NormalizedMessage{ChatType: "group", ChatID: "oc_a", UserID: "user_a"}

@@ -328,6 +328,9 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	seenProgressNotes := make(map[string]bool)
 	streamBuffer := newAnswerStreamBuffer(20)
 	answerCurrent, answerTotal := 1, 1
+	streamUpdater := newCardStreamUpdater(ctx, func(updateCtx context.Context, card string) {
+		_ = b.patchCard(updateCtx, messageID, card)
+	})
 	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
@@ -372,13 +375,14 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 			return
 		}
 		body := "检索完成，正在生成回答…\n\n" + partial
-		_ = b.patchCard(ctx, messageID, cardJSON(
+		streamUpdater.Submit(cardJSON(
 			"✍️ 正在整理回答",
 			progressCardBody(progressNotes, body),
 			progressBar(answerCurrent, answerTotal),
 		))
 	})
 	log.Printf("[bot] %s 回答完成: messageID=%s question=%q answerLen=%d errMsg=%q", sessionKey, messageID, question, len(answer), errMsg)
+	streamUpdater.Stop()
 
 	if errMsg != "" {
 		b.untrackPending(messageID)
@@ -438,6 +442,59 @@ func (b *bot) patchCard(ctx context.Context, messageID, card string) error {
 		return fmt.Errorf("patch card failed: code=%d", resp.Code)
 	}
 	return nil
+}
+
+// cardStreamUpdater 串行发送卡片更新，并在发送落后时只保留最新状态。
+// 这样飞书 PATCH 的网络延迟不会阻塞 LLM SSE 的读取与最终回答生成。
+type cardStreamUpdater struct {
+	updates chan string
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+func newCardStreamUpdater(parent context.Context, patch func(context.Context, string)) *cardStreamUpdater {
+	ctx, cancel := context.WithCancel(parent)
+	u := &cardStreamUpdater{
+		updates: make(chan string, 1),
+		cancel:  cancel,
+		done:    make(chan struct{}),
+	}
+	go func() {
+		defer close(u.done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case card := <-u.updates:
+				patch(ctx, card)
+			}
+		}
+	}()
+	return u
+}
+
+func (u *cardStreamUpdater) Submit(card string) {
+	if card == "" {
+		return
+	}
+	select {
+	case u.updates <- card:
+		return
+	default:
+	}
+	select {
+	case <-u.updates:
+	default:
+	}
+	select {
+	case u.updates <- card:
+	default:
+	}
+}
+
+func (u *cardStreamUpdater) Stop() {
+	u.cancel()
+	<-u.done
 }
 
 // trackPending 持久化一条进行中的卡片记录。
