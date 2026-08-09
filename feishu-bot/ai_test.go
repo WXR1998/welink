@@ -89,7 +89,7 @@ func TestMemorySearch_ParsesResult(t *testing.T) {
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	var steps []string
 	d, err := memorySearch(context.Background(), cfg, "旅行", "feishu:p2p:u", "", false,
-		func(step, detail string) {
+		func(step, detail string, _ *memorySearchProgress) {
 			steps = append(steps, step)
 		},
 		func(names []string) {},
@@ -129,7 +129,7 @@ func TestMemorySearch_AbortsOnEntityNotFound(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	_, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
-		func(step, detail string) {},
+		func(step, detail string, _ *memorySearchProgress) {},
 		func(names []string) {},
 	)
 	if err != errEntityNotFound {
@@ -149,7 +149,7 @@ func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
 	d, err := memorySearch(context.Background(), cfg, "我和邓凯文最近聊了什么？", "feishu:smoke", "", false,
-		func(step, detail string) {},
+		func(step, detail string, _ *memorySearchProgress) {},
 		func(names []string) {},
 	)
 	if err != nil {
@@ -183,6 +183,32 @@ func TestAnalyzeQuestionUsesCrossQAAnswerTemplate(t *testing.T) {
 		if message.Role == "system" {
 			t.Fatalf("final answer prompt must be injected by backend, got system message: %+v", got.Messages)
 		}
+	}
+}
+
+func TestMemorySearchForwardsStructuredProgressData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"type":"progress","step":"decompose_result","detail":"问题分解结果：实体 张三","data":{"decomposition":{"entities":["张三"],"concepts":["旅行"],"time_from":"2026-07-01","time_to":"2026-08-09"}}}` + "\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"result\",\"data\":{\"facts\":[]}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
+	}))
+	defer server.Close()
+
+	var progress *memorySearchProgress
+	_, err := memorySearch(context.Background(), &Config{WeLinkBaseURL: server.URL}, "张三旅行", "feishu:p2p:u", "", false,
+		func(step, detail string, data *memorySearchProgress) {
+			if step == "decompose_result" {
+				progress = data
+			}
+		},
+		func(names []string) {},
+	)
+	if err != nil {
+		t.Fatalf("memorySearch returned error: %v", err)
+	}
+	if progress == nil || progress.Decomposition == nil || len(progress.Decomposition.Entities) != 1 || progress.Decomposition.Entities[0] != "张三" {
+		t.Fatalf("unexpected structured progress: %+v", progress)
 	}
 }
 
@@ -221,6 +247,22 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestFormatProgressResultUsesSharedTables(t *testing.T) {
+	got := formatProgressResult("query_expansion_result", "查询扩展结果：原始文本", &memorySearchProgress{
+		ExpandedQueries: []string{"张三旅行计划", "张三旅行时间"},
+	})
+	for _, want := range []string{
+		"> **查询扩展**",
+		"| 序号 | 查询 |",
+		"| 1 | 张三旅行计划 |",
+		"| 2 | 张三旅行时间 |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("progress result missing %q: %s", want, got)
 		}
 	}
 }

@@ -332,7 +332,7 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	streamUpdater := newCardStreamUpdater(ctx, cardStreamUpdateInterval, func(updateCtx context.Context, card string) {
 		_ = b.patchCard(updateCtx, messageID, card)
 	})
-	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
+	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string, progress *memorySearchProgress) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
 		if stage == "search" {
@@ -340,10 +340,10 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 			body = "正在跨联系人检索相关聊天记录…"
 			if step == "decompose_result" {
 				title = "🧠 问题分解"
-				body = detail
+				body = "正在继续检索相关聊天记录…"
 			} else if step == "query_expansion_result" {
 				title = "🧩 查询扩展"
-				body = detail
+				body = "正在继续检索相关聊天记录…"
 			}
 		} else if stage == "answer" {
 			title = "✍️ 正在整理回答"
@@ -357,9 +357,9 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 			pct = current * 100 / total
 		}
 		showResult := step == "decompose_result" || step == "query_expansion_result"
-		if showResult && strings.TrimSpace(detail) != "" {
-			note := "> " + strings.TrimSpace(detail)
-			if !seenProgressNotes[note] {
+		if showResult {
+			note := formatProgressResult(step, detail, progress)
+			if note != "" && !seenProgressNotes[note] {
 				seenProgressNotes[note] = true
 				progressNotes = append(progressNotes, note)
 			}
@@ -598,7 +598,7 @@ func (b *bot) dropSession(key string) {
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
 // 返回回答文本、本次 LLM token 用量（可能为 nil）与错误信息。
-func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string), onAnswerDelta func(string)) (string, *answerRunMeta, string) {
+func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string, progress *memorySearchProgress), onAnswerDelta func(string)) (string, *answerRunMeta, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
@@ -610,11 +610,11 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 
 	// 1. memory-search 跨联系人检索（进度回调打印日志 + 驱动卡片进度；无实体则中止）
 	data, err := memorySearch(ctx, b.cfg, question, convKey, chatID, hasPriorEntity,
-		func(step, detail string) {
+		func(step, detail string, progress *memorySearchProgress) {
 			log.Printf("[bot] %s 检索进度: %s - %s", sessionKey, step, detail)
 			if onProgress != nil {
 				cur, total := tracker.Observe(step, detail)
-				onProgress("search", step, cur, total, detail)
+				onProgress("search", step, cur, total, detail, progress)
 			}
 		},
 		func(names []string) {
@@ -624,7 +624,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 			}
 			if onProgress != nil {
 				cur, total := tracker.Observe("resolve_entities", "")
-				onProgress("search", "resolve_entities", cur, total, "")
+				onProgress("search", "resolve_entities", cur, total, "", nil)
 			}
 		},
 	)
@@ -657,7 +657,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	// 2b. 检索完成，进入生成回答阶段
 	if onProgress != nil {
 		cur, total := tracker.Observe("answer", "")
-		onProgress("answer", "answer", cur, total, "")
+		onProgress("answer", "answer", cur, total, "", nil)
 	}
 
 	// 3. analyze 生成回答（带上历史 + 检索上下文）。
@@ -919,50 +919,73 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 		"| 最终回答 | " + model(meta.Models.FinalAnswer) + " |",
 	}
 
-	if d := meta.Decomposition; d != nil {
-		var rows []string
-		if entities := formatMarkdownTableValues(d.Entities); entities != "" {
-			rows = append(rows, "| 实体 | "+escapeMarkdownTableCell(entities)+" |")
-		}
-		if concepts := formatMarkdownTableValues(d.Concepts); concepts != "" {
-			rows = append(rows, "| 概念 | "+escapeMarkdownTableCell(concepts)+" |")
-		}
-		if d.TimeFrom != "" || d.TimeTo != "" {
-			timeRange := strings.TrimSpace(d.TimeFrom)
-			if timeRange == "" {
-				timeRange = strings.TrimSpace(d.TimeTo)
-			} else if strings.TrimSpace(d.TimeTo) != "" {
-				timeRange += " ~ " + strings.TrimSpace(d.TimeTo)
+	if section := formatQueryDecompositionTable(meta.Decomposition); section != "" {
+		lines = append(lines, section)
+	}
+	if section := formatExpandedQueriesTable(meta.ExpandedQueries); section != "" {
+		lines = append(lines, section)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatProgressResult(step, detail string, progress *memorySearchProgress) string {
+	if progress != nil {
+		switch step {
+		case "decompose_result":
+			if section := formatQueryDecompositionTable(progress.Decomposition); section != "" {
+				return section
 			}
-			rows = append(rows, "| 时间 | "+escapeMarkdownTableCell(timeRange)+" |")
-		}
-		if len(rows) > 0 {
-			lines = append(lines,
-				"> **问题分解**",
-				"| 维度 | 结果 |",
-				"| --- | --- |",
-			)
-			lines = append(lines, rows...)
+		case "query_expansion_result":
+			if section := formatExpandedQueriesTable(progress.ExpandedQueries); section != "" {
+				return section
+			}
 		}
 	}
-	var queryRows []string
-	for _, query := range meta.ExpandedQueries {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	return "> " + detail
+}
+
+func formatQueryDecompositionTable(d *queryDecomposition) string {
+	if d == nil {
+		return ""
+	}
+	var rows []string
+	if entities := formatMarkdownTableValues(d.Entities); entities != "" {
+		rows = append(rows, "| 实体 | "+escapeMarkdownTableCell(entities)+" |")
+	}
+	if concepts := formatMarkdownTableValues(d.Concepts); concepts != "" {
+		rows = append(rows, "| 概念 | "+escapeMarkdownTableCell(concepts)+" |")
+	}
+	if d.TimeFrom != "" || d.TimeTo != "" {
+		timeRange := strings.TrimSpace(d.TimeFrom)
+		if timeRange == "" {
+			timeRange = strings.TrimSpace(d.TimeTo)
+		} else if strings.TrimSpace(d.TimeTo) != "" {
+			timeRange += " ~ " + strings.TrimSpace(d.TimeTo)
+		}
+		rows = append(rows, "| 时间 | "+escapeMarkdownTableCell(timeRange)+" |")
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	return "> **问题分解**\n| 维度 | 结果 |\n| --- | --- |\n" + strings.Join(rows, "\n")
+}
+
+func formatExpandedQueriesTable(queries []string) string {
+	var rows []string
+	for _, query := range queries {
 		if query = strings.TrimSpace(query); query == "" {
 			continue
 		}
-		queryRows = append(queryRows,
-			fmt.Sprintf("| %d | %s |", len(queryRows)+1, escapeMarkdownTableCell(query)),
-		)
+		rows = append(rows, fmt.Sprintf("| %d | %s |", len(rows)+1, escapeMarkdownTableCell(query)))
 	}
-	if len(queryRows) > 0 {
-		lines = append(lines,
-			"> **查询扩展**",
-			"| 序号 | 查询 |",
-			"| --- | --- |",
-		)
-		lines = append(lines, queryRows...)
+	if len(rows) == 0 {
+		return ""
 	}
-	return strings.Join(lines, "\n")
+	return "> **查询扩展**\n| 序号 | 查询 |\n| --- | --- |\n" + strings.Join(rows, "\n")
 }
 
 func formatMarkdownTableValues(values []string) string {

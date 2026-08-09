@@ -107,6 +107,11 @@ type memorySearchData struct {
 	ExpandedQueries      []string             `json:"expanded_queries"`
 }
 
+type memorySearchProgress struct {
+	Decomposition   *queryDecomposition `json:"decomposition,omitempty"`
+	ExpandedQueries []string            `json:"expanded_queries,omitempty"`
+}
+
 // hasResolvedEntity 返回是否解析出至少一个可检索实体（联系人/群）。
 func (d *memorySearchData) hasResolvedEntity() bool {
 	if d == nil {
@@ -281,7 +286,7 @@ var errEntityNotFound = fmt.Errorf("问题中指定的联系人/群名未在数�
 // memorySearch 调用 POST /api/ai/memory-search，返回检索结果与过程。
 // hasPriorEntity 表示会话历史里是否已有明确实体（追问时可放行无实体问题）。
 // onResolveEntities 在收到 resolve_entities 进度时回调，可在无实体时主动中止。
-func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, hasPriorEntity bool, cb func(step, detail string), onResolveEntities func(names []string)) (*memorySearchData, error) {
+func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID string, hasPriorEntity bool, cb func(step, detail string, progress *memorySearchProgress), onResolveEntities func(names []string)) (*memorySearchData, error) {
 	payload, _ := json.Marshal(memorySearchRequest{
 		Query:           query,
 		ConversationKey: convKey,
@@ -308,7 +313,14 @@ func memorySearch(ctx context.Context, cfg *Config, query, convKey, chatID strin
 				lastDetail = evt.Detail
 			}
 			if cb != nil {
-				cb(evt.Step, evt.Detail)
+				var progress *memorySearchProgress
+				if len(evt.Data) > 0 && string(evt.Data) != "null" {
+					var parsed memorySearchProgress
+					if json.Unmarshal(evt.Data, &parsed) == nil {
+						progress = &parsed
+					}
+				}
+				cb(evt.Step, evt.Detail, progress)
 			}
 			if evt.Step == "resolve_entities" {
 				if strings.Contains(evt.Detail, "实体解析结果:") {

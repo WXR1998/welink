@@ -720,10 +720,17 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			}
 		}()
 
-		sendProgress := func(step string, detail string) {
-			data, _ := json.Marshal(map[string]string{"type": "progress", "step": step, "detail": detail})
+		sendProgressData := func(step string, detail string, progressData any) {
+			event := map[string]any{"type": "progress", "step": step, "detail": detail}
+			if progressData != nil {
+				event["data"] = progressData
+			}
+			data, _ := json.Marshal(event)
 			fmt.Fprintf(c.Writer, "data: %s\n\n", data)
 			flusher.Flush()
+		}
+		sendProgress := func(step string, detail string) {
+			sendProgressData(step, detail, nil)
 		}
 
 		sendResult := func(resp MemorySearchResponse) {
@@ -744,7 +751,9 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		// 先把原文提问里的外号还原为原名，让后续整条链路都围绕原名进行。
 		body.Query = normalizeEntityNames(body.Query, svc)
 		decomp, decompPrompt, decompUsage, _ := DecomposeQuery(body.Query, body.PreviousDecomposition, prefs, body.ProfileID, svc)
-		sendProgress("decompose_result", formatQueryDecompositionResult(decomp))
+		sendProgressData("decompose_result", formatQueryDecompositionResult(decomp), map[string]any{
+			"decomposition": decomp,
+		})
 
 		// needs_memory=false → 直接返回（问题可即答，不消耗检索 token）
 		if decomp != nil && !decomp.NeedsMemory {
@@ -858,7 +867,11 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 		searchKeys = applyFeishuScope(searchKeys, body.ChatID, prefs)
 
 		// ── 增强检索：BM25 + 双路 + 查询改写 + Rerank ──
-		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID, svc, func(step, detail string) {
+		enhancedResult, err := EnhancedRetrieval(body.Query, decomp, searchKeys, decomp.TimeFrom, decomp.TimeTo, prefs, body.ProfileID, svc, func(step, detail string, expandedQueries []string) {
+			if step == "query_expansion_result" && len(expandedQueries) > 0 {
+				sendProgressData(step, detail, map[string]any{"expanded_queries": expandedQueries})
+				return
+			}
 			sendProgress(step, detail)
 		})
 

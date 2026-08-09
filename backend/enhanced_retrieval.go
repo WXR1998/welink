@@ -660,11 +660,11 @@ func EnhancedRetrieval(
 	prefs Preferences,
 	profileID string,
 	svc *service.ContactService,
-	onProgress func(step, detail string),
+	onProgress func(step, detail string, expandedQueries []string),
 ) (*EnhancedRetrievalResult, error) {
 	progress := func(step, detail string) {
 		if onProgress != nil {
-			onProgress(step, detail)
+			onProgress(step, detail, nil)
 		}
 	}
 	result := &EnhancedRetrievalResult{}
@@ -685,7 +685,9 @@ func EnhancedRetrieval(
 		subQueries, err := ExpandQuery(query, decomp, prefs, profileID, svc)
 		if err == nil && len(subQueries) > 0 {
 			result.ExpandedQueries = subQueries
-			progress("query_expansion_result", "查询扩展结果："+strings.Join(subQueries, "；"))
+			if onProgress != nil {
+				onProgress("query_expansion_result", "查询扩展结果："+strings.Join(subQueries, "；"), subQueries)
+			}
 		}
 	}
 
