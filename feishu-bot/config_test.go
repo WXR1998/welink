@@ -51,7 +51,7 @@ func TestCardJSONWithProgress(t *testing.T) {
 	if !strings.Contains(card, `"🔎 正在检索"`) || !strings.Contains(card, `"正文"`) {
 		t.Fatalf("card missing title/body: %s", card)
 	}
-	if strings.Contains(card, "```") || !strings.Contains(card, "60%") || !strings.Contains(card, "█████████") || !strings.Contains(card, "_______") {
+	if !strings.Contains(card, "```") || !strings.Contains(card, "60%") || !strings.Contains(card, "█████████") || !strings.Contains(card, "_______") {
 		t.Fatalf("progress bar missing: %s", card)
 	}
 	if !strings.Contains(card, `"lark_md"`) && !strings.Contains(card, `"markdown"`) {

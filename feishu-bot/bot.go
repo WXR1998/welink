@@ -858,8 +858,8 @@ func cardJSON(title, text, progress string) string {
 	return fmt.Sprintf(`{"schema":"2.0","config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":%q}},"body":{"elements":[%s]}}`, title, elem)
 }
 
-// progressBar 返回一个固定格数的进度条行。
-// 使用实心方块和 ASCII 下划线，避免飞书移动端将空白格字符渲染为方框。
+// progressBar 返回一个固定格数的等宽进度条行。
+// 使用 fenced code block 触发飞书卡片的等宽字体，空白格使用 ASCII 下划线。
 const maxProgressCells = 16
 
 func progressBar(current, total int) string {
@@ -884,5 +884,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("%3d%% %s%s", pct, strings.Repeat("█", filled), strings.Repeat("_", empty))
+	return fmt.Sprintf("```\n%3d%% %s%s\n```", pct, strings.Repeat("█", filled), strings.Repeat("_", empty))
 }
