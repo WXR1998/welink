@@ -162,6 +162,9 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if !strings.Contains(gotBody, "记录之间不使用 `---` 或其他分隔线") {
 		t.Fatalf("system prompt must forbid Markdown record separators, body=%s", gotBody)
 	}
+	if !strings.Contains(gotBody, "每行必须以 Markdown 引用标记") {
+		t.Fatalf("system prompt must require quoted chat records, body=%s", gotBody)
+	}
 	if !strings.Contains(gotBody, "不要把聊天记录写成 Markdown 标题、表格或代码块") {
 		t.Fatalf("system prompt must forbid Markdown record containers, body=%s", gotBody)
 	}
