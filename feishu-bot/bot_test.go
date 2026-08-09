@@ -306,7 +306,7 @@ func TestContextMetaLineIncludesTurnCountAndElapsed(t *testing.T) {
 	}}
 
 	got := b.contextMetaLine("p2p:user_a", nil, 65*time.Second)
-	for _, want := range []string{"上下文含 2 轮对话", "本次问答总耗时 1分05秒"} {
+	for _, want := range []string{"上下文含 2 轮对话", "第一轮提问 | q1", "本次问答总耗时 1分05秒"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("meta missing %q: %q", want, got)
 		}

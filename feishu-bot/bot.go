@@ -931,11 +931,15 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta, elapsed time.D
 	s := b.sessions[key]
 	var createdAt time.Time
 	turns := 0
+	firstQuestion := ""
 	if s != nil {
 		createdAt = s.createdAt
 		for _, message := range s.history {
 			if message.Role == "user" {
 				turns++
+				if firstQuestion == "" {
+					firstQuestion = message.Content
+				}
 			}
 		}
 	}
@@ -944,6 +948,9 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta, elapsed time.D
 	var lines []string
 	if !createdAt.IsZero() {
 		lines = append(lines, formatContextMetaStart(createdAt, currentCodeRevision(), turns))
+	}
+	if strings.TrimSpace(firstQuestion) != "" {
+		lines = append(lines, "> 第一轮提问 | "+escapeMarkdownTableCell(firstQuestion))
 	}
 	if elapsed > 0 {
 		lines = append(lines, formatAnswerElapsed(elapsed))
