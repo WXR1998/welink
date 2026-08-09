@@ -26,12 +26,36 @@ func TestAnalyzeQuestion_AccumulatesSSE(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL, WeLinkToken: "tok"}
-	answer, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	var deltas []string
+	answer, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", func(delta string) {
+		deltas = append(deltas, delta)
+	})
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
 	if answer != "答案第一部分，第二部分" {
 		t.Errorf("unexpected answer: %q", answer)
+	}
+	if got := strings.Join(deltas, ""); got != answer {
+		t.Errorf("streamed deltas = %q, want %q", got, answer)
+	}
+}
+
+func TestAnswerStreamBufferUpdatesEveryTwentyRunes(t *testing.T) {
+	buf := newAnswerStreamBuffer(20)
+	first := strings.Repeat("你", 19)
+	if _, ready := buf.Append(first); ready {
+		t.Fatal("must not update before 20 runes")
+	}
+	if got, ready := buf.Append("好"); !ready || got != first+"好" {
+		t.Fatalf("first update = (%q, %v), want 20-rune answer and true", got, ready)
+	}
+	second := strings.Repeat("啊", 19)
+	if _, ready := buf.Append(second); ready {
+		t.Fatal("must wait for another 20 runes after an update")
+	}
+	if got, ready := buf.Append("！"); !ready || got != first+"好"+second+"！" {
+		t.Fatalf("second update = (%q, %v), want all accumulated text and true", got, ready)
 	}
 }
 
@@ -43,7 +67,7 @@ func TestAnalyzeQuestion_PropagatesError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "生成失败") {
 		t.Fatalf("expected error, got %v", err)
 	}
@@ -148,7 +172,7 @@ func TestAnalyzeQuestionUsesCrossQAAnswerTemplate(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "")
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", nil)
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
@@ -205,7 +229,7 @@ func TestAnalyzeQuestionSendsHistoryAsConversationMessages(t *testing.T) {
 		{Role: "assistant", Content: "前一个回答"},
 	}
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	if _, _, err := analyzeQuestion(context.Background(), cfg, "", "当前问题", "feishu:p2p:u", history, "检索内容"); err != nil {
+	if _, _, err := analyzeQuestion(context.Background(), cfg, "", "当前问题", "feishu:p2p:u", history, "检索内容", nil); err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
 

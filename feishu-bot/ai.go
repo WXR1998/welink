@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // llmMessage 与后端 LLMMessage 对应。
@@ -159,6 +160,33 @@ type analyzeChunk struct {
 	Done  bool          `json:"done,omitempty"`
 	Error string        `json:"error,omitempty"`
 	Usage *analyzeUsage `json:"usage,omitempty"`
+}
+
+type answerStreamBuffer struct {
+	content       strings.Builder
+	renderedRunes int
+	minRunes      int
+}
+
+func newAnswerStreamBuffer(minRunes int) *answerStreamBuffer {
+	if minRunes < 1 {
+		minRunes = 1
+	}
+	return &answerStreamBuffer{minRunes: minRunes}
+}
+
+func (b *answerStreamBuffer) Append(delta string) (string, bool) {
+	if delta == "" {
+		return "", false
+	}
+	b.content.WriteString(delta)
+	content := b.content.String()
+	runes := utf8.RuneCountInString(content)
+	if runes-b.renderedRunes < b.minRunes {
+		return "", false
+	}
+	b.renderedRunes = runes
+	return content, true
 }
 
 // complete 调用 POST /api/ai/complete，用非流式补全做上下文压缩摘要。
@@ -437,9 +465,8 @@ func buildDataContext(d *memorySearchData) string {
 }
 
 // analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
-// analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
 // 返回回答文本与此次调用的 token 用量（可能为 nil）。
-func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string) (string, *analyzeUsage, error) {
+func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string, onDelta func(string)) (string, *analyzeUsage, error) {
 	currentQuestion := "问题：" + query
 	if dataContext != "" {
 		currentQuestion += "\n\n" + dataContext
@@ -473,6 +500,9 @@ func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey st
 		}
 		if ch.Delta != "" {
 			answer.WriteString(ch.Delta)
+			if onDelta != nil {
+				onDelta(ch.Delta)
+			}
 		}
 		if ch.Usage != nil {
 			usage = ch.Usage

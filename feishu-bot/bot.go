@@ -326,6 +326,8 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	lastPct := -1
 	var progressNotes []string
 	seenProgressNotes := make(map[string]bool)
+	streamBuffer := newAnswerStreamBuffer(20)
+	answerCurrent, answerTotal := 1, 1
 	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
@@ -342,6 +344,9 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 		} else if stage == "answer" {
 			title = "✍️ 正在整理回答"
 			body = "检索完成，正在生成回答…"
+			if total > 0 {
+				answerCurrent, answerTotal = current, total
+			}
 		}
 		pct := 0
 		if total > 0 {
@@ -361,6 +366,17 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 		lastPct = pct
 		pb := progressBar(current, total)
 		_ = b.patchCard(ctx, messageID, cardJSON(title, progressCardBody(progressNotes, body), pb))
+	}, func(delta string) {
+		partial, ready := streamBuffer.Append(delta)
+		if !ready {
+			return
+		}
+		body := "检索完成，正在生成回答…\n\n" + partial
+		_ = b.patchCard(ctx, messageID, cardJSON(
+			"✍️ 正在整理回答",
+			progressCardBody(progressNotes, body),
+			progressBar(answerCurrent, answerTotal),
+		))
 	})
 	log.Printf("[bot] %s 回答完成: messageID=%s question=%q answerLen=%d errMsg=%q", sessionKey, messageID, question, len(answer), errMsg)
 
@@ -504,7 +520,7 @@ func (b *bot) dropSession(key string) {
 
 // answer 执行一次跨联系人问答：先 memory-search，再 analyze。
 // 返回回答文本、本次 LLM token 用量（可能为 nil）与错误信息。
-func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string)) (string, *answerRunMeta, string) {
+func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, onProgress func(stage, step string, current, total int, detail string), onAnswerDelta func(string)) (string, *answerRunMeta, string) {
 	// 取会话历史与前序解析出的实体
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
@@ -572,7 +588,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	if data.NormalizedQuery != "" {
 		answerQuery = data.NormalizedQuery
 	}
-	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, dataContext)
+	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, dataContext, onAnswerDelta)
 	if err != nil {
 		return "", &answerRunMeta{Usage: usage}, "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}
