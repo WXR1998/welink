@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig_RequiresIDsAndMode(t *testing.T) {
@@ -50,11 +51,34 @@ func TestCardJSONWithProgress(t *testing.T) {
 	if !strings.Contains(card, `"🔎 正在检索"`) || !strings.Contains(card, `"正文"`) {
 		t.Fatalf("card missing title/body: %s", card)
 	}
-	if !strings.Contains(card, "$$60%$$") || !strings.Contains(card, "███") {
+	if !strings.Contains(card, "```") || !strings.Contains(card, "60%") || !strings.Contains(card, "███") {
 		t.Fatalf("progress bar missing: %s", card)
 	}
 	if !strings.Contains(card, `"lark_md"`) && !strings.Contains(card, `"markdown"`) {
 		t.Fatalf("card missing markdown element: %s", card)
+	}
+}
+
+func TestProgressCardBodyPreservesQuotedLLMResults(t *testing.T) {
+	got := progressCardBody(
+		[]string{"> 问题分解结果：实体 张三；概念 旅行"},
+		"正在跨联系人检索相关聊天记录…",
+	)
+	if !strings.Contains(got, "> 问题分解结果：实体 张三；概念 旅行") {
+		t.Fatalf("missing quoted LLM result: %s", got)
+	}
+	if !strings.Contains(got, "正在跨联系人检索相关聊天记录…") {
+		t.Fatalf("missing current status: %s", got)
+	}
+}
+
+func TestFormatContextMetaStartIncludesRevision(t *testing.T) {
+	got := formatContextMetaStart(
+		time.Date(2026, time.August, 9, 20, 10, 0, 0, time.FixedZone("UTC+8", 8*3600)),
+		"6a06595",
+	)
+	if got != "> 上下文始于 08-09 20:10 · 代码 `6a06595`" {
+		t.Fatalf("unexpected context metadata: %s", got)
 	}
 }
 

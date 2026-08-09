@@ -324,6 +324,8 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 	// lastPct 记录上次渲染的百分比，保证进度条只增不减
 	// （total 动态增长时 current/total 可能下降，这里在渲染层强制单调）。
 	lastPct := -1
+	var progressNotes []string
+	seenProgressNotes := make(map[string]bool)
 	answer, runMeta, errMsg := b.answer(ctx, sessionKey, chatIDFromSession(sessionKey), question, func(stage, step string, current, total int, detail string) {
 		title := "AI 回答"
 		body := "检索完成，正在生成回答…"
@@ -346,12 +348,19 @@ func (b *bot) processCard(ctx context.Context, msg *types.NormalizedMessage, que
 			pct = current * 100 / total
 		}
 		showResult := step == "decompose_result" || step == "query_expansion_result"
+		if showResult && strings.TrimSpace(detail) != "" {
+			note := "> " + strings.TrimSpace(detail)
+			if !seenProgressNotes[note] {
+				seenProgressNotes[note] = true
+				progressNotes = append(progressNotes, note)
+			}
+		}
 		if pct < lastPct || (pct == lastPct && !showResult) {
 			return // 百分比下降，忽略本次更新，保证进度条只增不减
 		}
 		lastPct = pct
 		pb := progressBar(current, total)
-		_ = b.patchCard(ctx, messageID, cardJSON(title, body, pb))
+		_ = b.patchCard(ctx, messageID, cardJSON(title, progressCardBody(progressNotes, body), pb))
 	})
 	log.Printf("[bot] %s 回答完成: messageID=%s question=%q answerLen=%d errMsg=%q", sessionKey, messageID, question, len(answer), errMsg)
 
@@ -758,6 +767,16 @@ func cardWithText(text string) string {
 	return cardJSON("AI 回答", text, "")
 }
 
+func progressCardBody(notes []string, status string) string {
+	if len(notes) == 0 {
+		return status
+	}
+	if status == "" {
+		return strings.Join(notes, "\n")
+	}
+	return strings.Join(notes, "\n") + "\n\n" + status
+}
+
 // cardJSONFinal 生成回答完成卡片，meta 为非空时在正文上方渲染一行元信息。
 func cardJSONFinal(title, meta, text string) string {
 	if meta != "" {
@@ -779,8 +798,7 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta) string {
 
 	var lines []string
 	if !createdAt.IsZero() {
-		// 固定转成东八区显示，避免依赖机器人进程的环境 TZ。
-		lines = append(lines, "> 上下文始于 "+createdAt.In(time.FixedZone("UTC+8", 8*3600)).Format("01-02 15:04"))
+		lines = append(lines, formatContextMetaStart(createdAt, currentCodeRevision()))
 	}
 	if runMeta != nil {
 		if detail := formatAnswerRunMeta(*runMeta); detail != "" {
@@ -841,8 +859,8 @@ func cardJSON(title, text, progress string) string {
 }
 
 // progressBar 返回一个固定格数的等宽进度条行。
-// 进度条用几何块字符 █/░（跨平台等宽、不会被替换成 emoji），
-// 百分比数字使用飞书 Markdown 的 $$12%$$ 数学渲染语法，避免比例数字跳动。
+// 飞书卡片 Markdown 会将 fenced code block 按等宽字体渲染；百分比固定为三位宽，
+// 进度条格数固定，因而每次更新不会造成行宽跳动。
 const maxProgressCells = 10
 
 func progressBar(current, total int) string {
@@ -867,5 +885,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("$$%d%%$$ %s%s", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
+	return fmt.Sprintf("```\n%3d%% %s%s\n```", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
 }
