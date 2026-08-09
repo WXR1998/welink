@@ -35,10 +35,14 @@ type openAIResponsesReasoning struct {
 func buildOpenAIResponsesRequest(msgs []LLMMessage, cfg llmConfig, stream bool) openAIResponsesRequest {
 	input := make([]openAIResponsesInput, 0, len(msgs))
 	for _, msg := range msgs {
+		contentType := "input_text"
+		if msg.Role == "assistant" {
+			contentType = "output_text"
+		}
 		input = append(input, openAIResponsesInput{
 			Role: msg.Role,
 			Content: []openAIResponsesContent{{
-				Type: "input_text",
+				Type: contentType,
 				Text: msg.Content,
 			}},
 		})

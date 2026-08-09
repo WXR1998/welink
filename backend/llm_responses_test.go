@@ -101,3 +101,22 @@ func TestStreamOpenAIResponsesForwardsDeltasAndUsage(t *testing.T) {
 		t.Fatalf("usage was not forwarded: %+v", chunks[2])
 	}
 }
+
+func TestBuildOpenAIResponsesRequestUsesOutputTextForAssistantHistory(t *testing.T) {
+	request := buildOpenAIResponsesRequest([]LLMMessage{
+		{Role: "system", Content: "系统提示"},
+		{Role: "user", Content: "你好"},
+		{Role: "assistant", Content: "你好，有什么可以帮助你？"},
+		{Role: "user", Content: "继续"},
+	}, llmConfig{model: "LJ/gpt-5.6-terra"}, true)
+
+	if got := request.Input[0].Content[0].Type; got != "input_text" {
+		t.Fatalf("system content type = %q, want input_text", got)
+	}
+	if got := request.Input[1].Content[0].Type; got != "input_text" {
+		t.Fatalf("user content type = %q, want input_text", got)
+	}
+	if got := request.Input[2].Content[0].Type; got != "output_text" {
+		t.Fatalf("assistant content type = %q, want output_text", got)
+	}
+}
