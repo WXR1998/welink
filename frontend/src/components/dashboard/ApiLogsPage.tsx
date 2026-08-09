@@ -25,6 +25,7 @@ interface LLMApiLogEntry {
   request_body: string;
   status: number;
   response_body: string;
+  first_token_ms: number;
   duration_ms: number;
   error: string;
 }
@@ -40,6 +41,7 @@ interface UnifiedLogEntry {
   status: number | null;
   statusText: string;
   durationMs: number;
+  firstTokenMs?: number;
   requestSnippet: string;
   responseSnippet: string;
   error: string;
@@ -172,6 +174,7 @@ export const ApiLogsPage: React.FC = () => {
       status: e.status,
       statusText: '',
       durationMs: e.duration_ms,
+      firstTokenMs: e.first_token_ms > 0 ? e.first_token_ms : undefined,
       requestSnippet: e.request_body,
       responseSnippet: e.response_body,
       error: e.error,
@@ -303,9 +306,15 @@ export const ApiLogsPage: React.FC = () => {
                     非JSON
                   </span>
                 )}
-                <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">
-                  {entry.durationMs}ms
-                </span>
+                {entry.firstTokenMs !== undefined ? (
+                  <span className="text-[10px] text-gray-400 font-mono flex-shrink-0 whitespace-nowrap">
+                    首字 {entry.firstTokenMs}ms · 全量 {entry.durationMs}ms
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">
+                    {entry.durationMs}ms
+                  </span>
+                )}
                 <ChevronDown
                   size={14}
                   className={`text-gray-400 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}

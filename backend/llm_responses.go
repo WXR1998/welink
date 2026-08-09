@@ -82,27 +82,32 @@ func streamOpenAIResponses(send func(StreamChunk), msgs []LLMMessage, cfg llmCon
 
 	llmStart := time.Now()
 	resp, err := httpClientLLMStream.Do(req)
-	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
 	var respBuf limitedBuffer
 	respBuf.max = snippetLen
-	content, usage, err := consumeOpenAIResponsesSSE(io.TeeReader(resp.Body, &respBuf), send)
+	firstTokenMs := int64(0)
+	content, usage, err := consumeOpenAIResponsesSSE(io.TeeReader(resp.Body, &respBuf), send, func() {
+		if firstTokenMs == 0 {
+			firstTokenMs = time.Since(llmStart).Milliseconds()
+		}
+	})
+	durationMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs, Error: err.Error()})
 		return err
 	}
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs})
 	if usage == nil {
 		usage = &StreamUsage{
 			PromptTokens: estimateMsgTokens(msgs),
@@ -140,34 +145,39 @@ func completeOpenAIResponsesSync(msgs []LLMMessage, cfg llmConfig) (string, erro
 		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 		return httpClientLLMSync.Do(req)
 	})
-	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
 		return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
 	var respBuf limitedBuffer
 	respBuf.max = snippetLen
-	content, _, err := consumeOpenAIResponsesSSE(io.TeeReader(resp.Body, &respBuf), nil)
+	firstTokenMs := int64(0)
+	content, _, err := consumeOpenAIResponsesSSE(io.TeeReader(resp.Body, &respBuf), nil, func() {
+		if firstTokenMs == 0 {
+			firstTokenMs = time.Since(llmStart).Milliseconds()
+		}
+	})
+	durationMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
-		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: err.Error()})
+		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs, Error: err.Error()})
 		return "", err
 	}
-	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs})
+	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs})
 	if content == "" {
 		return "", fmt.Errorf("响应为空")
 	}
 	return content, nil
 }
 
-func consumeOpenAIResponsesSSE(reader io.Reader, send func(StreamChunk)) (string, *StreamUsage, error) {
+func consumeOpenAIResponsesSSE(reader io.Reader, send func(StreamChunk), onFirstOutputText func()) (string, *StreamUsage, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
@@ -178,6 +188,7 @@ func consumeOpenAIResponsesSSE(reader io.Reader, send func(StreamChunk)) (string
 	var usage *StreamUsage
 	sawSSE := false
 	completed := false
+	sawOutputText := false
 	var streamErr error
 
 	flush := func() {
@@ -217,6 +228,12 @@ func consumeOpenAIResponsesSSE(reader io.Reader, send func(StreamChunk)) (string
 		}
 		switch kind {
 		case "response.output_text.delta":
+			if event.Delta != "" && !sawOutputText {
+				sawOutputText = true
+				if onFirstOutputText != nil {
+					onFirstOutputText()
+				}
+			}
 			content.WriteString(event.Delta)
 			if send != nil && event.Delta != "" {
 				send(StreamChunk{Delta: event.Delta})

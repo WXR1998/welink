@@ -26,6 +26,7 @@ type LLMApiLogEntry struct {
 	RequestBody  string    `json:"request_body"`
 	Status       int       `json:"status"`
 	ResponseBody string    `json:"response_body"`
+	FirstTokenMs int64     `json:"first_token_ms"`
 	DurationMs   int64     `json:"duration_ms"`
 	Error        string    `json:"error"`
 }

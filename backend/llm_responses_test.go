@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompleteOpenAICompatSyncBuffersResponsesSSE(t *testing.T) {
@@ -103,9 +104,97 @@ func TestStreamOpenAIResponsesForwardsDeltasAndUsage(t *testing.T) {
 	}
 }
 
+func TestStreamOpenAIResponsesLogsFirstTokenAndFullDuration(t *testing.T) {
+	llmApiLogMu.Lock()
+	previousLogs, previousSeq := llmApiLogs, llmApiLogSeq
+	llmApiLogs, llmApiLogSeq = nil, 0
+	llmApiLogMu.Unlock()
+	t.Cleanup(func() {
+		llmApiLogMu.Lock()
+		llmApiLogs, llmApiLogSeq = previousLogs, previousSeq
+		llmApiLogMu.Unlock()
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		time.Sleep(10 * time.Millisecond)
+		fmt.Fprint(w, "event: response.output_text.delta\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"A\"}\n\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(20 * time.Millisecond)
+		fmt.Fprint(w, "event: response.completed\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+	}))
+	defer server.Close()
+
+	err := streamOpenAIResponses(func(StreamChunk) {}, []LLMMessage{{Role: "user", Content: "Hi"}}, llmConfig{
+		provider:        "custom",
+		apiKey:          "test-key",
+		baseURL:         server.URL,
+		model:           "LJ/gpt-5.6-terra",
+		useResponsesAPI: true,
+	})
+	if err != nil {
+		t.Fatalf("streamOpenAIResponses returned error: %v", err)
+	}
+
+	logs := getLLMApiLogs()
+	if len(logs) != 1 {
+		t.Fatalf("logged calls = %d, want 1", len(logs))
+	}
+	if logs[0].FirstTokenMs <= 0 {
+		t.Fatalf("first token latency = %d, want > 0", logs[0].FirstTokenMs)
+	}
+	if logs[0].DurationMs <= logs[0].FirstTokenMs {
+		t.Fatalf("total duration = %d, want > first token latency %d", logs[0].DurationMs, logs[0].FirstTokenMs)
+	}
+}
+
+func TestStreamOpenAIResponsesDoesNotTreatJSONFallbackAsFirstToken(t *testing.T) {
+	llmApiLogMu.Lock()
+	previousLogs, previousSeq := llmApiLogs, llmApiLogSeq
+	llmApiLogs, llmApiLogSeq = nil, 0
+	llmApiLogMu.Unlock()
+	t.Cleanup(func() {
+		llmApiLogMu.Lock()
+		llmApiLogs, llmApiLogSeq = previousLogs, previousSeq
+		llmApiLogMu.Unlock()
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		time.Sleep(10 * time.Millisecond)
+		fmt.Fprint(w, `{"output":[{"content":[{"type":"output_text","text":"A"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+	}))
+	defer server.Close()
+
+	err := streamOpenAIResponses(func(StreamChunk) {}, []LLMMessage{{Role: "user", Content: "Hi"}}, llmConfig{
+		provider:        "custom",
+		apiKey:          "test-key",
+		baseURL:         server.URL,
+		model:           "LJ/gpt-5.6-terra",
+		useResponsesAPI: true,
+	})
+	if err != nil {
+		t.Fatalf("streamOpenAIResponses returned error: %v", err)
+	}
+
+	logs := getLLMApiLogs()
+	if len(logs) != 1 {
+		t.Fatalf("logged calls = %d, want 1", len(logs))
+	}
+	if logs[0].FirstTokenMs != 0 {
+		t.Fatalf("JSON fallback first token latency = %d, want 0", logs[0].FirstTokenMs)
+	}
+	if logs[0].DurationMs <= 0 {
+		t.Fatalf("JSON fallback total duration = %d, want > 0", logs[0].DurationMs)
+	}
+}
+
 func TestConsumeOpenAIResponsesSSEAcceptsCleanEOFWithContent(t *testing.T) {
 	content, usage, err := consumeOpenAIResponsesSSE(
 		strings.NewReader("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"可保留的正文\"}\n\n"),
+		nil,
 		nil,
 	)
 	if err != nil {
