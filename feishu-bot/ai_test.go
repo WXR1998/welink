@@ -231,11 +231,13 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	got := formatAnswerRunMeta(meta)
 	for _, want := range []string{
 		"> **模型**",
+		"> **模型**\n\n| 步骤 | 模型 |",
 		"| 步骤 | 模型 |",
 		"| 问题分解 | `glm-5.2` |",
 		"| 查询扩展 | `gpt-5.6-terra` |",
 		"| 最终回答 | `gpt-5.6-terra` |",
 		"> **问题分解**",
+		"> **问题分解**\n\n| 维度 | 结果 |",
 		"| 维度 | 结果 |",
 		"| 实体 | 张三 |",
 		"| 概念 | 旅行 |",
@@ -257,6 +259,7 @@ func TestFormatProgressResultUsesSharedTables(t *testing.T) {
 	})
 	for _, want := range []string{
 		"> **查询扩展**",
+		"> **查询扩展**\n\n| 序号 | 查询 |",
 		"| 序号 | 查询 |",
 		"| 1 | 张三旅行计划 |",
 		"| 2 | 张三旅行时间 |",

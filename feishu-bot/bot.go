@@ -866,9 +866,9 @@ func progressCardBody(notes []string, status string) string {
 		return status
 	}
 	if status == "" {
-		return strings.Join(notes, "\n")
+		return strings.Join(notes, "\n\n")
 	}
-	return strings.Join(notes, "\n") + "\n\n" + status
+	return strings.Join(notes, "\n\n") + "\n\n" + status
 }
 
 // cardJSONFinal 生成回答完成卡片，meta 为非空时在正文上方渲染一行元信息。
@@ -899,7 +899,7 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta) string {
 			lines = append(lines, detail)
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n\n")
 }
 
 func formatAnswerRunMeta(meta answerRunMeta) string {
@@ -925,7 +925,7 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 	if section := formatExpandedQueriesTable(meta.ExpandedQueries); section != "" {
 		lines = append(lines, section)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n\n")
 }
 
 func formatProgressResult(step, detail string, progress *memorySearchProgress) string {
@@ -971,7 +971,7 @@ func formatQueryDecompositionTable(d *queryDecomposition) string {
 	if len(rows) == 0 {
 		return ""
 	}
-	return "> **问题分解**\n| 维度 | 结果 |\n| --- | --- |\n" + strings.Join(rows, "\n")
+	return "> **问题分解**\n\n| 维度 | 结果 |\n| --- | --- |\n" + strings.Join(rows, "\n")
 }
 
 func formatExpandedQueriesTable(queries []string) string {
@@ -985,7 +985,7 @@ func formatExpandedQueriesTable(queries []string) string {
 	if len(rows) == 0 {
 		return ""
 	}
-	return "> **查询扩展**\n| 序号 | 查询 |\n| --- | --- |\n" + strings.Join(rows, "\n")
+	return "> **查询扩展**\n\n| 序号 | 查询 |\n| --- | --- |\n" + strings.Join(rows, "\n")
 }
 
 func formatMarkdownTableValues(values []string) string {
