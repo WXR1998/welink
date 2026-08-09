@@ -858,10 +858,9 @@ func cardJSON(title, text, progress string) string {
 	return fmt.Sprintf(`{"schema":"2.0","config":{"streaming_mode":true},"header":{"title":{"tag":"plain_text","content":%q}},"body":{"elements":[%s]}}`, title, elem)
 }
 
-// progressBar 返回一个固定格数的等宽进度条行。
-// 飞书卡片 Markdown 会将 fenced code block 按等宽字体渲染；百分比固定为三位宽，
-// 进度条格数固定，因而每次更新不会造成行宽跳动。
-const maxProgressCells = 10
+// progressBar 返回一个固定格数的进度条行。
+// 使用实心方块和 ASCII 下划线，避免飞书移动端将空白格字符渲染为方框。
+const maxProgressCells = 16
 
 func progressBar(current, total int) string {
 	if current < 0 {
@@ -885,5 +884,5 @@ func progressBar(current, total int) string {
 	if empty < 0 {
 		empty = 0
 	}
-	return fmt.Sprintf("```\n%3d%% %s%s\n```", pct, strings.Repeat("█", filled), strings.Repeat("░", empty))
+	return fmt.Sprintf("%3d%% %s%s", pct, strings.Repeat("█", filled), strings.Repeat("_", empty))
 }

@@ -1832,6 +1832,7 @@ func serverMain() {
 			From             int64        `json:"from"`
 			To               int64        `json:"to"`
 			Messages         []LLMMessage `json:"messages"`
+			PromptTemplate   string       `json:"prompt_template,omitempty"`
 			ProfileID        string       `json:"profile_id"`
 			SkipMemory       bool         `json:"skip_memory"`       // true = 跳过后端记忆注入（前端已通过 memory-search 注入）
 			Query            string       `json:"query"`             // 当前用户问题（用于找原文/选择候选）
@@ -1845,6 +1846,9 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
+		if body.PromptTemplate == "cross_qa_answer" {
+			body.Messages = injectCrossQAPrompt(body.Messages, body.PromptTemplate, prefs)
+		}
 		finalAnswerProfileID := aiQAStepProfileID(prefs, "final_answer", body.ProfileID)
 		cfg := llmConfigForProfile(finalAnswerProfileID, prefs)
 		if body.Model != "" {
@@ -1942,18 +1946,18 @@ func serverMain() {
 			selected = selectRelevantSources(query, candidates, prefs, body.ProfileID, rerankCfgs)
 		}
 		if len(selected) > 0 {
-			var sb strings.Builder
-			sb.WriteString("\n\n【本轮之前对话中已检索到的相关原文（来自前序检索，可直接引用）】\n")
-			sb.WriteString("```text\n")
+			var records strings.Builder
 			for _, e := range selected {
 				sender := e.Sender
 				if sender == "" {
 					sender = "未知"
 				}
-				fmt.Fprintf(&sb, "%s ｜ %s ｜ %s ｜ %s\n", e.SourceName, e.Datetime, sender, e.Content)
+				fmt.Fprintf(&records, "%s ｜ %s ｜ %s ｜ %s\n", e.SourceName, e.Datetime, sender, e.Content)
 			}
-			sb.WriteString("```\n请优先直接引用以上原文，并在引用时标注来源；这些是已经确认检索到的聊天记录原文。连续原文引用时保持每条一行，不插入不必要的空行。\n")
-			injected := sb.String()
+			injected := "\n\n" + renderCrossQARawEvidencePrompt(
+				effectiveCrossQAPrompt(prefs, "cross_qa_raw_evidence"),
+				strings.TrimSuffix(records.String(), "\n"),
+			)
 			foundSys := false
 			for i := range body.Messages {
 				if body.Messages[i].Role == "system" {
@@ -1964,24 +1968,6 @@ func serverMain() {
 			}
 			if !foundSys {
 				body.Messages = append([]LLMMessage{{Role: "system", Content: injected}}, body.Messages...)
-			}
-		}
-
-		// 找原文约束：只能在确认拿到原文时逐字引用，否则如实说明。
-		{
-			foundSys := false
-			rule := "\n\n如实引用约束：如果用户要求找原文/原话/原句，只有当对话或检索结果里确实存在原始聊天记录片段时，才直接引用原文并标注来源与时间；不要根据记忆 summary 逐字转述成原文；若未定位到原文，明确说明“未能在聊天记录中定位到原文”，不要编造。逐条展示连续聊天原文时，用一个 ```text 代码块包裹，每条记录独占一行，不插入空行，代码块外再写解释。\n"
-			for i := range body.Messages {
-				if body.Messages[i].Role == "system" {
-					if !strings.Contains(body.Messages[i].Content, "如实引用约束") {
-						body.Messages[i].Content += rule
-					}
-					foundSys = true
-					break
-				}
-			}
-			if !foundSys {
-				body.Messages = append([]LLMMessage{{Role: "system", Content: rule}}, body.Messages...)
 			}
 		}
 

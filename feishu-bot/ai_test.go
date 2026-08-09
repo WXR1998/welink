@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,12 +136,12 @@ func TestMemorySearch_ProceedsOnEntityHit(t *testing.T) {
 	}
 }
 
-func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
-	var gotBody string
+func TestAnalyzeQuestionUsesCrossQAAnswerTemplate(t *testing.T) {
+	var got analyzeRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf := new(strings.Builder)
-		_, _ = io.Copy(buf, r.Body)
-		gotBody = buf.String()
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
 	}))
@@ -153,29 +152,13 @@ func TestAnalyzeQuestion_SystemIncludesEvidenceRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
-	if !strings.Contains(gotBody, "说明其依据的聊天记录原文") || !strings.Contains(gotBody, "作为佐证") {
-		t.Fatalf("system prompt missing evidence requirement, body=%s", gotBody)
+	if got.PromptTemplate != "cross_qa_answer" {
+		t.Fatalf("expected cross_qa_answer prompt template, got %q", got.PromptTemplate)
 	}
-	if !strings.Contains(gotBody, "都不要遗漏") {
-		t.Fatalf("system prompt missing exhaustive open-request requirement, body=%s", gotBody)
-	}
-	if !strings.Contains(gotBody, "记录之间不使用 `---` 或其他分隔线") {
-		t.Fatalf("system prompt must forbid Markdown record separators, body=%s", gotBody)
-	}
-	if !strings.Contains(gotBody, "每行必须以 Markdown 引用标记") {
-		t.Fatalf("system prompt must require quoted chat records, body=%s", gotBody)
-	}
-	if !strings.Contains(gotBody, "不要把聊天记录写成 Markdown 标题、表格或代码块") {
-		t.Fatalf("system prompt must forbid Markdown record containers, body=%s", gotBody)
-	}
-	if !strings.Contains(gotBody, "聊天记录原文作为证据") || !strings.Contains(gotBody, "```text") {
-		t.Fatalf("system prompt must provide a fenced raw-record example, body=%s", gotBody)
-	}
-	if strings.Contains(gotBody, "不同记录之间用“---”分隔") {
-		t.Fatalf("system prompt must not request --- separators, body=%s", gotBody)
-	}
-	if !strings.Contains(gotBody, "4. 使用 Markdown 排版。") {
-		t.Fatalf("system prompt missing markdown anchor line, body=%s", gotBody)
+	for _, message := range got.Messages {
+		if message.Role == "system" {
+			t.Fatalf("final answer prompt must be injected by backend, got system message: %+v", got.Messages)
+		}
 	}
 }
 
@@ -226,16 +209,16 @@ func TestAnalyzeQuestionSendsHistoryAsConversationMessages(t *testing.T) {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
 
-	if len(got.Messages) != 4 {
-		t.Fatalf("expected system, history pair, and current question; got %+v", got.Messages)
+	if got.PromptTemplate != "cross_qa_answer" {
+		t.Fatalf("expected cross_qa_answer prompt template, got %q", got.PromptTemplate)
 	}
-	if got.Messages[0].Role != "system" || strings.Contains(got.Messages[0].Content, "前一个问题") {
-		t.Fatalf("history must not be embedded in the system prompt: %+v", got.Messages[0])
+	if len(got.Messages) != 3 {
+		t.Fatalf("expected history pair and current question; got %+v", got.Messages)
 	}
-	if got.Messages[1] != history[0] || got.Messages[2] != history[1] {
+	if got.Messages[0] != history[0] || got.Messages[1] != history[1] {
 		t.Fatalf("history must retain message roles: %+v", got.Messages)
 	}
-	if got.Messages[3].Role != "user" || got.Messages[3].Content != "当前问题" {
-		t.Fatalf("current question must be the final user message: %+v", got.Messages[3])
+	if got.Messages[2].Role != "user" || got.Messages[2].Content != "问题：当前问题\n\n检索内容" {
+		t.Fatalf("current question must be the final user message: %+v", got.Messages[2])
 	}
 }

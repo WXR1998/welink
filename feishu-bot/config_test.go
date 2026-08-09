@@ -51,7 +51,7 @@ func TestCardJSONWithProgress(t *testing.T) {
 	if !strings.Contains(card, `"🔎 正在检索"`) || !strings.Contains(card, `"正文"`) {
 		t.Fatalf("card missing title/body: %s", card)
 	}
-	if !strings.Contains(card, "```") || !strings.Contains(card, "60%") || !strings.Contains(card, "███") {
+	if strings.Contains(card, "```") || !strings.Contains(card, "60%") || !strings.Contains(card, "█████████") || !strings.Contains(card, "_______") {
 		t.Fatalf("progress bar missing: %s", card)
 	}
 	if !strings.Contains(card, `"lark_md"`) && !strings.Contains(card, `"markdown"`) {
@@ -86,7 +86,7 @@ func TestProgressBar(t *testing.T) {
 	if got := progressBar(0, 5); strings.Contains(got, "█") {
 		t.Fatalf("0 progress should have no filled: %s", got)
 	}
-	if got := progressBar(5, 5); strings.Contains(got, "░") {
+	if got := progressBar(5, 5); strings.Contains(got, "_") {
 		t.Fatalf("100%% progress should have no empty: %s", got)
 	}
 	if got := progressBar(7, 5); got != progressBar(5, 5) {
@@ -97,7 +97,7 @@ func TestProgressBar(t *testing.T) {
 func TestProgressBarCellCap(t *testing.T) {
 	// 无论 total 大小，格子数始终固定为 maxProgressCells，按百分比涂色。
 	got := progressBar(10, 100) // 10%
-	if strings.Count(got, "█")+strings.Count(got, "░") != maxProgressCells {
+	if strings.Count(got, "█")+strings.Count(got, "_") != maxProgressCells {
 		t.Fatalf("cell count should always be %d: %s", maxProgressCells, got)
 	}
 	expect := maxProgressCells / 10
@@ -106,7 +106,7 @@ func TestProgressBarCellCap(t *testing.T) {
 	}
 	// 小 total 时格子数不变，不因 N/M 学习而变化
 	small := progressBar(2, 5) // 40%
-	if strings.Count(small, "█")+strings.Count(small, "░") != maxProgressCells {
+	if strings.Count(small, "█")+strings.Count(small, "_") != maxProgressCells {
 		t.Fatalf("small totals still use %d cells: %s", maxProgressCells, small)
 	}
 	expect = maxProgressCells * 40 / 100
