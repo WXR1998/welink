@@ -5,6 +5,10 @@ import "strings"
 const defaultCrossQAAnswerPrompt = `你是 WeLink 的跨联系人 AI 助手，用户刚问了一个关于微信聊天记录的问题。
 以下是从数据库中检索到的相关数据。请基于这些数据回答用户的问题。
 
+以下内容用于理解人物身份、外号和长期背景；它们是内部背景信息，不能替代可逐字引用的聊天记录原文：
+{{aliases_table}}
+{{pinned_memories}}
+
 要求：
 1. 用中文回答，简洁清晰。
 2. 直接回答问题，不要废话。
@@ -33,6 +37,13 @@ func effectiveCrossQAPrompt(key string) string {
 	return promptTemplateContent(key)
 }
 
+func renderCrossQAAnswerPrompt(template, aliasesTable, pinnedMemories string) string {
+	return strings.NewReplacer(
+		"{{aliases_table}}", strings.TrimSpace(aliasesTable),
+		"{{pinned_memories}}", strings.TrimSpace(pinnedMemories),
+	).Replace(template)
+}
+
 func renderCrossQARawEvidencePrompt(template, records string) string {
 	if strings.Contains(template, "{{records}}") {
 		return strings.ReplaceAll(template, "{{records}}", records)
@@ -40,8 +51,8 @@ func renderCrossQARawEvidencePrompt(template, records string) string {
 	return strings.TrimSpace(template) + "\n\n" + records
 }
 
-func injectCrossQAPrompt(messages []LLMMessage, templateID string) []LLMMessage {
-	prompt := effectiveCrossQAPrompt(templateID)
+func injectCrossQAPrompt(messages []LLMMessage, templateID, aliasesTable, pinnedMemories string) []LLMMessage {
+	prompt := renderCrossQAAnswerPrompt(effectiveCrossQAPrompt(templateID), aliasesTable, pinnedMemories)
 	if prompt == "" {
 		return messages
 	}

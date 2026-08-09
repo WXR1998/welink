@@ -32,6 +32,11 @@ func TestInitPromptTemplateTableSeedsDefaultTemplates(t *testing.T) {
 	if !strings.Contains(template.Prompt, "{{fence}}") {
 		t.Fatalf("cross QA template must include group prompt placeholder: %q", template.Prompt)
 	}
+	for _, placeholder := range []string{"{{pinned_memories}}", "{{aliases_table}}"} {
+		if !strings.Contains(template.Prompt, placeholder) {
+			t.Fatalf("cross QA template missing %s: %q", placeholder, template.Prompt)
+		}
+	}
 }
 
 func TestUpdatePromptTemplatePersistsInDatabase(t *testing.T) {
@@ -72,6 +77,30 @@ func TestInitPromptTemplateTableMigratesLegacyPreferences(t *testing.T) {
 	}
 	if got := loadPreferences().PromptTemplates; len(got) != 0 {
 		t.Fatalf("legacy preferences must be cleared after migration: %+v", got)
+	}
+}
+
+func TestInitPromptTemplateTableUpgradesUncustomizedDefault(t *testing.T) {
+	withPromptTemplateTestDB(t)
+	if err := initPromptTemplateTable(); err != nil {
+		t.Fatalf("initialize prompt template table: %v", err)
+	}
+	if _, err := aiDB.Exec(
+		`UPDATE prompt_templates SET prompt = ?, default_prompt = ? WHERE id = ?`,
+		"旧的默认模板", "旧的默认模板", "cross_qa_answer",
+	); err != nil {
+		t.Fatalf("set old default: %v", err)
+	}
+
+	if err := initPromptTemplateTable(); err != nil {
+		t.Fatalf("reinitialize prompt template table: %v", err)
+	}
+	template, err := getPromptTemplate("cross_qa_answer")
+	if err != nil {
+		t.Fatalf("get upgraded template: %v", err)
+	}
+	if !strings.Contains(template.Prompt, "{{pinned_memories}}") || !strings.Contains(template.Prompt, "{{aliases_table}}") {
+		t.Fatalf("unchanged default was not upgraded: %+v", template)
 	}
 }
 

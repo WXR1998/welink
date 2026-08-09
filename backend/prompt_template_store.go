@@ -168,7 +168,15 @@ func initPromptTemplateTable() error {
 		if _, err := aiDB.Exec(`
 			INSERT INTO prompt_templates(id, name, description, prompt, default_prompt, position)
 			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO NOTHING`,
+			ON CONFLICT(id) DO UPDATE SET
+				name = excluded.name,
+				description = excluded.description,
+				prompt = CASE
+					WHEN prompt_templates.prompt = prompt_templates.default_prompt THEN excluded.prompt
+					ELSE prompt_templates.prompt
+				END,
+				default_prompt = excluded.default_prompt,
+				position = excluded.position`,
 			template.ID, template.Name, template.Description, template.DefaultPrompt, template.DefaultPrompt, position,
 		); err != nil {
 			return fmt.Errorf("prompt templates: seed %s: %w", template.ID, err)

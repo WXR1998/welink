@@ -30,7 +30,7 @@ func TestInjectCrossQAPromptPrependsEffectiveSystemMessage(t *testing.T) {
 	}
 	messages := []LLMMessage{{Role: "user", Content: "问题"}}
 
-	got := injectCrossQAPrompt(messages, "cross_qa_answer")
+	got := injectCrossQAPrompt(messages, "cross_qa_answer", "", "")
 	if len(got) != 2 || got[0].Role != "system" || got[0].Content != "数据库中的最终回答提示词" {
 		t.Fatalf("unexpected prompt injection: %+v", got)
 	}
@@ -60,5 +60,17 @@ func TestDefaultCrossQAAnswerPromptUsesOnlyCodeBlockRuleForChatRecords(t *testin
 	}
 	if !strings.Contains(defaultCrossQAAnswerPrompt, "```text") {
 		t.Fatalf("chat-record prompt must retain the code-block rule: %q", defaultCrossQAAnswerPrompt)
+	}
+}
+
+func TestRenderCrossQAAnswerPromptInjectsPinnedMemoriesAndAliases(t *testing.T) {
+	template := "别名：{{aliases_table}}\n置顶：{{pinned_memories}}\n群：{{fence}}"
+	got := renderCrossQAAnswerPrompt(template, "别名表内容", "置顶记忆内容")
+
+	if strings.Contains(got, "{{aliases_table}}") || strings.Contains(got, "{{pinned_memories}}") {
+		t.Fatalf("template variables were not rendered: %q", got)
+	}
+	if !strings.Contains(got, "别名：别名表内容") || !strings.Contains(got, "置顶：置顶记忆内容") {
+		t.Fatalf("missing rendered context: %q", got)
 	}
 }

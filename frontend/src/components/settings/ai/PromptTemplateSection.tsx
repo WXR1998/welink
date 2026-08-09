@@ -90,7 +90,7 @@ export const PromptTemplateSection: React.FC = () => {
                         恢复默认
                       </button>
                     )}
-                    <span className="text-[10px] text-gray-300">支持变量：{'{{name}}'} {'{{today}}'} {'{{rounds}}'} {'{{fence}}'} 等</span>
+                    <span className="text-[10px] text-gray-300">支持变量：{'{{name}}'} {'{{today}}'} {'{{rounds}}'} {'{{fence}}'} {'{{pinned_memories}}'} {'{{aliases_table}}'} 等</span>
                   </div>
                 </div>
               )}

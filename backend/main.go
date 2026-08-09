@@ -1877,7 +1877,13 @@ func serverMain() {
 		}
 		prefs := loadPreferences()
 		if body.PromptTemplate == "cross_qa_answer" {
-			body.Messages = injectCrossQAPrompt(body.Messages, body.PromptTemplate)
+			svc := getSvc()
+			body.Messages = injectCrossQAPrompt(
+				body.Messages,
+				body.PromptTemplate,
+				contactAliasBlock(svc),
+				pinnedMemoryBlock(svc),
+			)
 		}
 		finalAnswerProfileID := aiQAStepProfileID(prefs, "final_answer", body.ProfileID)
 		cfg := llmConfigForProfile(finalAnswerProfileID, prefs)
