@@ -144,7 +144,7 @@ func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
 				return
 			}
 			previous = payload["previous_decomposition"]
-			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[],"decomposition":{"needs_memory":true,"entities":["刘荟琪"],"concepts":["评价"]}}}` + "\n\n"))
+			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[],"fast_mode":true,"decomposition":{"needs_memory":true,"entities":["刘荟琪"],"concepts":["评价"]}}}` + "\n\n"))
 			_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
 		case "/api/ai/analyze":
 			_, _ = w.Write([]byte("data: {\"delta\":\"回答\"}\n\n"))
@@ -160,12 +160,15 @@ func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
 		store:    store,
 		sessions: sessions,
 	}
-	answer, _, errMsg := b.answer(context.Background(), "p2p:user_a", "", "更详细一些呢", nil, nil)
+	answer, meta, errMsg := b.answer(context.Background(), "p2p:user_a", "", "更详细一些呢", nil, nil)
 	if errMsg != "" {
 		t.Fatalf("answer failed: %s", errMsg)
 	}
 	if answer != "回答" {
 		t.Fatalf("answer = %q, want 回答", answer)
+	}
+	if meta == nil || !meta.FastMode {
+		t.Fatalf("answer metadata did not preserve fast mode: %+v", meta)
 	}
 	if len(previous) == 0 {
 		t.Fatal("memory-search request omitted previous_decomposition")
@@ -325,6 +328,7 @@ func TestMemorySearchForwardsStructuredProgressData(t *testing.T) {
 
 func TestFormatAnswerRunMeta(t *testing.T) {
 	meta := answerRunMeta{
+		FastMode: true,
 		Models: qaStepModels{
 			QueryDecomposition: "glm-5.2",
 			QueryExpansion:     "gpt-5.6-terra",
@@ -342,9 +346,9 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	got := formatAnswerRunMeta(meta)
 	for _, want := range []string{
 		"> **模型**",
-		"> 问题分解 | `glm-5.2`",
-		"> 查询扩展 | `gpt-5.6-terra`",
-		"> 最终回答 | `gpt-5.6-terra`",
+		"> 问题分解 | `glm-5.2·Fast`",
+		"> 查询扩展 | `gpt-5.6-terra·Fast`",
+		"> 最终回答 | `gpt-5.6-terra·Fast`",
 		"> **问题分解**",
 		"> 实体 | 张三",
 		"> 概念 | 旅行",

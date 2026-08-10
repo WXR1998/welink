@@ -685,6 +685,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	return answer, &answerRunMeta{
 		Usage:           usage,
 		Models:          data.LLMModels,
+		FastMode:        data.FastMode,
 		Decomposition:   data.Decomposition,
 		ExpandedQueries: data.ExpandedQueries,
 	}, ""
@@ -1007,6 +1008,9 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 	model := func(value string) string {
 		if strings.TrimSpace(value) == "" {
 			return "-"
+		}
+		if meta.FastMode {
+			value += "·Fast"
 		}
 		return "`" + escapeMarkdownTableCell(value) + "`"
 	}

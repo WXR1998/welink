@@ -54,7 +54,7 @@ func buildOpenAIResponsesRequest(msgs []LLMMessage, cfg llmConfig, stream bool) 
 		request.Reasoning = &openAIResponsesReasoning{Effort: cfg.reasoningEffort}
 	}
 	if cfg.openAIFastMode && supportsFastServiceTier(cfg.provider) {
-		request.ServiceTier = "fast"
+		request.ServiceTier = "priority"
 	}
 	return request
 }

@@ -77,7 +77,7 @@ type llmConfig struct {
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
 	compressThreshold int    // 上下文压缩阈值，0 = contextWindow 的 70%
 	useResponsesAPI   bool   // 使用 OpenAI Responses API（/responses）
-	openAIFastMode    bool   // 原生 OpenAI：使用更低延迟的 service_tier=fast
+	openAIFastMode    bool   // 原生 OpenAI：使用更低延迟的 service_tier=priority
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
@@ -675,7 +675,7 @@ type openAIRequest struct {
 	Think           *bool        `json:"think,omitempty"`            // Ollama 专用：false = 禁用思考模式
 	Stop            []string     `json:"stop,omitempty"`             // 停止词，防止模型输出特殊 token
 	ReasoningEffort string       `json:"reasoning_effort,omitempty"` // OpenAI o-series / gpt-5-reasoning：low / medium / high
-	ServiceTier     string       `json:"service_tier,omitempty"`     // 原生 OpenAI：fast 低延迟档位
+	ServiceTier     string       `json:"service_tier,omitempty"`     // 原生 OpenAI：priority 低延迟档位
 }
 
 func supportsFastServiceTier(provider string) bool {
@@ -704,7 +704,7 @@ func buildOpenAICompatRequest(msgs []LLMMessage, cfg llmConfig, stream bool) ope
 		reqBody.ReasoningEffort = cfg.reasoningEffort
 	}
 	if cfg.openAIFastMode && supportsFastServiceTier(cfg.provider) {
-		reqBody.ServiceTier = "fast"
+		reqBody.ServiceTier = "priority"
 	}
 	return reqBody
 }

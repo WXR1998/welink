@@ -24,19 +24,19 @@ func TestOpenAIFastModeAppliesToOpenAICompatibleRequests(t *testing.T) {
 	if !openAIConfig.openAIFastMode {
 		t.Fatal("OpenAI fast mode was not propagated to the LLM config")
 	}
-	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, openAIConfig, true).ServiceTier; got != "fast" {
-		t.Fatalf("Chat Completions service_tier = %q, want fast", got)
+	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, openAIConfig, true).ServiceTier; got != "priority" {
+		t.Fatalf("Chat Completions service_tier = %q, want priority", got)
 	}
-	if got := buildOpenAIResponsesRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, openAIConfig, true).ServiceTier; got != "fast" {
-		t.Fatalf("Responses service_tier = %q, want fast", got)
+	if got := buildOpenAIResponsesRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, openAIConfig, true).ServiceTier; got != "priority" {
+		t.Fatalf("Responses service_tier = %q, want priority", got)
 	}
 
 	customConfig := llmConfigForProfile("custom", prefs)
-	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, customConfig, true).ServiceTier; got != "fast" {
-		t.Fatalf("custom Chat Completions service_tier = %q, want fast", got)
+	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, customConfig, true).ServiceTier; got != "priority" {
+		t.Fatalf("custom Chat Completions service_tier = %q, want priority", got)
 	}
-	if got := buildOpenAIResponsesRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, customConfig, true).ServiceTier; got != "fast" {
-		t.Fatalf("custom Responses service_tier = %q, want fast", got)
+	if got := buildOpenAIResponsesRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, customConfig, true).ServiceTier; got != "priority" {
+		t.Fatalf("custom Responses service_tier = %q, want priority", got)
 	}
 
 	memoryConfigs := memLLMConfigs(prefs)
@@ -56,8 +56,8 @@ func TestCompleteOpenAICompatRetriesWithoutFastModeWhenUnsupported(t *testing.T)
 			t.Fatalf("decode request: %v", err)
 		}
 		if attempts == 1 {
-			if request.ServiceTier != "fast" {
-				t.Fatalf("first service_tier = %q, want fast", request.ServiceTier)
+			if request.ServiceTier != "priority" {
+				t.Fatalf("first service_tier = %q, want priority", request.ServiceTier)
 			}
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, `{"error":{"message":"Unknown parameter: service_tier"}}`)
@@ -96,8 +96,8 @@ func TestCompleteOpenAIResponsesRetriesWithoutFastModeWhenUnsupported(t *testing
 			t.Fatalf("decode request: %v", err)
 		}
 		if attempts == 1 {
-			if request.ServiceTier != "fast" {
-				t.Fatalf("first service_tier = %q, want fast", request.ServiceTier)
+			if request.ServiceTier != "priority" {
+				t.Fatalf("first service_tier = %q, want priority", request.ServiceTier)
 			}
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			fmt.Fprint(w, `{"error":{"message":"service_tier is not supported"}}`)

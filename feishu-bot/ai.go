@@ -104,6 +104,7 @@ type memorySearchData struct {
 	NormalizedQuery      string               `json:"normalized_query"`
 	Decomposition        *queryDecomposition  `json:"decomposition"`
 	LLMModels            qaStepModels         `json:"llm_models"`
+	FastMode             bool                 `json:"fast_mode"`
 	ExpandedQueries      []string             `json:"expanded_queries"`
 }
 
@@ -156,6 +157,7 @@ type analyzeUsage struct {
 type answerRunMeta struct {
 	Usage           *analyzeUsage
 	Models          qaStepModels
+	FastMode        bool
 	Decomposition   *queryDecomposition
 	ExpandedQueries []string
 }

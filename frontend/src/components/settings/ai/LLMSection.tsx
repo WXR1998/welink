@@ -220,7 +220,7 @@ export const LLMSection: React.FC = () => {
               <Zap size={15} className="text-amber-500" />
               Fast 模式
             </div>
-            <p className="mt-1 text-[11px] text-gray-400">向 OpenAI 与自定义兼容接口附加低延迟服务档位；服务不支持时会自动回退，可能提高按 token 价格。</p>
+            <p className="mt-1 text-[11px] text-gray-400">向 OpenAI 与自定义兼容接口附加 priority 服务档位；服务不支持时会自动回退，可能提高按 token 价格。</p>
           </div>
           <button
             type="button"
