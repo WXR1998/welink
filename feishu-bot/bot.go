@@ -612,7 +612,8 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	history := b.historyOf(sessionKey)
 	priorEntities := b.entitiesOf(sessionKey)
 	priorDecomposition := b.decompositionOf(sessionKey)
-	hasPriorEntity := len(priorEntities) > 0 || len(priorDecomposition.Entities) > 0
+	hasPriorEntity := len(priorEntities) > 0 ||
+		(priorDecomposition != nil && len(priorDecomposition.Entities) > 0)
 
 	convKey := "feishu:" + sessionKey
 	// 进度跟踪器：把后端步骤转成单调递增的 (current, total)。

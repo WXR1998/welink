@@ -183,6 +183,39 @@ func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
 	}
 }
 
+func TestAnswerAfterContextClearAllowsNoPreviousDecomposition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch r.URL.Path {
+		case "/api/ai/memory-search":
+			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[]}}` + "\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
+		case "/api/ai/analyze":
+			_, _ = w.Write([]byte("data: {\"delta\":\"回答\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	b := &bot{
+		cfg:      &Config{WeLinkBaseURL: server.URL},
+		sessions: map[string]*session{},
+	}
+	key := "p2p:user_a"
+	b.remember(key, "上一轮问题", "上一轮回答")
+	b.clearSessionContext(key)
+
+	answer, _, errMsg := b.answer(context.Background(), key, "", "新的问题", nil, nil)
+	if errMsg != "" {
+		t.Fatalf("answer failed after context clear: %s", errMsg)
+	}
+	if answer != "回答" {
+		t.Fatalf("answer = %q, want 回答", answer)
+	}
+}
+
 func assertUsesBackendDefaultProfile(t *testing.T, r *http.Request) {
 	t.Helper()
 	var payload map[string]json.RawMessage
