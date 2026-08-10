@@ -60,6 +60,21 @@ services:
       - feishu-bot-sessions:/var/lib/welink-feishu
     restart: unless-stopped
 
+  wecom-bot:
+    profiles: ["wecom"]
+    build: ./wecom-bot
+    container_name: welink-wecom-bot
+    depends_on:
+      - backend
+    environment:
+      - WECOM_BOT_ID=${WECOM_BOT_ID:-}
+      - WECOM_BOT_SECRET=${WECOM_BOT_SECRET:-}
+      - WELINK_BASE_URL=http://backend:8080
+      - WELINK_TOKEN=${WELINK_TOKEN:-}
+      - ALLOWED_USERS=${WECOM_ALLOWED_USERS:-}
+      - BOT_NAME=${WECOM_BOT_NAME:-}
+    restart: unless-stopped
+
 volumes:
   welink-prefs:
   feishu-bot-sessions:

@@ -124,7 +124,7 @@ dev-logs:    ## 跟踪本地开发部署日志
 
 ## ─── 构建 ────────────────────────────────────────────────────────────────────
 
-build: build-backend build-frontend build-feishu-bot  ## 构建后端 + 前端 + 飞书网关
+build: build-backend build-frontend build-feishu-bot build-wecom-bot  ## 构建后端 + 前端 + 飞书/企业微信网关
 
 build-backend:   ## 编译后端二进制（本地，无 CGO）
 	cd backend && CGO_ENABLED=0 go build -ldflags="-X main.appVersion=$(APP_VERSION) -X main.gitCommit=$(GIT_COMMIT)" -o welink-backend .
@@ -137,6 +137,9 @@ build-mcp:       ## 编译 MCP Server 二进制
 
 build-feishu-bot: ## 编译飞书 AI 问答网关二进制
 	cd feishu-bot && go build -o welink-feishu-bot .
+
+build-wecom-bot: ## 编译企业微信内部群 AI 问答网关二进制
+	cd wecom-bot && go build -o welink-wecom-bot .
 
 ## ─── 本地开发 ─────────────────────────────────────────────────────────────────
 
