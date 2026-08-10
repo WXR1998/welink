@@ -144,7 +144,7 @@ func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
 				return
 			}
 			previous = payload["previous_decomposition"]
-			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[],"fast_mode":true,"decomposition":{"needs_memory":true,"entities":["刘荟琪"],"concepts":["评价"]}}}` + "\n\n"))
+			_, _ = w.Write([]byte(`data: {"type":"result","data":{"facts":[],"llm_models":{"query_decomposition":"glm-5.2","query_decomposition_fast":false,"query_expansion":"gpt-5.6-terra","query_expansion_fast":true,"final_answer":"gpt-5.6-terra","final_answer_fast":true},"decomposition":{"needs_memory":true,"entities":["刘荟琪"],"concepts":["评价"]}}}` + "\n\n"))
 			_, _ = w.Write([]byte("data: {\"type\":\"done\"}\n\n"))
 		case "/api/ai/analyze":
 			_, _ = w.Write([]byte("data: {\"delta\":\"回答\"}\n\n"))
@@ -167,8 +167,8 @@ func TestAnswerForwardsPersistedPreviousDecomposition(t *testing.T) {
 	if answer != "回答" {
 		t.Fatalf("answer = %q, want 回答", answer)
 	}
-	if meta == nil || !meta.FastMode {
-		t.Fatalf("answer metadata did not preserve fast mode: %+v", meta)
+	if meta == nil || meta.Models.QueryDecompositionFast || !meta.Models.QueryExpansionFast || !meta.Models.FinalAnswerFast {
+		t.Fatalf("answer metadata did not preserve per-model Fast state: %+v", meta)
 	}
 	if len(previous) == 0 {
 		t.Fatal("memory-search request omitted previous_decomposition")
@@ -328,11 +328,12 @@ func TestMemorySearchForwardsStructuredProgressData(t *testing.T) {
 
 func TestFormatAnswerRunMeta(t *testing.T) {
 	meta := answerRunMeta{
-		FastMode: true,
 		Models: qaStepModels{
 			QueryDecomposition: "glm-5.2",
 			QueryExpansion:     "gpt-5.6-terra",
 			FinalAnswer:        "gpt-5.6-terra",
+			QueryExpansionFast: true,
+			FinalAnswerFast:    true,
 		},
 		Decomposition: &queryDecomposition{
 			Entities: []string{"张三"},
@@ -346,7 +347,7 @@ func TestFormatAnswerRunMeta(t *testing.T) {
 	got := formatAnswerRunMeta(meta)
 	for _, want := range []string{
 		"> **模型**",
-		"> 问题分解 | `glm-5.2·Fast`",
+		"> 问题分解 | `glm-5.2`",
 		"> 查询扩展 | `gpt-5.6-terra·Fast`",
 		"> 最终回答 | `gpt-5.6-terra·Fast`",
 		"> **问题分解**",

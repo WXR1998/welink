@@ -109,6 +109,7 @@ type MemLLMProfile struct {
 	APIKey   string `json:"api_key,omitempty"`
 	BaseURL  string `json:"base_url,omitempty"`
 	Model    string `json:"model,omitempty"`
+	FastMode bool   `json:"fast_mode,omitempty"`
 }
 
 // RerankProfile 是单个 Rerank（重排）提供商配置。
@@ -143,6 +144,8 @@ type LLMProfile struct {
 	// 使用 OpenAI Responses API（POST /responses）而不是 Chat Completions。
 	// 适用于仅支持 Responses API 的 OpenAI 兼容网关。
 	UseResponsesAPI bool `json:"use_responses_api,omitempty"`
+	// FastMode 对原生 OpenAI 和自定义兼容接口发送 service_tier=priority。
+	FastMode bool `json:"fast_mode,omitempty"`
 }
 
 // AIQALLMProfiles 指定跨联系人问答各 LLM 步骤的可选模型。
@@ -155,9 +158,12 @@ type AIQALLMProfiles struct {
 
 // AIQAStepModels 是一次跨联系人问答各 LLM 步骤实际使用的模型名。
 type AIQAStepModels struct {
-	QueryDecomposition string `json:"query_decomposition,omitempty"`
-	QueryExpansion     string `json:"query_expansion,omitempty"`
-	FinalAnswer        string `json:"final_answer,omitempty"`
+	QueryDecomposition     string `json:"query_decomposition,omitempty"`
+	QueryExpansion         string `json:"query_expansion,omitempty"`
+	FinalAnswer            string `json:"final_answer,omitempty"`
+	QueryDecompositionFast bool   `json:"query_decomposition_fast,omitempty"`
+	QueryExpansionFast     bool   `json:"query_expansion_fast,omitempty"`
+	FinalAnswerFast        bool   `json:"final_answer_fast,omitempty"`
 }
 
 // aiQAStepProfileID 返回问答步骤应使用的 profile。
@@ -181,14 +187,20 @@ func aiQAStepProfileID(prefs Preferences, step, requestProfileID string) string 
 }
 
 func aiQAStepModelNames(prefs Preferences, requestProfileID string) AIQAStepModels {
-	modelFor := func(step string) string {
+	configFor := func(step string) llmConfig {
 		profileID := aiQAStepProfileID(prefs, step, requestProfileID)
-		return llmConfigForProfile(profileID, prefs).model
+		return llmConfigForProfile(profileID, prefs)
 	}
+	decomposition := configFor("query_decomposition")
+	expansion := configFor("query_expansion")
+	finalAnswer := configFor("final_answer")
 	return AIQAStepModels{
-		QueryDecomposition: modelFor("query_decomposition"),
-		QueryExpansion:     modelFor("query_expansion"),
-		FinalAnswer:        modelFor("final_answer"),
+		QueryDecomposition:     decomposition.model,
+		QueryExpansion:         expansion.model,
+		FinalAnswer:            finalAnswer.model,
+		QueryDecompositionFast: decomposition.fastMode && supportsFastServiceTier(decomposition.provider),
+		QueryExpansionFast:     expansion.fastMode && supportsFastServiceTier(expansion.provider),
+		FinalAnswerFast:        finalAnswer.fastMode && supportsFastServiceTier(finalAnswer.provider),
 	}
 }
 
@@ -221,7 +233,8 @@ func sanitizeAIQALLMProfiles(profiles AIQALLMProfiles, llmProfiles []LLMProfile)
 // v3: 顶层 LLM 连接参数 → 选中的默认 LLM profile。
 // v4: 顶层 Embedding / 记忆提炼 / Rerank 连接参数 → 对应 profiles。
 // v5: Embedding / 记忆提炼 / Rerank 从顺序 fallback 改为显式选择一个 profile。
-const CurrentSchemaVersion = 5
+// v6: 全局 openai_fast_mode 迁移为每个 LLM profile 的 fast_mode。
+const CurrentSchemaVersion = 6
 
 type Preferences struct {
 	// 0 或缺失 = 旧版本（需要迁移）；>= CurrentSchemaVersion = 当前版本
@@ -294,9 +307,7 @@ type Preferences struct {
 	LLMProfiles         []LLMProfile    `json:"llm_profiles,omitempty"`
 	DefaultLLMProfileID string          `json:"default_llm_profile_id,omitempty"`
 	AIQALLMProfiles     AIQALLMProfiles `json:"ai_qa_llm_profiles,omitempty"`
-	// OpenAIFastMode 对原生 OpenAI 和自定义兼容接口生效，向请求附加 service_tier=priority。
-	OpenAIFastMode   bool   `json:"openai_fast_mode,omitempty"`
-	AIAnalysisDBPath string `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
+	AIAnalysisDBPath    string          `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
 
 	EmbeddingProfiles         []EmbeddingProfile `json:"embedding_profiles,omitempty"`
 	DefaultEmbeddingProfileID string             `json:"default_embedding_profile_id,omitempty"`
@@ -459,6 +470,7 @@ type legacyLLMFields struct {
 	RerankAPIKey      string `json:"rerank_api_key"`
 	RerankBaseURL     string `json:"rerank_base_url"`
 	RerankModel       string `json:"rerank_model"`
+	OpenAIFastMode    bool   `json:"openai_fast_mode"`
 }
 
 func decodePreferences(data []byte) (Preferences, error) {
@@ -471,16 +483,23 @@ func decodePreferences(data []byte) (Preferences, error) {
 		return Preferences{}, err
 	}
 	needsMigration := false
+	migrationFrom := CurrentSchemaVersion
+	markMigration := func(fromVersion int) {
+		needsMigration = true
+		if fromVersion < migrationFrom {
+			migrationFrom = fromVersion
+		}
+	}
 	if len(p.LLMProfiles) == 0 && legacy.Provider != "" {
 		p.LLMProfiles = []LLMProfile{{
 			ID: "llm-default", Name: legacy.Provider,
 			Provider: legacy.Provider, APIKey: legacy.APIKey,
 			BaseURL: legacy.BaseURL, Model: legacy.Model,
 		}}
-		needsMigration = true
+		markMigration(2)
 	}
 	if len(p.LLMProfiles) > 0 && p.DefaultLLMProfileID == "" {
-		needsMigration = true
+		markMigration(2)
 	}
 	if len(p.EmbeddingProfiles) == 0 && legacy.EmbeddingProvider != "" {
 		p.EmbeddingProfiles = []EmbeddingProfile{{
@@ -488,10 +507,10 @@ func decodePreferences(data []byte) (Preferences, error) {
 			Provider: legacy.EmbeddingProvider, APIKey: legacy.EmbeddingAPIKey,
 			BaseURL: legacy.EmbeddingBaseURL, Model: legacy.EmbeddingModel, Dims: legacy.EmbeddingDims,
 		}}
-		needsMigration = true
+		markMigration(4)
 	}
 	if len(p.EmbeddingProfiles) > 0 && !hasEmbeddingProfile(p.EmbeddingProfiles, p.DefaultEmbeddingProfileID) {
-		needsMigration = true
+		markMigration(4)
 	}
 	if len(p.MemLLMProfiles) == 0 && (legacy.MemLLMBaseURL != "" || legacy.MemLLMModel != "" || legacy.MemLLMAPIKey != "") {
 		provider := legacy.Provider
@@ -502,23 +521,36 @@ func decodePreferences(data []byte) (Preferences, error) {
 			ID: "mem-default", Name: provider, Provider: provider, APIKey: legacy.MemLLMAPIKey,
 			BaseURL: legacy.MemLLMBaseURL, Model: legacy.MemLLMModel,
 		}}
-		needsMigration = true
+		markMigration(4)
 	}
 	if len(p.MemLLMProfiles) > 0 && !hasMemLLMProfile(p.MemLLMProfiles, p.DefaultMemLLMProfileID) {
-		needsMigration = true
+		markMigration(4)
+	}
+	if legacy.OpenAIFastMode {
+		for i := range p.LLMProfiles {
+			if supportsFastServiceTier(p.LLMProfiles[i].Provider) {
+				p.LLMProfiles[i].FastMode = true
+			}
+		}
+		for i := range p.MemLLMProfiles {
+			if supportsFastServiceTier(p.MemLLMProfiles[i].Provider) {
+				p.MemLLMProfiles[i].FastMode = true
+			}
+		}
+		markMigration(5)
 	}
 	if len(p.RerankProfiles) == 0 && legacy.RerankProvider != "" {
 		p.RerankProfiles = []RerankProfile{{
 			ID: "rerank-default", Name: legacy.RerankProvider, Provider: legacy.RerankProvider,
 			APIKey: legacy.RerankAPIKey, BaseURL: legacy.RerankBaseURL, Model: legacy.RerankModel,
 		}}
-		needsMigration = true
+		markMigration(4)
 	}
 	if len(p.RerankProfiles) > 0 && !hasRerankProfile(p.RerankProfiles, p.DefaultRerankProfileID) {
-		needsMigration = true
+		markMigration(4)
 	}
-	if needsMigration && p.SchemaVersion >= CurrentSchemaVersion {
-		p.SchemaVersion = CurrentSchemaVersion - 1
+	if needsMigration && p.SchemaVersion > migrationFrom {
+		p.SchemaVersion = migrationFrom
 	}
 	return p, nil
 }
@@ -729,6 +761,9 @@ func migratePreferences(p Preferences) Preferences {
 			p.DefaultRerankProfileID = p.RerankProfiles[0].ID
 		}
 		p.SchemaVersion = 5
+	}
+	if p.SchemaVersion < 6 {
+		p.SchemaVersion = 6
 	}
 	return p
 }

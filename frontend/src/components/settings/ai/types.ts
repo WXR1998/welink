@@ -48,6 +48,7 @@ export interface LLMProfile {
   context_window?: number; // 上下文窗口 token 数，0 = 默认 128000
   compress_threshold?: number; // 上下文压缩阈值，0 = contextWindow 的 70%
   use_responses_api?: boolean; // 改用 POST /responses（适用于部分 OpenAI 兼容网关）
+  fast_mode?: boolean; // 发送 service_tier=priority
 }
 
 export function genId(): string {
@@ -76,6 +77,7 @@ export interface MemLLMProfile {
   api_key?: string;
   base_url?: string;
   model?: string;
+  fast_mode?: boolean;
 }
 
 export function newEmbeddingProfile(index: number): EmbeddingProfile {

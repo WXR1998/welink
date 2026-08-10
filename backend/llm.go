@@ -77,7 +77,7 @@ type llmConfig struct {
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
 	compressThreshold int    // 上下文压缩阈值，0 = contextWindow 的 70%
 	useResponsesAPI   bool   // 使用 OpenAI Responses API（/responses）
-	openAIFastMode    bool   // 原生 OpenAI：使用更低延迟的 service_tier=priority
+	fastMode          bool   // 当前 profile 使用更低延迟的 service_tier=priority
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
@@ -309,7 +309,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	var cfg llmConfig
 	for _, p := range prefs.LLMProfiles {
 		if p.ID == profileID {
-			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold, useResponsesAPI: p.UseResponsesAPI, openAIFastMode: prefs.OpenAIFastMode}
+			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold, useResponsesAPI: p.UseResponsesAPI, fastMode: p.FastMode}
 			break
 		}
 	}
@@ -703,7 +703,7 @@ func buildOpenAICompatRequest(msgs []LLMMessage, cfg llmConfig, stream bool) ope
 	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
 		reqBody.ReasoningEffort = cfg.reasoningEffort
 	}
-	if cfg.openAIFastMode && supportsFastServiceTier(cfg.provider) {
+	if cfg.fastMode && supportsFastServiceTier(cfg.provider) {
 		reqBody.ServiceTier = "priority"
 	}
 	return reqBody

@@ -1339,7 +1339,6 @@ func serverMain() {
 			LLMProfiles               []LLMProfile       `json:"llm_profiles"`
 			DefaultLLMProfileID       string             `json:"default_llm_profile_id"`
 			AIQALLMProfiles           AIQALLMProfiles    `json:"ai_qa_llm_profiles"`
-			OpenAIFastMode            bool               `json:"openai_fast_mode"`
 			GeminiClientID            string             `json:"gemini_client_id"`
 			GeminiClientSecret        string             `json:"gemini_client_secret"`
 			AIAnalysisDBPath          string             `json:"ai_analysis_db_path"`
@@ -1408,7 +1407,6 @@ func serverMain() {
 			existing.DefaultLLMProfileID = defaultID
 		}
 		existing.AIQALLMProfiles = sanitizeAIQALLMProfiles(incoming.AIQALLMProfiles, incoming.LLMProfiles)
-		existing.OpenAIFastMode = incoming.OpenAIFastMode
 		if keepOld(incoming.GeminiClientSecret) {
 			// 保留原值
 		} else {

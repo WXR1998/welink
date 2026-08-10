@@ -8,21 +8,21 @@ import (
 	"testing"
 )
 
-func TestOpenAIFastModeAppliesToOpenAICompatibleRequests(t *testing.T) {
+func TestLLMProfileFastModeAppliesToOpenAICompatibleRequests(t *testing.T) {
 	prefs := Preferences{
-		OpenAIFastMode:      true,
 		DefaultLLMProfileID: "openai",
 		LLMProfiles: []LLMProfile{
-			{ID: "openai", Provider: "openai", Model: "gpt-5.5"},
-			{ID: "custom", Provider: "custom", Model: "gpt-5.5"},
+			{ID: "openai", Provider: "openai", Model: "gpt-5.5", FastMode: true},
+			{ID: "custom-fast", Provider: "custom", Model: "gpt-5.5", FastMode: true},
+			{ID: "custom-normal", Provider: "custom", Model: "gpt-5.5"},
 		},
-		MemLLMProfiles:         []MemLLMProfile{{ID: "memory", Provider: "openai", Model: "gpt-5.5"}},
+		MemLLMProfiles:         []MemLLMProfile{{ID: "memory", Provider: "openai", Model: "gpt-5.5", FastMode: true}},
 		DefaultMemLLMProfileID: "memory",
 	}
 
 	openAIConfig := llmConfigForProfile("openai", prefs)
-	if !openAIConfig.openAIFastMode {
-		t.Fatal("OpenAI fast mode was not propagated to the LLM config")
+	if !openAIConfig.fastMode {
+		t.Fatal("profile fast mode was not propagated to the LLM config")
 	}
 	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, openAIConfig, true).ServiceTier; got != "priority" {
 		t.Fatalf("Chat Completions service_tier = %q, want priority", got)
@@ -31,7 +31,7 @@ func TestOpenAIFastModeAppliesToOpenAICompatibleRequests(t *testing.T) {
 		t.Fatalf("Responses service_tier = %q, want priority", got)
 	}
 
-	customConfig := llmConfigForProfile("custom", prefs)
+	customConfig := llmConfigForProfile("custom-fast", prefs)
 	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, customConfig, true).ServiceTier; got != "priority" {
 		t.Fatalf("custom Chat Completions service_tier = %q, want priority", got)
 	}
@@ -40,8 +40,38 @@ func TestOpenAIFastModeAppliesToOpenAICompatibleRequests(t *testing.T) {
 	}
 
 	memoryConfigs := memLLMConfigs(prefs)
-	if len(memoryConfigs) != 1 || !memoryConfigs[0].openAIFastMode {
+	if len(memoryConfigs) != 1 || !memoryConfigs[0].fastMode {
 		t.Fatalf("memory extraction config did not inherit OpenAI fast mode: %+v", memoryConfigs)
+	}
+
+	normalConfig := llmConfigForProfile("custom-normal", prefs)
+	if got := buildOpenAICompatRequest([]LLMMessage{{Role: "user", Content: "Hi"}}, normalConfig, true).ServiceTier; got != "" {
+		t.Fatalf("normal custom profile service_tier = %q, want empty", got)
+	}
+}
+
+func TestDecodePreferencesMigratesLegacyGlobalFastModeToProfiles(t *testing.T) {
+	prefs, err := decodePreferences([]byte(`{
+		"schema_version": 5,
+		"openai_fast_mode": true,
+		"llm_profiles": [
+			{"id":"openai","provider":"openai"},
+			{"id":"custom","provider":"custom"},
+			{"id":"deepseek","provider":"deepseek"}
+		],
+		"mem_llm_profiles": [{"id":"memory","provider":"custom"}]
+	}`))
+	if err != nil {
+		t.Fatalf("decode preferences: %v", err)
+	}
+	if !prefs.LLMProfiles[0].FastMode || !prefs.LLMProfiles[1].FastMode {
+		t.Fatalf("supported LLM profiles did not inherit legacy Fast mode: %+v", prefs.LLMProfiles)
+	}
+	if prefs.LLMProfiles[2].FastMode {
+		t.Fatalf("unsupported LLM profile inherited legacy Fast mode: %+v", prefs.LLMProfiles[2])
+	}
+	if len(prefs.MemLLMProfiles) != 1 || !prefs.MemLLMProfiles[0].FastMode {
+		t.Fatalf("memory profile did not inherit legacy Fast mode: %+v", prefs.MemLLMProfiles)
 	}
 }
 
@@ -71,11 +101,11 @@ func TestCompleteOpenAICompatRetriesWithoutFastModeWhenUnsupported(t *testing.T)
 	defer server.Close()
 
 	content, err := completeOpenAICompatSync([]LLMMessage{{Role: "user", Content: "Hi"}}, llmConfig{
-		provider:       "custom",
-		apiKey:         "test-key",
-		baseURL:        server.URL,
-		model:          "test-model",
-		openAIFastMode: true,
+		provider: "custom",
+		apiKey:   "test-key",
+		baseURL:  server.URL,
+		model:    "test-model",
+		fastMode: true,
 	})
 	if err != nil {
 		t.Fatalf("completeOpenAICompatSync returned error: %v", err)
@@ -119,7 +149,7 @@ func TestCompleteOpenAIResponsesRetriesWithoutFastModeWhenUnsupported(t *testing
 		baseURL:         server.URL,
 		model:           "test-model",
 		useResponsesAPI: true,
-		openAIFastMode:  true,
+		fastMode:        true,
 	})
 	if err != nil {
 		t.Fatalf("completeOpenAICompatSync returned error: %v", err)

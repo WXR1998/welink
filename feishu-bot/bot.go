@@ -685,7 +685,6 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	return answer, &answerRunMeta{
 		Usage:           usage,
 		Models:          data.LLMModels,
-		FastMode:        data.FastMode,
 		Decomposition:   data.Decomposition,
 		ExpandedQueries: data.ExpandedQueries,
 	}, ""
@@ -1005,11 +1004,11 @@ func (b *bot) contextMetaLine(key string, runMeta *answerRunMeta, elapsed time.D
 }
 
 func formatAnswerRunMeta(meta answerRunMeta) string {
-	model := func(value string) string {
+	model := func(value string, fast bool) string {
 		if strings.TrimSpace(value) == "" {
 			return "-"
 		}
-		if meta.FastMode {
+		if fast {
 			value += "·Fast"
 		}
 		return "`" + escapeMarkdownTableCell(value) + "`"
@@ -1017,9 +1016,9 @@ func formatAnswerRunMeta(meta answerRunMeta) string {
 
 	lines := []string{
 		"> **模型**",
-		"> 问题分解 | " + model(meta.Models.QueryDecomposition),
-		"> 查询扩展 | " + model(meta.Models.QueryExpansion),
-		"> 最终回答 | " + model(meta.Models.FinalAnswer),
+		"> 问题分解 | " + model(meta.Models.QueryDecomposition, meta.Models.QueryDecompositionFast),
+		"> 查询扩展 | " + model(meta.Models.QueryExpansion, meta.Models.QueryExpansionFast),
+		"> 最终回答 | " + model(meta.Models.FinalAnswer, meta.Models.FinalAnswerFast),
 	}
 
 	if section := formatQueryDecompositionTable(meta.Decomposition); section != "" {

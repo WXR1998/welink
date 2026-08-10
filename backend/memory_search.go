@@ -641,7 +641,6 @@ type MemorySearchResponse struct {
 	TokenUsage           *StreamUsage         `json:"token_usage"`                      // DecomposeQuery 消耗的 token
 	DecomposePrompt      []LLMMessage         `json:"decompose_prompt"`                 // DecomposeQuery 发给 LLM 的原始 prompt
 	LLMModels            AIQAStepModels       `json:"llm_models,omitempty"`             // 本轮问答各 LLM 步骤实际使用的模型
-	FastMode             bool                 `json:"fast_mode,omitempty"`              // 本轮是否尝试 priority 服务档位
 	NormalizedQuery      string               `json:"normalized_query"`                 // 外号还原为原名后的提问，供最终回答使用
 	// 增强检索结果
 	VecMessages     []VecMessageHit   `json:"vec_messages"`     // 双路检索：原始消息命中
@@ -764,7 +763,6 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 				TokenUsage:      decompUsage,
 				DecomposePrompt: decompPrompt,
 				LLMModels:       stepModels,
-				FastMode:        prefs.OpenAIFastMode,
 			})
 			sendDone()
 			return
@@ -1000,7 +998,6 @@ func registerMemorySearchRoutes(api *gin.RouterGroup, getSvc func() *service.Con
 			TokenUsage:           decompUsage,
 			DecomposePrompt:      decompPrompt,
 			LLMModels:            stepModels,
-			FastMode:             prefs.OpenAIFastMode,
 			NormalizedQuery:      body.Query,
 			VecMessages:          vecMessages,
 		}

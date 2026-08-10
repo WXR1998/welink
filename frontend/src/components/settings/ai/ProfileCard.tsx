@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Loader2, AlertCircle, Check, LogIn, LogOut, ExternalLink } from 'lucide-react';
+import { X, Loader2, AlertCircle, Check, LogIn, LogOut, ExternalLink, Zap } from 'lucide-react';
 import { openProviderUrl } from '../constants';
 import { PROVIDERS, type LLMProfile, type ProviderValue } from './types';
 
@@ -67,6 +67,7 @@ export const ProfileCard: React.FC<{
               base_url: '',
               model: '',
               use_responses_api: false,
+              fast_mode: false,
               ...(shouldAutoRename ? { name: newProvider } : {}),
             });
           }}
@@ -210,6 +211,24 @@ export const ProfileCard: React.FC<{
           placeholder={provInfo.defaultModel ? `默认：${provInfo.defaultModel}` : '请输入模型名'}
           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input" />
       </div>
+
+      {(profile.provider === 'openai' || profile.provider === 'custom') && (
+        <div className="flex items-center justify-between py-1 gap-3">
+          <div className="min-w-0">
+            <span className="flex items-center gap-1.5 text-sm text-[#1d1d1f] dark:text-gray-200"><Zap size={14} className="text-amber-500" />Fast 模式</span>
+            <p className="text-[11px] text-gray-400 mt-0.5">此模型请求附加 priority 服务档位；不支持时自动回退。</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange({ ...profile, fast_mode: !profile.fast_mode })}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${profile.fast_mode ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
+            title="切换此模型的 Fast 模式"
+            aria-pressed={profile.fast_mode ?? false}
+          >
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${profile.fast_mode ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+      )}
 
       {(profile.provider === 'openai' || profile.provider === 'custom') && (
         <div className="flex items-center justify-between py-1 gap-3">

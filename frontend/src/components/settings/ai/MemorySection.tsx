@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, AlertCircle, Check, Trash2, Plus, X } from 'lucide-react';
+import { Loader2, AlertCircle, Check, Trash2, Plus, X, Zap } from 'lucide-react';
 import axios from 'axios';
 import { genId, newMemLLMProfile, PROVIDERS, type MemLLMProfile } from './types';
 
@@ -155,6 +155,7 @@ export const MemorySection: React.FC = () => {
                       provider: e.target.value,
                       base_url: newProv.defaultURL || '',
                       model: newProv.defaultModel || '',
+                      fast_mode: false,
                     });
                   }}
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white dk-input"
@@ -195,6 +196,24 @@ export const MemorySection: React.FC = () => {
                   className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#07c160] bg-white font-mono dk-input"
                 />
               </div>
+
+              {(p.provider === 'openai' || p.provider === 'custom') && (
+                <div className="flex items-center justify-between py-1 gap-3">
+                  <div className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-sm text-[#1d1d1f] dark:text-gray-200"><Zap size={14} className="text-amber-500" />Fast 模式</span>
+                    <p className="text-[11px] text-gray-400 mt-0.5">此模型请求附加 priority 服务档位；不支持时自动回退。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateProfile(p.id, { fast_mode: !p.fast_mode })}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${p.fast_mode ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
+                    title="切换此模型的 Fast 模式"
+                    aria-pressed={p.fast_mode ?? false}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${p.fast_mode ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
