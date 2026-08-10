@@ -3,6 +3,7 @@ import { Loader2, AlertCircle, Check, Plus, X } from 'lucide-react';
 import axios from 'axios';
 import { ModelTestResult } from './ModelTestResult';
 import { genId, newEmbeddingProfile, type AIProfileTestResult, type EmbeddingProfile } from './types';
+import { streamProfileTestResults } from './streamProfileTestResults';
 
 const EMBEDDING_PROVIDERS = [
   { value: 'ollama',  label: 'Ollama（本地，免费）', defaultURL: 'http://localhost:11434', defaultModel: 'nomic-embed-text', defaultDims: 768, needsKey: false },
@@ -73,12 +74,17 @@ export const EmbeddingSection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/vec/test-embedding');
-      const results = r.data.results ?? [];
-      setTestResults(Object.fromEntries(results.map(result => [result.profile_id, result])));
-      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
+      setTestResults({});
+      let resultCount = 0;
+      let hasSuccess = false;
+      await streamProfileTestResults('/api/ai/vec/test-embedding', {}, result => {
+        resultCount++;
+        hasSuccess = hasSuccess || result.ok;
+        setTestResults(previous => ({ ...previous, [result.profile_id]: result }));
+      });
+      setSaveMsg({ ok: hasSuccess, text: `已完成 ${resultCount} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
+      const msg = e instanceof Error ? e.message : '连接失败';
       setSaveMsg({ ok: false, text: msg });
     } finally {
       setTesting(false);

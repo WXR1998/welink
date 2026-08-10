@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
 
 const llmConnectionTestPrompt = "Reply exactly: OK"
+const llmConnectionTestFirstOutputTimeout = 5 * time.Second
 
 type AIProtocolTestResult struct {
 	Protocol        string  `json:"protocol"`
@@ -37,10 +39,14 @@ type aiProfileTestJob struct {
 	run              func() []AIProtocolTestResult
 }
 
-func runAIProfileTests(jobs []aiProfileTestJob) []AIProfileTestResult {
+func runAIProfileTests(jobs []aiProfileTestJob, onResult ...func(AIProfileTestResult)) []AIProfileTestResult {
 	results := make([]AIProfileTestResult, len(jobs))
 	workers := make(chan struct{}, 3)
 	var wg sync.WaitGroup
+	var publish func(AIProfileTestResult)
+	if len(onResult) > 0 {
+		publish = onResult[0]
+	}
 
 	for i, job := range jobs {
 		wg.Add(1)
@@ -77,6 +83,9 @@ func runAIProfileTests(jobs []aiProfileTestJob) []AIProfileTestResult {
 				}
 			}
 			results[index] = result
+			if publish != nil {
+				publish(result)
+			}
 		}(i, job)
 	}
 	wg.Wait()
@@ -104,17 +113,20 @@ func runLLMProtocol(protocol string, call func() (string, error)) AIProtocolTest
 
 func testLLMProfile(profileID, name string, cfg llmConfig) AIProfileTestResult {
 	defaultsFor(&cfg)
+	cfg.strictFastMode = true
+	if cfg.connectionTestTimeout == 0 {
+		cfg.connectionTestTimeout = llmConnectionTestFirstOutputTimeout
+	}
 	result := AIProfileTestResult{
 		ProfileID: profileID,
 		Name:      name,
 		Provider:  cfg.provider,
 		Model:     cfg.model,
 	}
-	job := aiProfileTestJob{result: result, selectedProtocol: "chat_completions"}
+	job := aiProfileTestJob{result: result, selectedProtocol: selectedLLMProtocol(cfg)}
 
 	switch cfg.provider {
 	case "claude":
-		job.selectedProtocol = "claude"
 		job.run = func() []AIProtocolTestResult {
 			return []AIProtocolTestResult{
 				runLLMProtocol("claude", func() (string, error) {
@@ -123,7 +135,6 @@ func testLLMProfile(profileID, name string, cfg llmConfig) AIProfileTestResult {
 			}
 		}
 	case "bedrock":
-		job.selectedProtocol = "bedrock"
 		job.run = func() []AIProtocolTestResult {
 			return []AIProtocolTestResult{
 				runLLMProtocol("bedrock", func() (string, error) {
@@ -132,7 +143,6 @@ func testLLMProfile(profileID, name string, cfg llmConfig) AIProfileTestResult {
 			}
 		}
 	case "vertex":
-		job.selectedProtocol = "vertex"
 		job.run = func() []AIProtocolTestResult {
 			return []AIProtocolTestResult{
 				runLLMProtocol("vertex", func() (string, error) {
@@ -141,22 +151,22 @@ func testLLMProfile(profileID, name string, cfg llmConfig) AIProfileTestResult {
 			}
 		}
 	default:
-		if cfg.useResponsesAPI {
-			job.selectedProtocol = "responses"
-		}
 		job.run = func() []AIProtocolTestResult {
-			chatCfg := cfg
-			chatCfg.useResponsesAPI = false
-			responsesCfg := cfg
-			responsesCfg.useResponsesAPI = true
-			return []AIProtocolTestResult{
-				runLLMProtocol("chat_completions", func() (string, error) {
-					return completeOpenAICompatSync([]LLMMessage{{Role: "user", Content: llmConnectionTestPrompt}}, chatCfg)
-				}),
-				runLLMProtocol("responses", func() (string, error) {
-					return completeOpenAIResponsesSync([]LLMMessage{{Role: "user", Content: llmConnectionTestPrompt}}, responsesCfg)
-				}),
+			protocol := selectedLLMProtocol(cfg)
+			call := func() (string, error) {
+				var output strings.Builder
+				send := func(chunk StreamChunk) {
+					output.WriteString(chunk.Delta)
+					output.WriteString(chunk.Thinking)
+				}
+				if cfg.useResponsesAPI {
+					err := streamOpenAIResponses(send, []LLMMessage{{Role: "user", Content: llmConnectionTestPrompt}}, cfg)
+					return output.String(), err
+				}
+				err := streamOpenAICompat(send, []LLMMessage{{Role: "user", Content: llmConnectionTestPrompt}}, cfg)
+				return output.String(), err
 			}
+			return []AIProtocolTestResult{runLLMProtocol(protocol, call)}
 		}
 	}
 
@@ -164,6 +174,10 @@ func testLLMProfile(profileID, name string, cfg llmConfig) AIProfileTestResult {
 }
 
 func testLLMProfiles(prefs Preferences) []AIProfileTestResult {
+	return runAIProfileTests(llmProfileTestJobs(prefs))
+}
+
+func llmProfileTestJobs(prefs Preferences) []aiProfileTestJob {
 	jobs := make([]aiProfileTestJob, 0, len(prefs.LLMProfiles))
 	for index, profile := range prefs.LLMProfiles {
 		cfg := llmConfigForProfile(profile.ID, prefs)
@@ -179,7 +193,7 @@ func testLLMProfiles(prefs Preferences) []AIProfileTestResult {
 			selectedProtocol: selectedLLMProtocol(cfg),
 		})
 	}
-	return runAIProfileTests(jobs)
+	return jobs
 }
 
 func selectedLLMProtocol(cfg llmConfig) string {
@@ -199,6 +213,10 @@ func selectedLLMProtocol(cfg llmConfig) string {
 }
 
 func testEmbeddingProfiles(prefs Preferences) []AIProfileTestResult {
+	return runAIProfileTests(embeddingProfileTestJobs(prefs))
+}
+
+func embeddingProfileTestJobs(prefs Preferences) []aiProfileTestJob {
 	jobs := make([]aiProfileTestJob, 0, len(prefs.EmbeddingProfiles))
 	for index, profile := range prefs.EmbeddingProfiles {
 		cfg := EmbeddingConfig{Provider: profile.Provider, APIKey: profile.APIKey, BaseURL: profile.BaseURL, Model: profile.Model, Dims: profile.Dims}
@@ -233,10 +251,14 @@ func testEmbeddingProfiles(prefs Preferences) []AIProfileTestResult {
 			},
 		})
 	}
-	return runAIProfileTests(jobs)
+	return jobs
 }
 
 func testRerankProfiles(prefs Preferences) []AIProfileTestResult {
+	return runAIProfileTests(rerankProfileTestJobs(prefs))
+}
+
+func rerankProfileTestJobs(prefs Preferences) []aiProfileTestJob {
 	jobs := make([]aiProfileTestJob, 0, len(prefs.RerankProfiles))
 	for index, profile := range prefs.RerankProfiles {
 		cfg := RerankConfig{Provider: profile.Provider, APIKey: profile.APIKey, BaseURL: profile.BaseURL, Model: profile.Model}
@@ -272,13 +294,23 @@ func testRerankProfiles(prefs Preferences) []AIProfileTestResult {
 			},
 		})
 	}
-	return runAIProfileTests(jobs)
+	return jobs
 }
 
 func testMemLLMProfiles(prefs Preferences) []AIProfileTestResult {
+	return runAIProfileTests(memLLMProfileTestJobs(prefs))
+}
+
+func memLLMProfileTestJobs(prefs Preferences) []aiProfileTestJob {
 	if len(prefs.MemLLMProfiles) == 0 {
 		cfg := llmConfigForProfile("", prefs)
-		return []AIProfileTestResult{testLLMProfile("", "默认 AI 配置", cfg)}
+		return []aiProfileTestJob{{
+			result:           AIProfileTestResult{ProfileID: "", Name: "默认 AI 配置", Provider: cfg.provider, Model: cfg.model},
+			selectedProtocol: selectedLLMProtocol(cfg),
+			run: func() []AIProtocolTestResult {
+				return testLLMProfile("", "默认 AI 配置", cfg).Protocols
+			},
+		}}
 	}
 
 	jobs := make([]aiProfileTestJob, 0, len(prefs.MemLLMProfiles))
@@ -304,5 +336,5 @@ func testMemLLMProfiles(prefs Preferences) []AIProfileTestResult {
 			},
 		})
 	}
-	return runAIProfileTests(jobs)
+	return jobs
 }

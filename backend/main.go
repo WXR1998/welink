@@ -3299,6 +3299,29 @@ func serverMain() {
 		})
 	})
 
+	// streamAIProfileTestResults 按完成顺序写出每个配置的测试结果，避免批量测试被最慢配置阻塞展示。
+	streamAIProfileTestResults := func(c *gin.Context, jobs []aiProfileTestJob) {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(http.StatusOK)
+
+		results := make(chan AIProfileTestResult, len(jobs))
+		go func() {
+			runAIProfileTests(jobs, func(result AIProfileTestResult) {
+				results <- result
+			})
+			close(results)
+		}()
+
+		for result := range results {
+			c.SSEvent("result", gin.H{"result": result})
+			c.Writer.Flush()
+		}
+		c.SSEvent("complete", gin.H{"count": len(jobs)})
+		c.Writer.Flush()
+	}
+
 	// POST /api/ai/vec/test-embedding — 用真实 embedding 请求验证全部配置
 	api.POST("/ai/vec/test-embedding", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
@@ -3310,7 +3333,7 @@ func serverMain() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置 embedding 提供商"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"results": testEmbeddingProfiles(prefs)})
+		streamAIProfileTestResults(c, embeddingProfileTestJobs(prefs))
 	})
 
 	// GET /api/ai/rerank/debug — 诊断 rerank 配置加载状态
@@ -3336,7 +3359,7 @@ func serverMain() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 rerank 提供商"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"results": testRerankProfiles(prefs)})
+		streamAIProfileTestResults(c, rerankProfileTestJobs(prefs))
 	})
 
 	// POST /api/ai/llm/test — 用 Chat Completions 和 Responses 两条真实链路验证 LLM 配置
@@ -3352,7 +3375,7 @@ func serverMain() {
 		prefs := loadPreferences()
 
 		if body.ProfileID == "__all__" {
-			c.JSON(http.StatusOK, gin.H{"results": testLLMProfiles(prefs)})
+			streamAIProfileTestResults(c, llmProfileTestJobs(prefs))
 			return
 		}
 
@@ -3383,7 +3406,7 @@ func serverMain() {
 			return
 		}
 		prefs := loadPreferences()
-		c.JSON(http.StatusOK, gin.H{"results": testMemLLMProfiles(prefs)})
+		streamAIProfileTestResults(c, memLLMProfileTestJobs(prefs))
 	})
 
 	// GET /api/ai/mem/status?key=...

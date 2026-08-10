@@ -3,6 +3,7 @@ import { Plus, Loader2, Check, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
 import { newProfile, type AIProfileTestResult, type LLMProfile } from './types';
+import { streamProfileTestResults } from './streamProfileTestResults';
 
 interface AIQALLMProfiles {
   query_decomposition?: string;
@@ -152,16 +153,16 @@ export const LLMSection: React.FC = () => {
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
       await loadPreferences();
-      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/llm/test', { profile_id: '__all__' });
-      const results = r.data.results ?? [];
-      const nextResults: Record<string, AIProfileTestResult> = {};
-      for (const res of results) {
-        nextResults[res.profile_id] = res;
-      }
-      setTestResults(nextResults);
-      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
+      let resultCount = 0;
+      let hasSuccess = false;
+      await streamProfileTestResults('/api/ai/llm/test', { profile_id: '__all__' }, result => {
+        resultCount++;
+        hasSuccess = hasSuccess || result.ok;
+        setTestResults(previous => ({ ...previous, [result.profile_id]: result }));
+      });
+      setSaveMsg({ ok: hasSuccess, text: `已完成 ${resultCount} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
+      const msg = e instanceof Error ? e.message : '连接失败';
       setSaveMsg({ ok: false, text: msg });
     } finally {
       setTestingAll(false);

@@ -77,8 +77,10 @@ func streamOpenAIResponses(send func(StreamChunk), msgs []LLMMessage, cfg llmCon
 	requestBody := buildOpenAIResponsesRequest(msgs, cfg, true)
 	body, _ := json.Marshal(requestBody)
 	url := openAIResponsesURL(cfg)
+	testTimer := newConnectionTestTimer(cfg)
+	defer testTimer.cleanup()
 	post := func(payload []byte) (*http.Response, error) {
-		req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(testTimer.context(), "POST", url, bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
@@ -92,19 +94,19 @@ func streamOpenAIResponses(send func(StreamChunk), msgs []LLMMessage, cfg llmCon
 	resp, err := post(body)
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
-		return fmt.Errorf("请求失败：%w", err)
+		return fmt.Errorf("请求失败：%w", testTimer.error(err))
 	}
 
 	if resp.StatusCode != http.StatusOK && requestBody.ServiceTier != "" {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+		if !cfg.strictFastMode && shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
 			requestBody.ServiceTier = ""
 			body, _ = json.Marshal(requestBody)
 			resp, err = post(body)
 			if err != nil {
 				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
-				return fmt.Errorf("请求失败：%w", err)
+				return fmt.Errorf("请求失败：%w", testTimer.error(err))
 			}
 		} else {
 			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
@@ -126,11 +128,12 @@ func streamOpenAIResponses(send func(StreamChunk), msgs []LLMMessage, cfg llmCon
 		if firstTokenMs == 0 {
 			firstTokenMs = time.Since(llmStart).Milliseconds()
 		}
+		testTimer.markOutput()
 	})
 	durationMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs, Error: err.Error()})
-		return err
+		return testTimer.error(err)
 	}
 	logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), FirstTokenMs: firstTokenMs, DurationMs: durationMs})
 	if usage == nil {
@@ -170,7 +173,7 @@ func completeOpenAIResponsesSync(msgs []LLMMessage, cfg llmConfig) (string, erro
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Accept", "text/event-stream")
 			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
-			return httpClientLLMSync.Do(req)
+			return llmSyncClient(cfg).Do(req)
 		})
 	}
 	resp, err := post(body)
@@ -182,7 +185,7 @@ func completeOpenAIResponsesSync(msgs []LLMMessage, cfg llmConfig) (string, erro
 	if resp.StatusCode != http.StatusOK && requestBody.ServiceTier != "" {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+		if !cfg.strictFastMode && shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
 			requestBody.ServiceTier = ""
 			body, _ = json.Marshal(requestBody)
 			resp, err = post(body)

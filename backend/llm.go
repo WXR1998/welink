@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -79,6 +81,66 @@ type llmConfig struct {
 	useResponsesAPI   bool   // 使用 OpenAI Responses API（/responses）
 	fastMode          bool   // 当前 profile 使用更低延迟的 service_tier=priority
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
+	// 以下两个字段仅由连接测试使用，不会写入用户配置。
+	connectionTestTimeout time.Duration
+	strictFastMode        bool
+}
+
+func llmSyncClient(cfg llmConfig) *http.Client {
+	if cfg.connectionTestTimeout <= 0 {
+		return httpClientLLMSync
+	}
+	client := *httpClientLLMSync
+	client.Timeout = cfg.connectionTestTimeout
+	return &client
+}
+
+type connectionTestTimer struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	timer   *time.Timer
+	expired atomic.Bool
+	timeout time.Duration
+}
+
+func newConnectionTestTimer(cfg llmConfig) *connectionTestTimer {
+	if cfg.connectionTestTimeout <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := &connectionTestTimer{ctx: ctx, cancel: cancel, timeout: cfg.connectionTestTimeout}
+	timer.timer = time.AfterFunc(cfg.connectionTestTimeout, func() {
+		timer.expired.Store(true)
+		cancel()
+	})
+	return timer
+}
+
+func (timer *connectionTestTimer) context() context.Context {
+	if timer == nil {
+		return context.Background()
+	}
+	return timer.ctx
+}
+
+func (timer *connectionTestTimer) markOutput() {
+	if timer != nil {
+		timer.timer.Stop()
+	}
+}
+
+func (timer *connectionTestTimer) cleanup() {
+	if timer != nil {
+		timer.timer.Stop()
+		timer.cancel()
+	}
+}
+
+func (timer *connectionTestTimer) error(err error) error {
+	if timer != nil && timer.expired.Load() {
+		return fmt.Errorf("首个输出超过 %s", timer.timeout)
+	}
+	return err
 }
 
 // reasoningBudgetTokens 把档位映射到 Claude thinking.budget_tokens
@@ -717,9 +779,14 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	// 这样输出 token 会随每条回答的实际长短变化，而不是固定为 0。
 	outChars := 0
 	rawSend := send
+	testTimer := newConnectionTestTimer(cfg)
+	defer testTimer.cleanup()
 	send = func(chunk StreamChunk) {
 		if chunk.Delta != "" {
 			outChars += len(chunk.Delta)
+		}
+		if chunk.Delta != "" || chunk.Thinking != "" {
+			testTimer.markOutput()
 		}
 		rawSend(chunk)
 	}
@@ -731,7 +798,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	reqBody := buildOpenAICompatRequest(msgs, cfg, true)
 	body, _ := json.Marshal(reqBody)
 	post := func(requestBody []byte) (*http.Response, error) {
-		req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(requestBody))
+		req, err := http.NewRequestWithContext(testTimer.context(), "POST", cfg.baseURL+"/chat/completions", bytes.NewReader(requestBody))
 		if err != nil {
 			return nil, err
 		}
@@ -745,20 +812,20 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
-		return fmt.Errorf("请求失败：%w", err)
+		return fmt.Errorf("请求失败：%w", testTimer.error(err))
 	}
 
 	if resp.StatusCode != http.StatusOK && reqBody.ServiceTier != "" {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+		if !cfg.strictFastMode && shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
 			reqBody.ServiceTier = ""
 			body, _ = json.Marshal(reqBody)
 			resp, err = post(body)
 			durMs = time.Since(llmStart).Milliseconds()
 			if err != nil {
 				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
-				return fmt.Errorf("请求失败：%w", err)
+				return fmt.Errorf("请求失败：%w", testTimer.error(err))
 			}
 		} else {
 			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
@@ -900,7 +967,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 	if !gotDone {
 		if err := scanner.Err(); err != nil {
 			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
-			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", err)
+			return fmt.Errorf("响应流被意外中断（%v），已生成的内容可能不完整", testTimer.error(err))
 		}
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(respBuf.String(), snippetLen), DurationMs: durMs, Error: "响应流被意外中断"})
 		return fmt.Errorf("响应流被意外中断，已生成的内容可能不完整")
@@ -1138,7 +1205,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
-			return httpClientLLMSync.Do(req)
+			return llmSyncClient(cfg).Do(req)
 		})
 	}
 	resp, err := post(body)
@@ -1151,7 +1218,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	if resp.StatusCode != http.StatusOK && reqBody.ServiceTier != "" {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+		if !cfg.strictFastMode && shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
 			reqBody.ServiceTier = ""
 			body, _ = json.Marshal(reqBody)
 			resp, err = post(body)
@@ -1236,7 +1303,7 @@ func completeClaudeSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	llmStart := time.Now()
-	resp, err := httpClientLLMSync.Do(req)
+	resp, err := llmSyncClient(cfg).Do(req)
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: baseURL + "/v1/messages", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})

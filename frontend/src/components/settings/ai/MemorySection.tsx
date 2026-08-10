@@ -3,6 +3,7 @@ import { Loader2, AlertCircle, Check, Trash2, Plus, X, Zap } from 'lucide-react'
 import axios from 'axios';
 import { ModelTestResult } from './ModelTestResult';
 import { genId, newMemLLMProfile, PROVIDERS, type AIProfileTestResult, type MemLLMProfile } from './types';
+import { streamProfileTestResults } from './streamProfileTestResults';
 
 export const MemorySection: React.FC = () => {
   const [profiles, setProfiles] = useState<MemLLMProfile[]>([]);
@@ -58,12 +59,17 @@ export const MemorySection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/mem/test');
-      const results = r.data.results ?? [];
-      setTestResults(Object.fromEntries(results.map(result => [result.profile_id || '__default__', result])));
-      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
+      setTestResults({});
+      let resultCount = 0;
+      let hasSuccess = false;
+      await streamProfileTestResults('/api/ai/mem/test', {}, result => {
+        resultCount++;
+        hasSuccess = hasSuccess || result.ok;
+        setTestResults(previous => ({ ...previous, [result.profile_id || '__default__']: result }));
+      });
+      setSaveMsg({ ok: hasSuccess, text: `已完成 ${resultCount} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
+      const msg = e instanceof Error ? e.message : '连接失败';
       setSaveMsg({ ok: false, text: msg });
     } finally {
       setTesting(false);
@@ -215,7 +221,7 @@ export const MemorySection: React.FC = () => {
                 <div className="flex items-center justify-between py-1 gap-3">
                   <div className="min-w-0">
                     <span className="text-sm text-[#1d1d1f] dark:text-gray-200">使用 Responses API</span>
-                    <p className="text-[11px] text-gray-400 mt-0.5">记忆提炼请求发送到 /responses；测试会同时验证两条协议。</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">记忆提炼请求发送到 /responses；测试将使用当前选择的协议。</p>
                   </div>
                   <button
                     type="button"

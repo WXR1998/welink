@@ -244,7 +244,7 @@ func completBedrockSync(msgs []LLMMessage, cfg llmConfig) (string, error) {
 
 	signAWSRequest(req, body, region, "bedrock", accessKey, secretKey)
 
-	resp, err := httpClientLLMSync.Do(req)
+	resp, err := llmSyncClient(cfg).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
