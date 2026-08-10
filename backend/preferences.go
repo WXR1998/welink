@@ -103,13 +103,14 @@ type EmbeddingProfile struct {
 
 // MemLLMProfile 是单个记忆提炼 LLM 提供商配置。
 type MemLLMProfile struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"`
-	Model    string `json:"model,omitempty"`
-	FastMode bool   `json:"fast_mode,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Provider        string `json:"provider"`
+	APIKey          string `json:"api_key,omitempty"`
+	BaseURL         string `json:"base_url,omitempty"`
+	Model           string `json:"model,omitempty"`
+	UseResponsesAPI bool   `json:"use_responses_api,omitempty"`
+	FastMode        bool   `json:"fast_mode,omitempty"`
 }
 
 // RerankProfile 是单个 Rerank（重排）提供商配置。

@@ -1,7 +1,8 @@
 import React from 'react';
 import { X, Loader2, AlertCircle, Check, LogIn, LogOut, ExternalLink, Zap } from 'lucide-react';
 import { openProviderUrl } from '../constants';
-import { PROVIDERS, type LLMProfile, type ProviderValue } from './types';
+import { ModelTestResult } from './ModelTestResult';
+import { PROVIDERS, type AIProfileTestResult, type LLMProfile, type ProviderValue } from './types';
 
 export const ProfileCard: React.FC<{
   profile: LLMProfile;
@@ -19,10 +20,10 @@ export const ProfileCard: React.FC<{
   onDelete: () => void;
   onSaveAndTest: (profileId: string) => void;
   testing: boolean;
-  testMsg: { ok: boolean; text: string } | null;
+  testResult: AIProfileTestResult | null;
 }> = ({ profile, index, total, geminiAuthorized, geminiClientID, geminiClientSecret,
          onGeminiClientIDChange, onGeminiClientSecretChange, onGeminiAuth, onGeminiRevoke,
-         geminiAuthBusy, onChange, onDelete, onSaveAndTest, testing, testMsg }) => {
+         geminiAuthBusy, onChange, onDelete, onSaveAndTest, testing, testResult }) => {
   const provInfo = PROVIDERS.find(p => p.value === profile.provider) ?? PROVIDERS[0];
 
   const set = (field: keyof LLMProfile, val: string) =>
@@ -344,12 +345,8 @@ export const ProfileCard: React.FC<{
           {testing ? <Loader2 size={12} className="animate-spin" /> : <AlertCircle size={12} />}
           {testing ? '测试中...' : '测试连接'}
         </button>
-        {testMsg && (
-          <span className={`text-xs font-semibold ${testMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>
-            {testMsg.ok ? '✓ ' : '✕ '}{testMsg.text}
-          </span>
-        )}
       </div>
+      {testResult && <ModelTestResult result={testResult} />}
     </div>
   );
 };

@@ -930,11 +930,12 @@ func memLLMConfigs(prefs Preferences) []llmConfig {
 	for _, p := range prefs.MemLLMProfiles {
 		if p.ID == prefs.DefaultMemLLMProfileID {
 			return []llmConfig{{
-				provider: p.Provider,
-				apiKey:   p.APIKey,
-				baseURL:  p.BaseURL,
-				model:    p.Model,
-				fastMode: p.FastMode,
+				provider:        p.Provider,
+				apiKey:          p.APIKey,
+				baseURL:         p.BaseURL,
+				model:           p.Model,
+				useResponsesAPI: p.UseResponsesAPI,
+				fastMode:        p.FastMode,
 			}}
 		}
 	}

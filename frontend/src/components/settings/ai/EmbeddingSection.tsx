@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, AlertCircle, Check, Plus, X } from 'lucide-react';
 import axios from 'axios';
-import { genId, newEmbeddingProfile, type EmbeddingProfile } from './types';
+import { ModelTestResult } from './ModelTestResult';
+import { genId, newEmbeddingProfile, type AIProfileTestResult, type EmbeddingProfile } from './types';
 
 const EMBEDDING_PROVIDERS = [
   { value: 'ollama',  label: 'Ollama（本地，免费）', defaultURL: 'http://localhost:11434', defaultModel: 'nomic-embed-text', defaultDims: 768, needsKey: false },
@@ -18,6 +19,7 @@ export const EmbeddingSection: React.FC = () => {
   const [cacheMaxKeys, setCacheMaxKeys] = useState(3);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, AIProfileTestResult>>({});
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -71,10 +73,10 @@ export const EmbeddingSection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; error?: string }[] }>('/api/ai/vec/test-embedding');
+      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/vec/test-embedding');
       const results = r.data.results ?? [];
-      const detail = results.map(r => r.ok ? `${r.provider}: ${r.latency_ms}ms` : `${r.provider}: ${r.error ?? '失败'}`).join('；');
-      setSaveMsg({ ok: results[0]?.ok === true, text: `${results[0]?.ok ? '当前配置连接成功' : '当前配置连接失败'}${detail ? ` · ${detail}` : ''}` });
+      setTestResults(Object.fromEntries(results.map(result => [result.profile_id, result])));
+      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -194,6 +196,7 @@ export const EmbeddingSection: React.FC = () => {
                   />
                 </div>
               </div>
+              {testResults[p.id] && <ModelTestResult result={testResults[p.id]} />}
             </div>
           );
         })}
@@ -252,7 +255,7 @@ export const EmbeddingSection: React.FC = () => {
             className="flex items-center gap-1.5 px-4 py-2.5 border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-bold rounded-xl hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-50 transition-colors"
           >
             {testing ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
-            {testing ? '测试中...' : '测试连接'}
+            {testing ? '测试中...' : '测试全部配置'}
           </button>
           {saveMsg && (
             <span className={`text-sm font-semibold ${saveMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>

@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, AlertCircle, Check, Trash2, Plus, X, Zap } from 'lucide-react';
 import axios from 'axios';
-import { genId, newMemLLMProfile, PROVIDERS, type MemLLMProfile } from './types';
+import { ModelTestResult } from './ModelTestResult';
+import { genId, newMemLLMProfile, PROVIDERS, type AIProfileTestResult, type MemLLMProfile } from './types';
 
 export const MemorySection: React.FC = () => {
   const [profiles, setProfiles] = useState<MemLLMProfile[]>([]);
   const [defaultProfileId, setDefaultProfileId] = useState('');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, AIProfileTestResult>>({});
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [clearing, setClearing] = useState<'facts' | 'embeddings' | null>(null);
@@ -56,16 +58,10 @@ export const MemorySection: React.FC = () => {
     setSaveMsg(null);
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
-      const r = await axios.post<{ results: { provider: string; model: string; ok: boolean; latency_ms: number; tokens_per_second: number; error?: string }[] }>('/api/ai/mem/test');
+      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/mem/test');
       const results = r.data.results ?? [];
-      const detail = results.map(r => {
-        if (!r.ok) return `${r.provider}: ${r.error ?? '失败'}`;
-        const parts = [`${r.provider}: ${r.latency_ms}ms`];
-        if (r.tokens_per_second > 0) parts.push(`${r.tokens_per_second.toFixed(1)} tok/s`);
-        return parts.join(' · ');
-      }).join('；');
-      const selectedLabel = profiles.length === 0 ? '默认 AI 配置' : '当前配置';
-      setSaveMsg({ ok: results[0]?.ok === true, text: `${selectedLabel}${results[0]?.ok ? '连接成功' : '连接失败'}${detail ? ` · ${detail}` : ''}` });
+      setTestResults(Object.fromEntries(results.map(result => [result.profile_id || '__default__', result])));
+      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -155,6 +151,7 @@ export const MemorySection: React.FC = () => {
                       provider: e.target.value,
                       base_url: newProv.defaultURL || '',
                       model: newProv.defaultModel || '',
+                      use_responses_api: false,
                       fast_mode: false,
                     });
                   }}
@@ -214,6 +211,24 @@ export const MemorySection: React.FC = () => {
                   </button>
                 </div>
               )}
+              {(p.provider === 'openai' || p.provider === 'custom') && (
+                <div className="flex items-center justify-between py-1 gap-3">
+                  <div className="min-w-0">
+                    <span className="text-sm text-[#1d1d1f] dark:text-gray-200">使用 Responses API</span>
+                    <p className="text-[11px] text-gray-400 mt-0.5">记忆提炼请求发送到 /responses；测试会同时验证两条协议。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateProfile(p.id, { use_responses_api: !p.use_responses_api })}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${p.use_responses_api ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
+                    title="使用 OpenAI Responses API"
+                    aria-pressed={p.use_responses_api ?? false}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${p.use_responses_api ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
+              {testResults[p.id] && <ModelTestResult result={testResults[p.id]} />}
             </div>
           );
         })}
@@ -252,7 +267,7 @@ export const MemorySection: React.FC = () => {
           className="flex items-center gap-1.5 px-4 py-2.5 border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 text-sm font-bold rounded-xl hover:border-[#07c160] hover:text-[#07c160] disabled:opacity-50 transition-colors"
         >
           {testing ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
-          {testing ? '测试中...' : '测试连接'}
+          {testing ? '测试中...' : '测试全部配置'}
         </button>
         {saveMsg && (
           <span className={`text-sm font-semibold ${saveMsg.ok ? 'text-[#07c160]' : 'text-red-500'}`}>
@@ -260,6 +275,7 @@ export const MemorySection: React.FC = () => {
           </span>
         )}
       </div>
+      {profiles.length === 0 && testResults.__default__ && <ModelTestResult result={testResults.__default__} />}
 
       {/* Data management */}
       <div className="pt-2 border-t border-gray-100 dark:border-gray-800 mt-4">

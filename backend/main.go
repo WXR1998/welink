@@ -3299,33 +3299,18 @@ func serverMain() {
 		})
 	})
 
-	// POST /api/ai/vec/test-embedding — 验证当前选中的 embedding 配置
+	// POST /api/ai/vec/test-embedding — 用真实 embedding 请求验证全部配置
 	api.POST("/ai/vec/test-embedding", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
 			return
 		}
 		prefs := loadPreferences()
-		configs := embeddingConfigs(prefs)
-		if len(configs) == 0 {
+		if len(prefs.EmbeddingProfiles) == 0 {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置 embedding 提供商"})
 			return
 		}
-		type testResult struct {
-			Provider  string `json:"provider"`
-			Model     string `json:"model"`
-			OK        bool   `json:"ok"`
-			LatencyMs int64  `json:"latency_ms"`
-			Error     string `json:"error,omitempty"`
-		}
-		cfg := configs[0]
-		start := time.Now()
-		_, err := GetEmbeddingsBatch([]string{"测试"}, cfg)
-		result := testResult{Provider: cfg.Provider, Model: cfg.Model, OK: err == nil, LatencyMs: time.Since(start).Milliseconds()}
-		if err != nil {
-			result.Error = err.Error()
-		}
-		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
+		c.JSON(http.StatusOK, gin.H{"results": testEmbeddingProfiles(prefs)})
 	})
 
 	// GET /api/ai/rerank/debug — 诊断 rerank 配置加载状态
@@ -3340,37 +3325,21 @@ func serverMain() {
 		})
 	})
 
-	// POST /api/ai/rerank/test — 验证当前选中的 rerank 配置
+	// POST /api/ai/rerank/test — 用真实 rerank 请求验证全部配置
 	api.POST("/ai/rerank/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
 			return
 		}
 		prefs := loadPreferences()
-		configs := rerankConfigs(prefs)
-		if len(configs) == 0 {
+		if len(prefs.RerankProfiles) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 rerank 提供商"})
 			return
 		}
-		type testResult struct {
-			Provider  string `json:"provider"`
-			Model     string `json:"model"`
-			OK        bool   `json:"ok"`
-			LatencyMs int64  `json:"latency_ms"`
-			Error     string `json:"error,omitempty"`
-		}
-		cfg := configs[0]
-		testDocs := []string{"今天天气很好", "张三说他明天来", "李四去北京出差了"}
-		start := time.Now()
-		_, err := RerankCandidates("张三来不来", testDocs, cfg)
-		result := testResult{Provider: cfg.Provider, Model: cfg.Model, OK: err == nil, LatencyMs: time.Since(start).Milliseconds()}
-		if err != nil {
-			result.Error = err.Error()
-		}
-		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
+		c.JSON(http.StatusOK, gin.H{"results": testRerankProfiles(prefs)})
 	})
 
-	// POST /api/ai/llm/test — 验证 LLM 配置是否可用（可指定 profile_id）
+	// POST /api/ai/llm/test — 用 Chat Completions 和 Responses 两条真实链路验证 LLM 配置
 	api.POST("/ai/llm/test", func(c *gin.Context) {
 		if isDemoMode && DemoAIDisabled() {
 			demoBlockLLMWrite(c)
@@ -3382,77 +3351,39 @@ func serverMain() {
 		_ = c.ShouldBindJSON(&body) // 允许空 body
 		prefs := loadPreferences()
 
-		// profile_id == "__all__" → 并行测试所有 LLM profile，带时延和 token 速度
 		if body.ProfileID == "__all__" {
-			profiles := prefs.LLMProfiles
-			type testResult struct {
-				ProfileID       string  `json:"profile_id"`
-				Name            string  `json:"name"`
-				Provider        string  `json:"provider"`
-				Model           string  `json:"model"`
-				OK              bool    `json:"ok"`
-				LatencyMs       int64   `json:"latency_ms"`
-				TokensPerSecond float64 `json:"tokens_per_second"`
-				Error           string  `json:"error,omitempty"`
-			}
-			results := make([]testResult, len(profiles))
-			var wg sync.WaitGroup
-			for i, p := range profiles {
-				wg.Add(1)
-				go func(idx int, prof LLMProfile) {
-					defer wg.Done()
-					cfg := llmConfigForProfile(prof.ID, prefs)
-					stats, err := testLLMConnProfileStats(prof.ID, prefs)
-					if err != nil {
-						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: cfg.model, OK: false, Error: err.Error()}
-					} else {
-						results[idx] = testResult{ProfileID: prof.ID, Name: prof.Name, Provider: cfg.provider, Model: stats.Model, OK: true, LatencyMs: stats.LatencyMs, TokensPerSecond: stats.TokensPerSecond}
-					}
-				}(i, p)
-			}
-			wg.Wait()
-			c.JSON(http.StatusOK, gin.H{"results": results})
+			c.JSON(http.StatusOK, gin.H{"results": testLLMProfiles(prefs)})
 			return
 		}
 
-		// 测试单个 profile，带时延和 token 速度
-		stats, err := testLLMConnProfileStats(body.ProfileID, prefs)
-		if err != nil {
-			cfg := llmConfigForProfile(body.ProfileID, prefs)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "provider": cfg.provider, "model": cfg.model})
-			return
+		profileID := body.ProfileID
+		if profileID == "" {
+			profileID = prefs.DefaultLLMProfileID
+			if profileID == "" && len(prefs.LLMProfiles) > 0 {
+				profileID = prefs.LLMProfiles[0].ID
+			}
 		}
-		cfg := llmConfigForProfile(body.ProfileID, prefs)
-		c.JSON(http.StatusOK, gin.H{"ok": true, "provider": cfg.provider, "model": stats.Model, "latency_ms": stats.LatencyMs, "tokens_per_second": stats.TokensPerSecond})
+		for index, profile := range prefs.LLMProfiles {
+			if profile.ID == profileID {
+				name := profile.Name
+				if name == "" {
+					name = fmt.Sprintf("配置 %d", index+1)
+				}
+				c.JSON(http.StatusOK, gin.H{"results": []AIProfileTestResult{testLLMProfile(profile.ID, name, llmConfigForProfile(profile.ID, prefs))}})
+				return
+			}
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未找到 AI 配置"})
 	})
 
-	// POST /api/ai/mem/test — 验证当前选中的记忆提炼模型，带时延和 token 速度
+	// POST /api/ai/mem/test — 用两条 LLM 协议验证全部记忆提炼配置
 	api.POST("/ai/mem/test", func(c *gin.Context) {
-		prefs := loadPreferences()
-		configs := memLLMConfigs(prefs)
-		if len(configs) == 0 {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "未配置记忆提炼模型"})
+		if isDemoMode && DemoAIDisabled() {
+			demoBlockLLMWrite(c)
 			return
 		}
-		type testResult struct {
-			Provider        string  `json:"provider"`
-			Model           string  `json:"model"`
-			OK              bool    `json:"ok"`
-			LatencyMs       int64   `json:"latency_ms"`
-			TokensPerSecond float64 `json:"tokens_per_second"`
-			Error           string  `json:"error,omitempty"`
-		}
-		cfg := configs[0]
-		stats, err := testLLMConnStatsConfig(cfg)
-		result := testResult{Provider: cfg.provider, Model: cfg.model, OK: err == nil}
-		if err != nil {
-			result.Error = err.Error()
-		} else {
-			result.Model = stats.Model
-			result.LatencyMs = stats.LatencyMs
-			result.TokensPerSecond = stats.TokensPerSecond
-		}
-		c.JSON(http.StatusOK, gin.H{"results": []testResult{result}})
+		prefs := loadPreferences()
+		c.JSON(http.StatusOK, gin.H{"results": testMemLLMProfiles(prefs)})
 	})
 
 	// GET /api/ai/mem/status?key=...

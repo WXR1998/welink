@@ -77,6 +77,7 @@ export interface MemLLMProfile {
   api_key?: string;
   base_url?: string;
   model?: string;
+  use_responses_api?: boolean;
   fast_mode?: boolean;
 }
 
@@ -95,6 +96,28 @@ export interface RerankProfile {
   api_key?: string;
   base_url?: string;
   model?: string;
+}
+
+export interface AIProtocolTestResult {
+  protocol: string;
+  ok: boolean;
+  latency_ms: number;
+  tokens_per_second?: number;
+  error?: string;
+}
+
+export interface AIProfileTestResult {
+  profile_id: string;
+  name: string;
+  provider: string;
+  model: string;
+  ok: boolean;
+  latency_ms: number;
+  tokens_per_second?: number;
+  selected_protocol?: string;
+  selected_protocol_ok?: boolean;
+  protocols: AIProtocolTestResult[];
+  error?: string;
 }
 
 export function newRerankProfile(index: number): RerankProfile {

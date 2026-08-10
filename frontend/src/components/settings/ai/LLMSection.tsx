@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Plus, Loader2, Check, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
-import { genId, newProfile, type LLMProfile } from './types';
+import { newProfile, type AIProfileTestResult, type LLMProfile } from './types';
 
 interface AIQALLMProfiles {
   query_decomposition?: string;
@@ -27,7 +27,7 @@ export const LLMSection: React.FC = () => {
   const [testingAll, setTestingAll] = useState(false);
   // per-profile test state
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [testMsgs, setTestMsgs] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [testResults, setTestResults] = useState<Record<string, AIProfileTestResult>>({});
 
   // Gemini OAuth（全局）
   const [geminiClientID, setGeminiClientID] = useState('');
@@ -116,52 +116,50 @@ export const LLMSection: React.FC = () => {
 
   const handleSaveAndTest = async (profileId: string) => {
     setTestingId(profileId);
-    setTestMsgs(prev => { const n = { ...prev }; delete n[profileId]; return n; });
+    setTestResults(prev => { const next = { ...prev }; delete next[profileId]; return next; });
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
       await loadPreferences();
-      const r = await axios.post<{ ok: boolean; provider: string; model: string; latency_ms: number; tokens_per_second: number }>('/api/ai/llm/test', { profile_id: profileId });
-      const parts = [`${r.data.provider} · ${r.data.model}`];
-      if (r.data.latency_ms > 0) parts.push(`${r.data.latency_ms}ms`);
-      if (r.data.tokens_per_second > 0) parts.push(`${r.data.tokens_per_second.toFixed(1)} tok/s`);
-      setTestMsgs(prev => ({ ...prev, [profileId]: { ok: true, text: parts.join(' · ') } }));
+      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/llm/test', { profile_id: profileId });
+      const result = r.data.results?.[0];
+      if (!result) throw new Error('未收到测试结果');
+      setTestResults(prev => ({ ...prev, [profileId]: result }));
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
-      setTestMsgs(prev => ({ ...prev, [profileId]: { ok: false, text: msg } }));
+      const profile = profiles.find(item => item.id === profileId);
+      setTestResults(prev => ({
+        ...prev,
+        [profileId]: {
+          profile_id: profileId,
+          name: profile?.name || 'AI 配置',
+          provider: profile?.provider || '',
+          model: profile?.model || '',
+          ok: false,
+          latency_ms: 0,
+          protocols: [],
+          error: msg,
+        },
+      }));
     } finally {
       setTestingId(null);
-      setTimeout(() => setTestMsgs(prev => { const n = { ...prev }; delete n[profileId]; return n; }), 5000);
     }
   };
 
   const handleTestAll = async () => {
     setTestingAll(true);
     setSaveMsg(null);
-    setTestMsgs({});
+    setTestResults({});
     try {
       await axios.put('/api/preferences/llm', await buildPayload());
       await loadPreferences();
-      const r = await axios.post<{ results: { profile_id: string; name: string; provider: string; model: string; ok: boolean; latency_ms: number; tokens_per_second: number; error?: string }[] }>('/api/ai/llm/test', { profile_id: '__all__' });
+      const r = await axios.post<{ results: AIProfileTestResult[] }>('/api/ai/llm/test', { profile_id: '__all__' });
       const results = r.data.results ?? [];
-      const newMsgs: Record<string, { ok: boolean; text: string }> = {};
-      const okCount = results.filter(r => r.ok).length;
-      const failCount = results.length - okCount;
+      const nextResults: Record<string, AIProfileTestResult> = {};
       for (const res of results) {
-        if (res.ok) {
-          const parts = [`${res.provider} · ${res.model}`];
-          if (res.latency_ms > 0) parts.push(`${res.latency_ms}ms`);
-          if (res.tokens_per_second > 0) parts.push(`${res.tokens_per_second.toFixed(1)} tok/s`);
-          newMsgs[res.profile_id] = { ok: true, text: parts.join(' · ') };
-        } else {
-          newMsgs[res.profile_id] = { ok: false, text: res.error || '连接失败' };
-        }
+        nextResults[res.profile_id] = res;
       }
-      setTestMsgs(newMsgs);
-      if (failCount === 0) {
-        setSaveMsg({ ok: true, text: `全部 ${okCount} 个配置连接成功` });
-      } else {
-        setSaveMsg({ ok: okCount > 0, text: `${okCount} 成功 / ${failCount} 失败` });
-      }
+      setTestResults(nextResults);
+      setSaveMsg({ ok: results.some(result => result.ok), text: `已完成 ${results.length} 个配置测试，详见各配置卡片` });
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '连接失败';
       setSaveMsg({ ok: false, text: msg });
@@ -239,7 +237,7 @@ export const LLMSection: React.FC = () => {
             })}
             onSaveAndTest={handleSaveAndTest}
             testing={testingId === p.id}
-            testMsg={testMsgs[p.id] ?? null}
+            testResult={testResults[p.id] ?? null}
           />
         ))}
 
