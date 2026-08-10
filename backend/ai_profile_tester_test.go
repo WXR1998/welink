@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+func TestLLMConnectionTestFirstOutputTimeoutDefaultsToTenSeconds(t *testing.T) {
+	if llmConnectionTestFirstOutputTimeout != 10*time.Second {
+		t.Fatalf("default first-output timeout = %s, want 10s", llmConnectionTestFirstOutputTimeout)
+	}
+}
+
 func TestTestLLMProfileUsesConfiguredResponsesAPI(t *testing.T) {
 	seenResponses := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

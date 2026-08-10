@@ -9,7 +9,7 @@ import (
 )
 
 const llmConnectionTestPrompt = "Reply exactly: OK"
-const llmConnectionTestFirstOutputTimeout = 5 * time.Second
+const llmConnectionTestFirstOutputTimeout = 10 * time.Second
 
 type AIProtocolTestResult struct {
 	Protocol        string  `json:"protocol"`
