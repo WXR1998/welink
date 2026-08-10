@@ -350,7 +350,7 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 
 	llmMsgs := []LLMMessage{
 		{Role: "system", Content: prompt},
-		{Role: "user", Content: query},
+		{Role: "user", Content: buildQueryExpansionInput(query, decomp)},
 	}
 
 	type llmResult struct {
@@ -397,6 +397,25 @@ func ExpandQuery(query string, decomp *QueryDecomposition, prefs Preferences, pr
 		}
 	}
 	return out, nil
+}
+
+// buildQueryExpansionInput keeps resolved referents explicit for pronoun-only follow-ups.
+func buildQueryExpansionInput(query string, decomp *QueryDecomposition) string {
+	query = strings.TrimSpace(query)
+	if decomp == nil || len(decomp.Entities) == 0 {
+		return query
+	}
+
+	var sb strings.Builder
+	sb.WriteString("原始问题：")
+	sb.WriteString(query)
+	sb.WriteString("\n已解析实体（扩展结果必须保留，不得替换或猜测其他人名）：")
+	sb.WriteString(strings.Join(decomp.Entities, "、"))
+	if len(decomp.Concepts) > 0 {
+		sb.WriteString("\n核心概念：")
+		sb.WriteString(strings.Join(decomp.Concepts, "、"))
+	}
+	return sb.String()
 }
 
 // buildQueryExpansionPrompt 组装查询扩展的系统提示。

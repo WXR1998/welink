@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestBuildQueryExpansionInputPreservesResolvedFollowUpEntity(t *testing.T) {
+	got := buildQueryExpansionInput("那他什么时候开始性冷淡的", &QueryDecomposition{
+		Entities: []string{"刘博文"},
+		Concepts: []string{"性冷淡", "开始时间"},
+	})
+
+	for _, want := range []string{
+		"原始问题：那他什么时候开始性冷淡的",
+		"已解析实体（扩展结果必须保留，不得替换或猜测其他人名）：刘博文",
+		"核心概念：性冷淡、开始时间",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("query expansion input missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestBuildQueryExpansionPromptRequiresAliasNormalization(t *testing.T) {
 	p := buildQueryExpansionPrompt(nil)
 	// 空库时提示仍应要求还原外号为原名。
