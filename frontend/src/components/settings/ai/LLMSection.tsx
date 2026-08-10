@@ -218,15 +218,15 @@ export const LLMSection: React.FC = () => {
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-medium text-[#1d1d1f] dark:text-gray-200">
               <Zap size={15} className="text-amber-500" />
-              OpenAI Fast 模式
+              Fast 模式
             </div>
-            <p className="mt-1 text-[11px] text-gray-400">对原生 OpenAI 配置使用低延迟服务档位；会提高按 token 价格，其他供应商不受影响。</p>
+            <p className="mt-1 text-[11px] text-gray-400">向 OpenAI 与自定义兼容接口附加低延迟服务档位；服务不支持时会自动回退，可能提高按 token 价格。</p>
           </div>
           <button
             type="button"
             onClick={() => setOpenAIFastMode(value => !value)}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${openAIFastMode ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
-            title="切换 OpenAI Fast 模式"
+            title="切换 Fast 模式"
             aria-pressed={openAIFastMode}
           >
             <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${openAIFastMode ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />

@@ -53,7 +53,7 @@ func buildOpenAIResponsesRequest(msgs []LLMMessage, cfg llmConfig, stream bool) 
 	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
 		request.Reasoning = &openAIResponsesReasoning{Effort: cfg.reasoningEffort}
 	}
-	if cfg.openAIFastMode && cfg.provider == "openai" {
+	if cfg.openAIFastMode && supportsFastServiceTier(cfg.provider) {
 		request.ServiceTier = "fast"
 	}
 	return request
@@ -74,24 +74,45 @@ func streamOpenAIResponses(send func(StreamChunk), msgs []LLMMessage, cfg llmCon
 		return fmt.Errorf("未配置模型")
 	}
 
-	body, _ := json.Marshal(buildOpenAIResponsesRequest(msgs, cfg, true))
+	requestBody := buildOpenAIResponsesRequest(msgs, cfg, true)
+	body, _ := json.Marshal(requestBody)
 	url := openAIResponsesURL(cfg)
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	post := func(payload []byte) (*http.Response, error) {
+		req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+		return httpClientLLMStream.Do(req)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
 	llmStart := time.Now()
-	resp, err := httpClientLLMStream.Do(req)
+	resp, err := post(body)
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
 	}
-	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK && requestBody.ServiceTier != "" {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+			requestBody.ServiceTier = ""
+			body, _ = json.Marshal(requestBody)
+			resp, err = post(body)
+			if err != nil {
+				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
+				return fmt.Errorf("请求失败：%w", err)
+			}
+		} else {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+			return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
+		}
+	}
+
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
@@ -136,25 +157,46 @@ func completeOpenAIResponsesSync(msgs []LLMMessage, cfg llmConfig) (string, erro
 
 	// 某些 Responses API 网关（如 Lingjun）只接受流式上游请求。
 	// 此处在服务端聚合 SSE，仍向调用方保持非流式字符串返回的既有契约。
-	body, _ := json.Marshal(buildOpenAIResponsesRequest(msgs, cfg, true))
+	requestBody := buildOpenAIResponsesRequest(msgs, cfg, true)
+	body, _ := json.Marshal(requestBody)
 	url := openAIResponsesURL(cfg)
 	llmStart := time.Now()
-	resp, err := withRetry(3, func(attempt int) (*http.Response, error) {
-		req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
-		return httpClientLLMSync.Do(req)
-	})
+	post := func(payload []byte) (*http.Response, error) {
+		return withRetry(3, func(attempt int) (*http.Response, error) {
+			req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "text/event-stream")
+			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+			return httpClientLLMSync.Do(req)
+		})
+	}
+	resp, err := post(body)
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
 	}
-	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK && requestBody.ServiceTier != "" {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+			requestBody.ServiceTier = ""
+			body, _ = json.Marshal(requestBody)
+			resp, err = post(body)
+			if err != nil {
+				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: err.Error()})
+				return "", fmt.Errorf("请求失败：%w", err)
+			}
+		} else {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+			return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
+		}
+	}
+
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: url, Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: time.Since(llmStart).Milliseconds(), Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})

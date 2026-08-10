@@ -678,6 +678,19 @@ type openAIRequest struct {
 	ServiceTier     string       `json:"service_tier,omitempty"`     // 原生 OpenAI：fast 低延迟档位
 }
 
+func supportsFastServiceTier(provider string) bool {
+	return provider == "openai" || provider == "custom"
+}
+
+func shouldRetryWithoutFastServiceTier(status int, raw []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	message := strings.ToLower(string(raw))
+	return strings.Contains(message, "service_tier") &&
+		(strings.Contains(message, "unknown") || strings.Contains(message, "unsupported") || strings.Contains(message, "not supported") || strings.Contains(message, "invalid"))
+}
+
 func buildOpenAICompatRequest(msgs []LLMMessage, cfg llmConfig, stream bool) openAIRequest {
 	reqBody := openAIRequest{Model: cfg.model, Messages: msgs, Stream: stream}
 	if cfg.noThink {
@@ -690,7 +703,7 @@ func buildOpenAICompatRequest(msgs []LLMMessage, cfg llmConfig, stream bool) ope
 	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
 		reqBody.ReasoningEffort = cfg.reasoningEffort
 	}
-	if cfg.openAIFastMode && cfg.provider == "openai" {
+	if cfg.openAIFastMode && supportsFastServiceTier(cfg.provider) {
 		reqBody.ServiceTier = "fast"
 	}
 	return reqBody
@@ -723,20 +736,40 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 
 	reqBody := buildOpenAICompatRequest(msgs, cfg, true)
 	body, _ := json.Marshal(reqBody)
-
-	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return err
+	post := func(requestBody []byte) (*http.Response, error) {
+		req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(requestBody))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+		return httpClientLLMStream.Do(req)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
 
 	llmStart := time.Now()
-	resp, err := httpClientLLMStream.Do(req)
+	resp, err := post(body)
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return fmt.Errorf("请求失败：%w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && reqBody.ServiceTier != "" {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+			reqBody.ServiceTier = ""
+			body, _ = json.Marshal(reqBody)
+			resp, err = post(body)
+			durMs = time.Since(llmStart).Milliseconds()
+			if err != nil {
+				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+				return fmt.Errorf("请求失败：%w", err)
+			}
+		} else {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+			return fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
+		}
 	}
 
 	defer resp.Body.Close()
@@ -1103,19 +1136,40 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 	body, _ := json.Marshal(reqBody)
 
 	llmStart := time.Now()
-	resp, err := withRetry(3, func(attempt int) (*http.Response, error) {
-		req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
-		return httpClientLLMSync.Do(req)
-	})
+	post := func(requestBody []byte) (*http.Response, error) {
+		return withRetry(3, func(attempt int) (*http.Response, error) {
+			req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(requestBody))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+			return httpClientLLMSync.Do(req)
+		})
+	}
+	resp, err := post(body)
 	durMs := time.Since(llmStart).Milliseconds()
 	if err != nil {
 		logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
 		return "", fmt.Errorf("请求失败：%w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && reqBody.ServiceTier != "" {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if shouldRetryWithoutFastServiceTier(resp.StatusCode, raw) {
+			reqBody.ServiceTier = ""
+			body, _ = json.Marshal(reqBody)
+			resp, err = post(body)
+			durMs = time.Since(llmStart).Milliseconds()
+			if err != nil {
+				logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), DurationMs: durMs, Error: err.Error()})
+				return "", fmt.Errorf("请求失败：%w", err)
+			}
+		} else {
+			logLLMApiCall(LLMApiLogEntry{Timestamp: time.Now(), Method: "POST", URL: cfg.baseURL + "/chat/completions", Provider: cfg.provider, Model: cfg.model, Feature: cfg.feature, RequestBody: truncateStr(string(body), snippetLen), Status: resp.StatusCode, ResponseBody: truncateStr(string(raw), snippetLen), DurationMs: durMs, Error: fmt.Sprintf("API 错误 %d", resp.StatusCode)})
+			return "", fmt.Errorf("API 错误 %d：%s", resp.StatusCode, truncate(string(raw), 200))
+		}
 	}
 
 	defer resp.Body.Close()
