@@ -294,7 +294,9 @@ type Preferences struct {
 	LLMProfiles         []LLMProfile    `json:"llm_profiles,omitempty"`
 	DefaultLLMProfileID string          `json:"default_llm_profile_id,omitempty"`
 	AIQALLMProfiles     AIQALLMProfiles `json:"ai_qa_llm_profiles,omitempty"`
-	AIAnalysisDBPath    string          `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
+	// OpenAIFastMode 仅对 provider=openai 生效，向请求附加 service_tier=fast。
+	OpenAIFastMode   bool   `json:"openai_fast_mode,omitempty"`
+	AIAnalysisDBPath string `json:"ai_analysis_db_path,omitempty"` // 留空 = 与 preferences.json 同目录
 
 	EmbeddingProfiles         []EmbeddingProfile `json:"embedding_profiles,omitempty"`
 	DefaultEmbeddingProfileID string             `json:"default_embedding_profile_id,omitempty"`

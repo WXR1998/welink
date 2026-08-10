@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Plus, Loader2, Check, AlertCircle } from 'lucide-react';
+import { Plus, Loader2, Check, AlertCircle, Zap } from 'lucide-react';
 import axios from 'axios';
 import { ProfileCard } from './ProfileCard';
 import { genId, newProfile, type LLMProfile } from './types';
@@ -20,6 +20,7 @@ export const LLMSection: React.FC = () => {
   const [profiles, setProfiles] = useState<LLMProfile[]>([newProfile(1)]);
   const [defaultProfileId, setDefaultProfileId] = useState('');
   const [aiQALLMProfiles, setAIQALLMProfiles] = useState<AIQALLMProfiles>({});
+  const [openAIFastMode, setOpenAIFastMode] = useState(false);
   const [aiDBPath, setAiDBPath] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -51,6 +52,7 @@ export const LLMSection: React.FC = () => {
         llm_profiles?: LLMProfile[];
         default_llm_profile_id?: string;
         ai_qa_llm_profiles?: AIQALLMProfiles;
+        openai_fast_mode?: boolean;
         gemini_client_id?: string; gemini_client_secret?: string;
         ai_analysis_db_path?: string;
       }>('/api/preferences');
@@ -59,6 +61,7 @@ export const LLMSection: React.FC = () => {
         setDefaultProfileId(r.data.default_llm_profile_id || r.data.llm_profiles[0].id);
       }
       setAIQALLMProfiles(r.data.ai_qa_llm_profiles ?? {});
+      setOpenAIFastMode(r.data.openai_fast_mode ?? false);
       setGeminiClientID(r.data.gemini_client_id ?? '');
       setGeminiClientSecret(r.data.gemini_client_secret ?? '');
       setAiDBPath(r.data.ai_analysis_db_path ?? '');
@@ -93,6 +96,7 @@ export const LLMSection: React.FC = () => {
       llm_profiles: profiles,
       default_llm_profile_id: defaultProfileId || profiles[0]?.id || '',
       ai_qa_llm_profiles: aiQALLMProfiles,
+      openai_fast_mode: openAIFastMode,
       gemini_client_id: geminiClientID,
       gemini_client_secret: geminiClientSecret,
       ai_analysis_db_path: aiDBPath,
@@ -210,6 +214,25 @@ export const LLMSection: React.FC = () => {
 
   return (
     <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 p-4 dk-border">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-medium text-[#1d1d1f] dark:text-gray-200">
+              <Zap size={15} className="text-amber-500" />
+              OpenAI Fast 模式
+            </div>
+            <p className="mt-1 text-[11px] text-gray-400">对原生 OpenAI 配置使用低延迟服务档位；会提高按 token 价格，其他供应商不受影响。</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpenAIFastMode(value => !value)}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${openAIFastMode ? 'bg-[#07c160]' : 'bg-gray-200 dark:bg-white/20'}`}
+            title="切换 OpenAI Fast 模式"
+            aria-pressed={openAIFastMode}
+          >
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${openAIFastMode ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+
         {profiles.map((p, i) => (
           <ProfileCard
             key={p.id}

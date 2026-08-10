@@ -13,10 +13,11 @@ import (
 )
 
 type openAIResponsesRequest struct {
-	Model     string                    `json:"model"`
-	Input     []openAIResponsesInput    `json:"input"`
-	Stream    bool                      `json:"stream"`
-	Reasoning *openAIResponsesReasoning `json:"reasoning,omitempty"`
+	Model       string                    `json:"model"`
+	Input       []openAIResponsesInput    `json:"input"`
+	Stream      bool                      `json:"stream"`
+	Reasoning   *openAIResponsesReasoning `json:"reasoning,omitempty"`
+	ServiceTier string                    `json:"service_tier,omitempty"`
 }
 
 type openAIResponsesInput struct {
@@ -51,6 +52,9 @@ func buildOpenAIResponsesRequest(msgs []LLMMessage, cfg llmConfig, stream bool) 
 	request := openAIResponsesRequest{Model: cfg.model, Input: input, Stream: stream}
 	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
 		request.Reasoning = &openAIResponsesReasoning{Effort: cfg.reasoningEffort}
+	}
+	if cfg.openAIFastMode && cfg.provider == "openai" {
+		request.ServiceTier = "fast"
 	}
 	return request
 }

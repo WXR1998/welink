@@ -77,6 +77,7 @@ type llmConfig struct {
 	contextWindow     int    // 上下文窗口 token 数，0 = 默认 128000
 	compressThreshold int    // 上下文压缩阈值，0 = contextWindow 的 70%
 	useResponsesAPI   bool   // 使用 OpenAI Responses API（/responses）
+	openAIFastMode    bool   // 原生 OpenAI：使用更低延迟的 service_tier=fast
 	feature           string // 日志标签：chat / query_expansion / hyde / rerank / memory_extraction
 }
 
@@ -308,7 +309,7 @@ func llmConfigForProfile(profileID string, prefs Preferences) llmConfig {
 	var cfg llmConfig
 	for _, p := range prefs.LLMProfiles {
 		if p.ID == profileID {
-			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold, useResponsesAPI: p.UseResponsesAPI}
+			cfg = llmConfig{provider: p.Provider, apiKey: p.APIKey, baseURL: p.BaseURL, model: p.Model, noThink: p.NoThink, reasoningEffort: p.ReasoningEffort, contextWindow: p.ContextWindow, compressThreshold: p.CompressThreshold, useResponsesAPI: p.UseResponsesAPI, openAIFastMode: prefs.OpenAIFastMode}
 			break
 		}
 	}
@@ -674,6 +675,25 @@ type openAIRequest struct {
 	Think           *bool        `json:"think,omitempty"`            // Ollama 专用：false = 禁用思考模式
 	Stop            []string     `json:"stop,omitempty"`             // 停止词，防止模型输出特殊 token
 	ReasoningEffort string       `json:"reasoning_effort,omitempty"` // OpenAI o-series / gpt-5-reasoning：low / medium / high
+	ServiceTier     string       `json:"service_tier,omitempty"`     // 原生 OpenAI：fast 低延迟档位
+}
+
+func buildOpenAICompatRequest(msgs []LLMMessage, cfg llmConfig, stream bool) openAIRequest {
+	reqBody := openAIRequest{Model: cfg.model, Messages: msgs, Stream: stream}
+	if cfg.noThink {
+		f := false
+		reqBody.Think = &f
+	}
+	if cfg.provider == "ollama" {
+		reqBody.Stop = []string{"<|endoftext|>", "<|im_end|>", "<|im_start|>"}
+	}
+	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
+		reqBody.ReasoningEffort = cfg.reasoningEffort
+	}
+	if cfg.openAIFastMode && cfg.provider == "openai" {
+		reqBody.ServiceTier = "fast"
+	}
+	return reqBody
 }
 
 func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig) error {
@@ -701,18 +721,7 @@ func streamOpenAICompat(send func(StreamChunk), msgs []LLMMessage, cfg llmConfig
 		cfg.noThink = true
 	}
 
-	reqBody := openAIRequest{Model: cfg.model, Messages: msgs, Stream: true}
-	if cfg.noThink {
-		f := false
-		reqBody.Think = &f
-	}
-	if cfg.provider == "ollama" {
-		reqBody.Stop = []string{"<|endoftext|>", "<|im_end|>", "<|im_start|>"}
-	}
-	// OpenAI o-series / gpt-5-reasoning 等支持 reasoning_effort 的模型
-	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
-		reqBody.ReasoningEffort = cfg.reasoningEffort
-	}
+	reqBody := buildOpenAICompatRequest(msgs, cfg, true)
 	body, _ := json.Marshal(reqBody)
 
 	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -1090,17 +1099,7 @@ func completeOpenAICompatSync(msgs []LLMMessage, cfg llmConfig) (string, error) 
 		return "", fmt.Errorf("未配置模型")
 	}
 
-	reqBody := openAIRequest{Model: cfg.model, Messages: msgs, Stream: false}
-	if cfg.noThink {
-		f := false
-		reqBody.Think = &f
-	}
-	if cfg.provider == "ollama" {
-		reqBody.Stop = []string{"<|endoftext|>", "<|im_end|>", "<|im_start|>"}
-	}
-	if cfg.reasoningEffort != "" && cfg.reasoningEffort != "off" && cfg.provider == "openai" {
-		reqBody.ReasoningEffort = cfg.reasoningEffort
-	}
+	reqBody := buildOpenAICompatRequest(msgs, cfg, false)
 	body, _ := json.Marshal(reqBody)
 
 	llmStart := time.Now()
