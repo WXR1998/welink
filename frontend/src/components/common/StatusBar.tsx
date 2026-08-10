@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Activity, Zap } from 'lucide-react';
+import { Activity, GitCommitHorizontal, Zap } from 'lucide-react';
 import api from '../../services/api';
 import type { ContactStats, GroupInfo } from '../../types';
 import { avatarSrc } from '../../utils/avatar';
@@ -44,6 +44,11 @@ interface BatchTask {
   error?: string;
 }
 
+interface BuildInfo {
+  git_sha: string;
+  commit_time: string;
+}
+
 function toM(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
@@ -80,6 +85,7 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
   const [allTime, setAllTime] = useState<TokenUsage[]>([]);
   const [daily, setDaily] = useState<TokenUsage[]>([]);
   const [speeds, setSpeeds] = useState<RecentSpeed[]>([]);
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
 
   const [flash, setFlash] = useState(false);
 
@@ -168,6 +174,12 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
     };
   }, [pollAll]);
 
+  useEffect(() => {
+    api.get<unknown, BuildInfo>('/app/build-info')
+      .then(setBuildInfo)
+      .catch(() => {});
+  }, []);
+
   // Token stats derived data
   const allTimeTotal = allTime.reduce((s, u) => s + u.total_tokens, 0);
   const dailyTotal = daily.reduce((s, u) => s + u.total_tokens, 0);
@@ -244,6 +256,17 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
         <MemoryCountDisplay />
       </div>
 
+      {buildInfo && (
+        <div
+          className="flex items-center gap-1.5 shrink-0 text-[10px] text-gray-400 dark:text-gray-500"
+          title={`SHA ${buildInfo.git_sha}\n提交时间 ${buildInfo.commit_time}`}
+        >
+          <GitCommitHorizontal size={12} aria-hidden="true" />
+          <span className="font-mono">{buildInfo.git_sha}</span>
+          <span>{formatCommitTime(buildInfo.commit_time)}</span>
+        </div>
+      )}
+
       {/* Right: token stats (daily + all-time, each with hover detail) */}
       <div className="flex items-center gap-3 shrink-0">
         <TokenHoverSection
@@ -265,6 +288,11 @@ export const StatusBar: React.FC<Props> = ({ contacts, groups }) => {
     </div>
   );
 };
+
+function formatCommitTime(value: string): string {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  return match ? `${match[1]} ${match[2]}` : value;
+}
 
 const TokenHoverSection: React.FC<{
   label: string;

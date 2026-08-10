@@ -25,10 +25,12 @@ if [ -z "$SHA" ]; then
   echo "❌ 无法获取 git commit SHA，请在仓库目录下运行"
   exit 1
 fi
+COMMIT_TIME=$(git show -s --format=%cI HEAD)
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  构建 Docker 镜像"
 echo "  commit SHA: $SHA"
+echo "  commit time: $COMMIT_TIME"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 可选: 清理构建缓存 ────────────────────────────────────────────────────────
@@ -44,6 +46,8 @@ echo "   Dockerfile: backend/Dockerfile"
 echo ""
 docker build --network=host \
   -f backend/Dockerfile \
+  --build-arg "GIT_SHA=$SHA" \
+  --build-arg "GIT_COMMIT_TIME=$COMMIT_TIME" \
   -t "welink-backend:$SHA" \
   backend/
 

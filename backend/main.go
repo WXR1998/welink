@@ -300,6 +300,21 @@ func sampleEvenly(items []string, n int) []string {
 // gitCommit 由 -ldflags "-X main.gitCommit=abc123" 注入，用于启动日志和调试。
 var gitCommit = "unknown"
 
+// gitCommitTime 由 Docker 构建时注入，表示当前 gitCommit 对应的提交时间。
+var gitCommitTime = "unknown"
+
+type buildInfo struct {
+	GitSHA     string `json:"git_sha"`
+	CommitTime string `json:"commit_time"`
+}
+
+func currentBuildInfo() buildInfo {
+	return buildInfo{
+		GitSHA:     gitCommit,
+		CommitTime: gitCommitTime,
+	}
+}
+
 // analysisParamsFromPrefs 从 Preferences 提取分析参数。
 func analysisParamsFromPrefs(p Preferences) service.AnalysisParams {
 	return service.AnalysisParams{
@@ -5400,6 +5415,11 @@ func serverMain() {
 			return
 		}
 		c.JSON(200, svc.GetStatus())
+	})
+
+	// /api/app/build-info：返回当前运行二进制所对应的 Git 提交信息。
+	api.GET("/app/build-info", func(c *gin.Context) {
+		c.JSON(http.StatusOK, currentBuildInfo())
 	})
 
 	// 头像代理：将外部头像 URL（微信 CDN）通过后端转发，避免前端 Canvas CORS 污染
