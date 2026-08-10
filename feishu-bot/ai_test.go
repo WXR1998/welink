@@ -29,7 +29,7 @@ func TestAnalyzeQuestion_AccumulatesSSE(t *testing.T) {
 
 	cfg := &Config{WeLinkBaseURL: server.URL, WeLinkToken: "tok"}
 	var deltas []string
-	answer, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", func(delta string) {
+	answer, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, nil, "", func(delta string) {
 		deltas = append(deltas, delta)
 	})
 	if err != nil {
@@ -69,7 +69,7 @@ func TestAnalyzeQuestion_PropagatesError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", nil)
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, nil, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "生成失败") {
 		t.Fatalf("expected error, got %v", err)
 	}
@@ -283,7 +283,7 @@ func TestAnalyzeQuestionUsesCrossQAAnswerTemplate(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, "", nil)
+	_, _, err := analyzeQuestion(context.Background(), cfg, "", "你好", "feishu:p2p:u", nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestAnalyzeQuestionSendsHistoryAsConversationMessages(t *testing.T) {
 		{Role: "assistant", Content: "前一个回答"},
 	}
 	cfg := &Config{WeLinkBaseURL: server.URL}
-	if _, _, err := analyzeQuestion(context.Background(), cfg, "", "当前问题", "feishu:p2p:u", history, "检索内容", nil); err != nil {
+	if _, _, err := analyzeQuestion(context.Background(), cfg, "", "当前问题", "feishu:p2p:u", history, nil, "检索内容", nil); err != nil {
 		t.Fatalf("analyzeQuestion returned error: %v", err)
 	}
 
@@ -434,5 +434,28 @@ func TestAnalyzeQuestionSendsHistoryAsConversationMessages(t *testing.T) {
 	}
 	if got.Messages[2].Role != "user" || got.Messages[2].Content != "问题：当前问题\n\n检索内容" {
 		t.Fatalf("current question must be the final user message: %+v", got.Messages[2])
+	}
+}
+
+func TestBuildFinalAnswerQuestionMakesCurrentEntityOverrideHistory(t *testing.T) {
+	got := buildFinalAnswerQuestion(
+		"他有什么事迹？",
+		&queryDecomposition{
+			Entities: []string{"刘博文"},
+			Concepts: []string{"事迹"},
+		},
+		"检索内容",
+	)
+
+	for _, want := range []string{
+		"问题：他有什么事迹？",
+		"本轮问题的对象必须是：刘博文",
+		"优先于历史中的助手回答或推测",
+		"核心概念：事迹",
+		"检索内容",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("final answer input missing %q: %s", want, got)
+		}
 	}
 }

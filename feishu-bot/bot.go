@@ -678,7 +678,7 @@ func (b *bot) answer(ctx context.Context, sessionKey, chatID, question string, o
 	if data.NormalizedQuery != "" {
 		answerQuery = data.NormalizedQuery
 	}
-	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, dataContext, onAnswerDelta)
+	answer, usage, err := analyzeQuestion(ctx, b.cfg, chatID, answerQuery, convKey, history, data.Decomposition, dataContext, onAnswerDelta)
 	if err != nil {
 		return "", &answerRunMeta{Usage: usage}, "生成回答失败，请稍后重试。\n\n" + err.Error()
 	}

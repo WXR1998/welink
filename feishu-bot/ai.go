@@ -479,13 +479,32 @@ func buildDataContext(d *memorySearchData) string {
 	return sb.String()
 }
 
+// buildFinalAnswerQuestion combines the user question with the authoritative
+// entity resolution from the current retrieval pass.
+func buildFinalAnswerQuestion(query string, decomposition *queryDecomposition, dataContext string) string {
+	var sb strings.Builder
+	sb.WriteString("问题：")
+	sb.WriteString(query)
+	if decomposition != nil && len(decomposition.Entities) > 0 {
+		sb.WriteString("\n\n【本轮实体约束】\n本轮问题的对象必须是：")
+		sb.WriteString(strings.Join(decomposition.Entities, "、"))
+		sb.WriteString("\n此约束来自本轮检索阶段的实体消解，优先于历史中的助手回答或推测；不得替换为其他人或实体。")
+		if len(decomposition.Concepts) > 0 {
+			sb.WriteString("\n核心概念：")
+			sb.WriteString(strings.Join(decomposition.Concepts, "、"))
+		}
+	}
+	if dataContext != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(dataContext)
+	}
+	return sb.String()
+}
+
 // analyzeQuestion 调用 POST /api/ai/analyze（跨联系人），生成最终回答。
 // 返回回答文本与此次调用的 token 用量（可能为 nil）。
-func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, dataContext string, onDelta func(string)) (string, *analyzeUsage, error) {
-	currentQuestion := "问题：" + query
-	if dataContext != "" {
-		currentQuestion += "\n\n" + dataContext
-	}
+func analyzeQuestion(ctx context.Context, cfg *Config, chatID, query, convKey string, history []llmMessage, decomposition *queryDecomposition, dataContext string, onDelta func(string)) (string, *analyzeUsage, error) {
+	currentQuestion := buildFinalAnswerQuestion(query, decomposition, dataContext)
 
 	// 保持历史问答的原始 role，交由后端统一按 Profile token 预算压缩。
 	msgs := make([]llmMessage, 0, len(history)+1)

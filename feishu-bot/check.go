@@ -171,7 +171,7 @@ func runSmoke(ctx context.Context, cfg *Config, question string) error {
 	}
 
 	fmt.Println("[2/2] analyze 生成回答...")
-	answer, _, err := analyzeQuestion(ctx, cfg, "", question, convKey, nil, ctxData, nil)
+	answer, _, err := analyzeQuestion(ctx, cfg, "", question, convKey, nil, data.Decomposition, ctxData, nil)
 	if err != nil {
 		fmt.Printf("  ✗ analyze 失败: %v\n", err)
 		return err
